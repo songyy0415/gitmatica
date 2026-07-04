@@ -12,7 +12,7 @@ import net.minecraft.client.renderer.RenderPipelines;
 import net.minecraft.client.renderer.state.gui.BlitRenderState;
 import net.minecraft.client.renderer.state.gui.GuiItemRenderState;
 import net.minecraft.util.ARGB;
-import org.joml.Matrix3x2f;
+import org.joml.Matrix3x2fc;
 import org.spongepowered.asm.mixin.Mixin;
 import org.spongepowered.asm.mixin.injection.At;
 import org.spongepowered.asm.mixin.injection.Inject;
@@ -22,16 +22,17 @@ import fi.dy.masa.litematica.schematic.verifier.inventory.VerifierInventoryOverl
 @Mixin(GuiRenderer.class)
 public class MixinGuiRendererVerifierInventory
 {
-    @Inject(method = "render(Lcom/mojang/blaze3d/buffers/GpuBufferSlice;)V", at = @At("RETURN"))
+    @Inject(method = "render()V", at = @At("RETURN"))
     private void litematica_clearTransparentVerifierItemStates(CallbackInfo ci)
     {
         VerifierInventoryOverlay.transparentItemStates.clear();
     }
 
-    @WrapOperation(method = "submitBlitFromItemAtlas", at = @At(value = "NEW", target = "Lnet/minecraft/client/renderer/state/gui/BlitRenderState;"))
+    @WrapOperation(method = "submitBlitFromItemAtlas(Lnet/minecraft/client/renderer/state/gui/GuiItemRenderState;Lnet/minecraft/client/gui/render/GuiItemAtlas$SlotView;)V",
+                   at = @At(value = "NEW", target = "Lnet/minecraft/client/renderer/state/gui/BlitRenderState;"))
     private BlitRenderState litematica_makeVerifierItemAtlasTransparent(RenderPipeline pipeline,
                                                                         TextureSetup textureSetup,
-                                                                        Matrix3x2f pose,
+                                                                        Matrix3x2fc pose,
                                                                         int x1,
                                                                         int y1,
                                                                         int x2,

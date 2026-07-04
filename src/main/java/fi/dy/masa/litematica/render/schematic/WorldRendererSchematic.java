@@ -112,6 +112,7 @@ public class WorldRendererSchematic implements IWorldSchematicRenderer
     private ChunkRenderGpuDispatcher chunkRendererGpuDispatcher;
     private GpuBufferSlice vanillaFogBuffer;
     private GpuSampler gpuSampler;
+    private boolean ownsGpuSampler;
     private ProfilerFiller profiler;
     private double lastCameraChunkUpdateX;
     private double lastCameraChunkUpdateY;
@@ -850,11 +851,6 @@ public class WorldRendererSchematic implements IWorldSchematicRenderer
             // Disable fog in the Schematic World
             RenderSystem.setShaderFog(this.getEmptyFogBuffer());
 
-            if (sampler != null && this.gpuSampler == null)
-            {
-                this.setGpuSampler(sampler);
-            }
-
             if (sampler == null)
             {
                 sampler = this.getGpuSampler();
@@ -935,6 +931,7 @@ public class WorldRendererSchematic implements IWorldSchematicRenderer
                                                          FilterMode.LINEAR,
                                                          1, OptionalDouble.empty()
                                           );
+            this.ownsGpuSampler = true;
         }
 
         return this.gpuSampler;
@@ -945,17 +942,19 @@ public class WorldRendererSchematic implements IWorldSchematicRenderer
     {
         this.closeGpuSampler();
         this.gpuSampler = gpuSampler;
+        this.ownsGpuSampler = false;
     }
 
     @Override
     public void closeGpuSampler()
     {
-        if (this.gpuSampler != null)
+        if (this.gpuSampler != null && this.ownsGpuSampler)
         {
             this.gpuSampler.close();
         }
 
         this.gpuSampler = null;
+        this.ownsGpuSampler = false;
     }
 
     @Override

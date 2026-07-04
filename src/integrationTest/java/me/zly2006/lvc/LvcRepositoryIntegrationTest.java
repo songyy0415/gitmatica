@@ -162,7 +162,7 @@ public class LvcRepositoryIntegrationTest
         Path reposRoot = LvcProjectService.reposDirectory(runDir).toAbsolutePath().normalize();
         Path directProject = LvcProjectService.repositoryDirectory(runDir, "Direct Project").toAbsolutePath().normalize();
 
-        IntegrationTestSupport.assertEquals(reposRoot, directProject.getParent(), "normal project should resolve directly under lvc-projects");
+        IntegrationTestSupport.assertEquals(reposRoot, directProject.getParent(), "normal project should resolve directly under gitmatica-projects");
         assertRejectedProjectName(runDir, ".");
         assertRejectedProjectName(runDir, "..");
         assertRejectedProjectName(runDir, "../escape");

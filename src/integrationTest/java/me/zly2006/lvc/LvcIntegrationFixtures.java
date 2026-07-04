@@ -104,9 +104,7 @@ final class LvcIntegrationFixtures
                 LvcChunk.DEFAULT_SIZE,
                 mask,
                 List.of("minecraft:furnace"),
-                List.of(new LvcChunk.BlockEntityRecord(0, LvcCanonicalNbt.encodeBlockEntity(blockEntity))),
-                List.of(),
-                List.of()
+                List.of(new LvcChunk.BlockEntityRecord(0, LvcCanonicalNbt.encodeBlockEntity(blockEntity)))
         );
     }
 

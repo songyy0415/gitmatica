@@ -38,7 +38,6 @@ Not implemented yet:
 - semantic overlay/verifier loading.
 - semantic checkout/pull restore.
 - rich update-area preview and explicit local-origin moves.
-- pending block/fluid tick capture.
 - entity capture.
 - dedicated-server authoritative capture.
 
@@ -157,7 +156,7 @@ Required rules:
 - `site.hash_index` points to a versioned compressed binary `.lvcidx` file for that site.
 - The hash index maps LVC chunk coordinates to full content object hashes for restore/export and to verifier-visible tracked-content hashes for scan/diff/merge/no-op decisions.
 - `.lvcidx` files use zlib/deflate with Java `Deflater.BEST_SPEED`. Most payload bytes are raw SHA-256 hashes, so deeper compression costs extra CPU for little size reduction.
-- Tracked-content hashes include tracked block IDs/states and canonical block entity NBT for tracked positions, so inventories affect scan/diff/merge/no-op decisions. They still ignore entity payload and scheduled tick payload. Full object bytes store all supported payload for restore/export.
+- Tracked-content hashes include tracked block IDs/states and canonical block entity NBT for tracked positions, so inventories affect scan/diff/merge/no-op decisions. They still ignore entity payload. Full object bytes store all supported payload for restore/export. Scheduled block/fluid ticks are intentionally not part of the storage format.
 - A chunk key is `x,y,z` using signed decimal integers.
 - A chunk object must only contain positions tracked by the union of regions intersecting that chunk.
 - If a region is resized and a chunk has no tracked positions left, remove that chunk entry from the manifest.
@@ -234,14 +233,13 @@ Encoding primitives:
 
 - Fixed-width integers are big-endian.
 - `varuint` is unsigned LEB128.
-- `varint` is signed LEB128.
 - `utf8 string` is `varuint byte_length` followed by UTF-8 bytes.
 - `canonical_nbt` is uncompressed canonical NBT bytes.
 
 Canonical content header:
 
 ```text
-content_magic     8 bytes   ASCII "LVCCHN2\0"
+content_magic     8 bytes   ASCII "LVCCHN3\0"
 flags             u16       reserved, MVP writes 0
 size_x            u16       MVP 16
 size_y            u16       MVP 16
@@ -264,10 +262,6 @@ palette_entry[]               utf8 string, sorted by first use in index order
 block_state_indices[]         varuint, one entry per tracked mask bit in ascending index order
 block_entity_count            varuint
 block_entity[]                block entity records
-pending_block_tick_count      varuint
-pending_block_tick[]          scheduled block tick records
-pending_fluid_tick_count      varuint
-pending_fluid_tick[]          scheduled fluid tick records
 entity_count                  varuint, MVP writes 0 unless entity tracking is enabled
 entity[]                      future optional records
 ```
@@ -280,16 +274,6 @@ Block entity record:
 index             u16
 nbt_len           varuint
 canonical_nbt     bytes
-```
-
-Scheduled tick record:
-
-```text
-index             u16
-target_id         utf8 string, for example "minecraft:water"
-delay             varint, trigger tick relative to capture game time
-priority          i8
-sub_tick_order    i64
 ```
 
 Entity record is reserved for a later entity-tracking pass. MVP may keep `entity_count = 0`.
@@ -350,13 +334,12 @@ Algorithm:
 6. For every true mask bit, map project-relative position to world position.
 7. Read block state from authoritative world state.
 8. If block has a block entity, read and normalize block entity NBT.
-9. Capture pending block/fluid ticks whose positions are tracked, storing relative delay.
-10. Encode canonical full chunk content bytes.
-11. Hash canonical full content bytes with SHA-256.
-12. Deflate the canonical full content bytes and write the compressed `.lvcchunk` object if missing.
-13. Hash verifier-visible canonical tracked-content bytes for the tracked hash index entry.
-14. Update the site's `.lvcidx` full/tracked hash entry for the chunk key.
-15. Remove old chunk entries no longer intersecting any tracked region.
+9. Encode canonical full chunk content bytes.
+10. Hash canonical full content bytes with SHA-256.
+11. Deflate the canonical full content bytes and write the compressed `.lvcchunk` object if missing.
+12. Hash verifier-visible canonical tracked-content bytes for the tracked hash index entry.
+13. Update the site's `.lvcidx` full/tracked hash entry for the chunk key.
+14. Remove old chunk entries no longer intersecting any tracked region.
 
 Important invariant:
 
@@ -414,28 +397,11 @@ Restore:
 - Load chunk objects referenced by the manifest.
 - For mask true positions, write blocks and block entities.
 - For mask false positions, do nothing.
-- Apply valid pending block/fluid ticks after block placement.
 
 Export:
 
 - Build an in-memory Litematica schematic or vanilla structure from the manifest and chunk objects.
 - Untracked gaps between independent regions become absent/void, not air.
-
-## Scheduled Tick Merge Policy
-
-Pending block/fluid ticks are simulation metadata.
-
-Default merge:
-
-- Keep valid non-conflicting ticks.
-- Carry ticks from the chosen block/fluid side when a related block conflict is resolved.
-- Drop invalid or ambiguous conflicting ticks.
-- Show only a summary warning by default.
-
-Validation:
-
-- A block tick is valid only when the final block at that position matches the tick target block.
-- A fluid tick is valid only when the final fluid at that position matches the tick target fluid.
 
 ## MVP Validation Checklist
 

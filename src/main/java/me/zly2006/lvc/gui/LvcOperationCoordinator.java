@@ -24,6 +24,7 @@ final class LvcOperationCoordinator
     static Optional<LvcOperationHandle> acquire(GuiLvcProjectController controller, String name)
     {
         Path repositoryDirectory = controller.gui.repositoryDirectory;
+        controller.abortOverlayLoadForForegroundOperation(name);
         Optional<LvcOperationHandle> handle = LvcTaskRegistry.tryAcquire(name, repositoryDirectory);
 
         if (handle.isEmpty())

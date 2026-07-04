@@ -314,8 +314,6 @@ final class LvcSemanticMergeEngine
         BitSet mask = baseChunk.trackedMask();
         List<String> states = new ArrayList<>(mask.cardinality());
         List<LvcChunk.BlockEntityRecord> blockEntities = new ArrayList<>();
-        List<LvcChunk.ScheduledTickRecord> pendingBlockTicks = new ArrayList<>();
-        List<LvcChunk.ScheduledTickRecord> pendingFluidTicks = new ArrayList<>();
         List<LvcChunk.EntityRecord> entities = chooseEntityPayload(chunkKey, baseChunk, currentChunk, sourceChunk, conflictResolution);
 
         for (int maskIndex = mask.nextSetBit(0); maskIndex >= 0; maskIndex = mask.nextSetBit(maskIndex + 1))
@@ -331,9 +329,6 @@ final class LvcSemanticMergeEngine
             {
                 blockEntities.add(new LvcChunk.BlockEntityRecord(maskIndex, selected.blockEntityNbt()));
             }
-
-            pendingBlockTicks.addAll(selected.pendingBlockTicks());
-            pendingFluidTicks.addAll(selected.pendingFluidTicks());
         }
 
         LvcChunk mergedChunk = LvcChunk.fromTrackedContent(
@@ -343,8 +338,6 @@ final class LvcSemanticMergeEngine
                 mask,
                 states,
                 blockEntities,
-                pendingBlockTicks,
-                pendingFluidTicks,
                 entities
         );
         byte[] hashContentBytes = LvcChunkCodec.encodeHashContent(mergedChunk);
@@ -466,8 +459,6 @@ final class LvcSemanticMergeEngine
     private static Map<Integer, LvcMergeBlockPayload> payloadsByMaskIndex(LvcChunk chunk)
     {
         Map<Integer, byte[]> blockEntities = new HashMap<>();
-        Map<Integer, List<LvcChunk.ScheduledTickRecord>> blockTicks = ticksByIndex(chunk.pendingBlockTicks());
-        Map<Integer, List<LvcChunk.ScheduledTickRecord>> fluidTicks = ticksByIndex(chunk.pendingFluidTicks());
         Map<Integer, LvcMergeBlockPayload> payloads = new HashMap<>();
         BitSet mask = chunk.trackedMask();
         int ordinal = 0;
@@ -481,26 +472,12 @@ final class LvcSemanticMergeEngine
         {
             payloads.put(maskIndex, new LvcMergeBlockPayload(
                     chunk.blockStateAtTrackedOrdinal(ordinal),
-                    blockEntities.get(maskIndex),
-                    blockTicks.getOrDefault(maskIndex, List.of()),
-                    fluidTicks.getOrDefault(maskIndex, List.of())
+                    blockEntities.get(maskIndex)
             ));
             ordinal++;
         }
 
         return payloads;
-    }
-
-    private static Map<Integer, List<LvcChunk.ScheduledTickRecord>> ticksByIndex(List<LvcChunk.ScheduledTickRecord> ticks)
-    {
-        Map<Integer, List<LvcChunk.ScheduledTickRecord>> byIndex = new HashMap<>();
-
-        for (LvcChunk.ScheduledTickRecord tick : ticks)
-        {
-            byIndex.computeIfAbsent(tick.index(), ignored -> new ArrayList<>()).add(tick);
-        }
-
-        return byIndex;
     }
 
     private static boolean sameRefs(LvcManifest.Site currentSite, LvcManifest.Site sourceSite)
@@ -558,16 +535,8 @@ record LvcMergeChunkRef(String fullHash, String trackedHash)
 {
 }
 
-record LvcMergeBlockPayload(String blockState, @Nullable byte[] blockEntityNbt,
-                            List<LvcChunk.ScheduledTickRecord> pendingBlockTicks,
-                            List<LvcChunk.ScheduledTickRecord> pendingFluidTicks)
+record LvcMergeBlockPayload(String blockState, @Nullable byte[] blockEntityNbt)
 {
-    LvcMergeBlockPayload
-    {
-        pendingBlockTicks = List.copyOf(pendingBlockTicks);
-        pendingFluidTicks = List.copyOf(pendingFluidTicks);
-    }
-
     @Override
     public byte[] blockEntityNbt()
     {

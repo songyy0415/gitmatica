@@ -132,8 +132,11 @@ java {
 }
 
 jar {
-	from("LICENSE") {
-		rename { "${it}_${base.archivesName}"}
+	from("LICENSE.txt") {
+		rename { "${it}_${base.archivesName.get()}"}
+	}
+	from("NOTICE.md") {
+		rename { "${it}_${base.archivesName.get()}"}
 	}
 }
 
@@ -141,6 +144,12 @@ tasks.named('shadowJar') {
 	archiveClassifier.set('shadow')
 	configurations = project.configurations.named('shadow').map { [it] }
 	mergeServiceFiles()
+	from("LICENSE.txt") {
+		rename { "${it}_${base.archivesName.get()}"}
+	}
+	from("NOTICE.md") {
+		rename { "${it}_${base.archivesName.get()}"}
+	}
 }
 
 tasks.named('assemble') {

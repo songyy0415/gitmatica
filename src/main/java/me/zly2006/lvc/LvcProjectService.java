@@ -45,7 +45,7 @@ import me.zly2006.lvc.project.LvcProjectSelectionStorage;
 
 public final class LvcProjectService
 {
-    public static final String REPOS_DIRECTORY = "lvc-projects";
+    public static final String REPOS_DIRECTORY = "gitmatica-projects";
     public static final String LOCAL_JSON = "local.json";
     public static final String DEFAULT_BRANCH = "main";
     private static final ConcurrentMap<Path, CachedProjectSummary> PROJECT_SUMMARY_CACHE = new ConcurrentHashMap<>();

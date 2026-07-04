@@ -23,6 +23,8 @@ import me.zly2006.lvc.world.LvcWorldAccess;
 
 import fi.dy.masa.litematica.data.DataManager;
 import fi.dy.masa.litematica.gui.GuiMainMenu;
+import fi.dy.masa.litematica.scheduler.ITask;
+import fi.dy.masa.litematica.scheduler.TaskScheduler;
 import fi.dy.masa.litematica.selection.AreaSelection;
 import fi.dy.masa.malilib.gui.GuiBase;
 import fi.dy.masa.malilib.gui.Message.MessageType;
@@ -995,7 +997,14 @@ final class GuiLvcProjectController
             }
         }
 
-        Optional<LvcOperationHandle> handle = LvcTaskRegistry.tryAcquire(LOAD_OVERLAY_OPERATION, this.gui.repositoryDirectory);
+        if (LvcTaskRegistry.hasActiveOperation())
+        {
+            LvcDiagnostics.debug("GuiLvcProjectManager: deferred overlay load while foreground operation is active repo='{}' active='{}'",
+                    this.gui.repositoryDirectory, LvcTaskRegistry.activeOperationName());
+            return;
+        }
+
+        Optional<LvcOperationHandle> handle = LvcTaskRegistry.tryAcquireBackground(LOAD_OVERLAY_OPERATION, this.gui.repositoryDirectory);
 
         if (handle.isEmpty())
         {
@@ -1026,7 +1035,7 @@ final class GuiLvcProjectController
                             this.clearRefreshMarkerAfterOverlay();
                         },
                         e -> LvcGuiMessages.showTaskError(Operation.LOAD_OVERLAY, "litematica.error.lvc_project.tracking_failed", e),
-                        () -> LvcGuiMessages.show(MessageType.INFO, "litematica.message.lvc_project.task_aborted", "LVC Load Overlay")
+                        () -> LvcDiagnostics.debug("GuiLvcProjectManager: overlay load aborted repo='{}'", this.gui.repositoryDirectory)
                 )
         );
         LvcTaskScheduling.scheduleForWorld(clientLevel, task);
@@ -1034,10 +1043,29 @@ final class GuiLvcProjectController
 
     private boolean isOverlayLoadActiveForThisRepo()
     {
-        return LvcTaskRegistry.activeOperation()
-                .filter(operation -> LOAD_OVERLAY_OPERATION.equals(operation.name()))
-                .filter(operation -> operation.repositoryDirectory().equals(this.gui.repositoryDirectory.toAbsolutePath().normalize()))
-                .isPresent();
+        return LvcTaskRegistry.hasActiveBackgroundOperation(LOAD_OVERLAY_OPERATION, this.gui.repositoryDirectory);
+    }
+
+    void abortOverlayLoadForForegroundOperation(String reason)
+    {
+        if (this.isOverlayLoadActiveForThisRepo() == false)
+        {
+            return;
+        }
+
+        boolean removedClientTask = TaskScheduler.getInstanceClient().removeTasksIf(this::isOverlayLoadTaskForThisRepo);
+        boolean removedServerTask = TaskScheduler.getInstanceServer().removeTasksIf(this::isOverlayLoadTaskForThisRepo);
+
+        if (removedClientTask || removedServerTask)
+        {
+            LvcDiagnostics.debug("GuiLvcProjectManager: aborted overlay load before foreground operation repo='{}' reason='{}'",
+                    this.gui.repositoryDirectory, reason);
+        }
+    }
+
+    private boolean isOverlayLoadTaskForThisRepo(ITask task)
+    {
+        return task instanceof LvcSemanticOverlayTask overlayTask && overlayTask.isForRepository(this.gui.repositoryDirectory);
     }
 
     private void clearRefreshMarkerAfterOverlay()
@@ -1138,6 +1166,11 @@ final class GuiLvcProjectController
 
     void handleButton(GuiLvcProjectButtonType type)
     {
+        if (type != GuiLvcProjectButtonType.LITEMATICA_MENU)
+        {
+            this.abortOverlayLoadForForegroundOperation(type.name());
+        }
+
         if (type != GuiLvcProjectButtonType.LITEMATICA_MENU && LvcTaskRegistry.hasActiveOperation())
         {
             LvcGuiMessages.show(MessageType.ERROR, "litematica.error.lvc_project.operation_running", LvcTaskRegistry.activeOperationName());

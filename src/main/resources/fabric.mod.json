@@ -19,7 +19,7 @@
 		"discord": "https://discordapp.com/channels/211786369951989762/453662800460644354/"
 	},
 
-	"license": "LGPLv3",
+	"license": "LGPL-3.0-only",
 	"icon": "assets/litematica/icon.png",
 
 	"environment": "client",

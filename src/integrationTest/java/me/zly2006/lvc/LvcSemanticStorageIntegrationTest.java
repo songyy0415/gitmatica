@@ -127,8 +127,6 @@ final class LvcSemanticStorageIntegrationTest
                 List.of("minecraft:air", "minecraft:stone"),
                 new int[] { 0, 1, 1 },
                 List.of(new LvcChunk.BlockEntityRecord(1, new byte[] { 10, 1, 2, 3 })),
-                List.of(new LvcChunk.ScheduledTickRecord(1, "minecraft:stone", 4, (byte) 1, 9L)),
-                List.of(new LvcChunk.ScheduledTickRecord(LvcChunk.DEFAULT_VOLUME - 1, "minecraft:water", 2, (byte) 0, 3L)),
                 List.of(new LvcChunk.EntityRecord(entityNbt))
         );
 
@@ -144,16 +142,12 @@ final class LvcSemanticStorageIntegrationTest
         IntegrationTestSupport.assertEquals("minecraft:stone", decoded.blockStateAtTrackedOrdinal(2), "last tracked block state");
         IntegrationTestSupport.assertEquals(1, decoded.blockEntities().size(), "decoded block entity count");
         IntegrationTestSupport.assertTrue(Arrays.equals(new byte[] { 10, 1, 2, 3 }, decoded.blockEntities().get(0).canonicalNbt()), "decoded block entity bytes");
-        IntegrationTestSupport.assertEquals("minecraft:stone", decoded.pendingBlockTicks().get(0).targetId(), "decoded block tick target");
-        IntegrationTestSupport.assertEquals("minecraft:water", decoded.pendingFluidTicks().get(0).targetId(), "decoded fluid tick target");
         IntegrationTestSupport.assertEquals(1, decoded.entities().size(), "decoded entity count");
         IntegrationTestSupport.assertTrue(Arrays.equals(entityNbt, decoded.entities().get(0).canonicalNbt()), "decoded entity bytes");
 
         LvcChunk trackedView = LvcChunkCodec.decode(LvcChunkCodec.encodeStorageBytes(LvcChunkCodec.encodeTrackedContent(chunk)));
         IntegrationTestSupport.assertEquals(1, trackedView.blockEntities().size(), "tracked view should include block entity NBT");
         IntegrationTestSupport.assertTrue(Arrays.equals(new byte[] { 10, 1, 2, 3 }, trackedView.blockEntities().get(0).canonicalNbt()), "tracked view block entity bytes");
-        IntegrationTestSupport.assertEquals(0, trackedView.pendingBlockTicks().size(), "tracked view should hide scheduled block ticks");
-        IntegrationTestSupport.assertEquals(0, trackedView.pendingFluidTicks().size(), "tracked view should hide scheduled fluid ticks");
         IntegrationTestSupport.assertEquals(0, trackedView.entities().size(), "tracked view should hide entity NBT");
     }
 
@@ -190,9 +184,7 @@ final class LvcSemanticStorageIntegrationTest
                     List.of(
                             new LvcChunk.BlockEntityRecord(0, new byte[] { 10, 0 }),
                             new LvcChunk.BlockEntityRecord(0, new byte[] { 10, 0 })
-                    ),
-                    List.of(),
-                    List.of()
+                    )
             );
             throw new AssertionError("duplicate block entity records should be rejected");
         }
@@ -213,9 +205,7 @@ final class LvcSemanticStorageIntegrationTest
                 mask,
                 List.of("minecraft:stone"),
                 new int[] { 0 },
-                List.of(new LvcChunk.BlockEntityRecord(0, new byte[] { 10, 0 })),
-                List.of(),
-                List.of()
+                List.of(new LvcChunk.BlockEntityRecord(0, new byte[] { 10, 0 }))
         );
         byte[] bytes = LvcChunkCodec.encode(chunk);
 

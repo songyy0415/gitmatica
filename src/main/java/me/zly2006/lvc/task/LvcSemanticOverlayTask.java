@@ -75,6 +75,12 @@ public final class LvcSemanticOverlayTask extends LvcChunkedTaskBase<LvcProjectS
         this.forceRebuild = forceRebuild;
     }
 
+    public boolean isForRepository(Path repositoryDirectory)
+    {
+        Objects.requireNonNull(repositoryDirectory, "repositoryDirectory");
+        return this.repositoryDirectory.toAbsolutePath().normalize().equals(repositoryDirectory.toAbsolutePath().normalize());
+    }
+
     @Override
     public void init()
     {

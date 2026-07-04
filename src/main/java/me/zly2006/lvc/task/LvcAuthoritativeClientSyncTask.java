@@ -185,8 +185,12 @@ public final class LvcAuthoritativeClientSyncTask extends TaskBase
             return;
         }
 
-        minecraft.levelRenderer.resetLevelRenderData();
-        LvcDiagnostics.debug("LVC authoritative client render refresh complete dimension='{}' sections={} mode='full_level_render_reset'",
+        for (long section : sections)
+        {
+            clientLevel.setSectionDirtyWithNeighbors(SectionPos.x(section), SectionPos.y(section), SectionPos.z(section));
+        }
+
+        LvcDiagnostics.debug("LVC authoritative client render refresh complete dimension='{}' sections={} mode='section_dirty_with_neighbors'",
                 dimension.identifier(), sections.length);
     }
 

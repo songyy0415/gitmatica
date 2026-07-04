@@ -30,6 +30,7 @@
         "world.MixinLevelChunk"
     ],
     "client": [
+        "client.MixinGui",
         "client.MixinMinecraft",
         "client.MixinOptions",
         "easyplace.MixinClientPlayerInteractionManager_easyPlace",

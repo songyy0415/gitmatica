@@ -23,7 +23,7 @@ public final class LvcChunkCodec
     public static final int COMPRESSION_LEVEL = Deflater.BEST_SPEED;
 
     private static final byte[] STORAGE_MAGIC = new byte[] { 'L', 'V', 'C', 'C', 'H', 'Z', '1', 0 };
-    private static final byte[] CONTENT_MAGIC = new byte[] { 'L', 'V', 'C', 'C', 'H', 'N', '2', 0 };
+    private static final byte[] CONTENT_MAGIC = new byte[] { 'L', 'V', 'C', 'C', 'H', 'N', '3', 0 };
 
     private LvcChunkCodec()
     {
@@ -64,8 +64,6 @@ public final class LvcChunkCodec
             }
 
             writeBlockEntities(out, chunk.blockEntities());
-            writeTicks(out, chunk.pendingBlockTicks());
-            writeTicks(out, chunk.pendingFluidTicks());
             writeEntities(out, chunk.entities());
         }
 
@@ -109,9 +107,7 @@ public final class LvcChunkCodec
                 chunk.sizeZ(),
                 chunk.trackedMask(),
                 trackedBlockStates,
-                chunk.blockEntities(),
-                List.of(),
-                List.of()
+                chunk.blockEntities()
         ));
     }
 
@@ -181,8 +177,6 @@ public final class LvcChunkCodec
         }
 
         List<LvcChunk.BlockEntityRecord> blockEntities = readBlockEntities(in);
-        List<LvcChunk.ScheduledTickRecord> pendingBlockTicks = readTicks(in);
-        List<LvcChunk.ScheduledTickRecord> pendingFluidTicks = readTicks(in);
         List<LvcChunk.EntityRecord> entities = readEntities(in);
 
         if (in.read() != -1)
@@ -191,7 +185,7 @@ public final class LvcChunkCodec
         }
 
         return new LvcChunk(sizeX, sizeY, sizeZ, trackedMask, palette, blockStateIndices, blockEntities,
-                pendingBlockTicks, pendingFluidTicks, entities);
+                entities);
     }
 
     private static byte[] inflateStorageBytes(byte[] bytes) throws IOException
@@ -319,38 +313,6 @@ public final class LvcChunkCodec
         return records;
     }
 
-    private static void writeTicks(DataOutputStream out, List<LvcChunk.ScheduledTickRecord> ticks) throws IOException
-    {
-        writeVarUInt(out, ticks.size());
-
-        for (LvcChunk.ScheduledTickRecord tick : ticks)
-        {
-            out.writeShort(tick.index());
-            writeString(out, tick.targetId());
-            writeVarInt(out, tick.delay());
-            out.writeByte(tick.priority());
-            out.writeLong(tick.subTickOrder());
-        }
-    }
-
-    private static List<LvcChunk.ScheduledTickRecord> readTicks(DataInputStream in) throws IOException
-    {
-        int count = readVarUInt(in);
-        List<LvcChunk.ScheduledTickRecord> ticks = new ArrayList<>(count);
-
-        for (int i = 0; i < count; i++)
-        {
-            int index = in.readUnsignedShort();
-            String targetId = readString(in);
-            int delay = readVarInt(in);
-            byte priority = in.readByte();
-            long subTickOrder = in.readLong();
-            ticks.add(new LvcChunk.ScheduledTickRecord(index, targetId, delay, priority, subTickOrder));
-        }
-
-        return ticks;
-    }
-
     private static void writeEntities(DataOutputStream out, List<LvcChunk.EntityRecord> entities) throws IOException
     {
         writeVarUInt(out, entities.size());
@@ -441,50 +403,4 @@ public final class LvcChunkCodec
         throw new IOException("LVC chunk varuint is too long");
     }
 
-    private static void writeVarInt(DataOutputStream out, int value) throws IOException
-    {
-        boolean more;
-
-        do
-        {
-            int b = value & 0x7F;
-            value >>= 7;
-            more = !((value == 0 && (b & 0x40) == 0) || (value == -1 && (b & 0x40) != 0));
-
-            if (more)
-            {
-                b |= 0x80;
-            }
-
-            out.writeByte(b);
-        }
-        while (more);
-    }
-
-    private static int readVarInt(DataInputStream in) throws IOException
-    {
-        int value = 0;
-        int shift = 0;
-        int b;
-
-        do
-        {
-            if (shift >= 35)
-            {
-                throw new IOException("LVC chunk varint is too long");
-            }
-
-            b = in.readUnsignedByte();
-            value |= (b & 0x7F) << shift;
-            shift += 7;
-        }
-        while ((b & 0x80) != 0);
-
-        if (shift < 32 && (b & 0x40) != 0)
-        {
-            value |= -1 << shift;
-        }
-
-        return value;
-    }
 }

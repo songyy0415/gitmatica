@@ -34,16 +34,16 @@ Done:
 - Interrupted-operation recovery is user-controlled for world-mutating operations. Pending checkout/discard/clear/merge journals prompt on the next attempted operation with Restart, Abort, or Cancel. Checkout journals record the previous HEAD/branch before Git moves, so Abort rolls back through a restore/overlay refresh instead of merely clearing recovery data. Merge journals record the previous HEAD before Git moves, so Abort rolls the target branch back and restores the world/overlay to that previous version. Non-world interrupted operations are silently cleaned on world join and report a concise cancellation dialog. Operation journals are checksummed, atomically written with backup generations, corrupt journals are quarantined, merge journals cover the Git-mutation gap, and `.git/lvc-refresh-needed.json` forces overlay/verifier refresh after crashes that happen after world mutation but before visible-state refresh.
 - Semantic repo init and commit through JGit.
 - Project listing supports semantic `lvc.json` repos only.
-- Project browser delete is implemented with confirmation and validated recursive deletion under `run/lvc-projects`.
+- Project browser delete is implemented with confirmation and validated recursive deletion under `run/gitmatica-projects`.
 - Project browser manual Create Project flow creates an empty semantic repo with `lvc.json`, ignored `local.json`, `.git`, and no initial commit. After the name popup closes, the user remains in Project Browser and can open Project Editor manually.
-- Project/project-manager UI polish: project browser navigation rooted at `lvc-projects`, conditional scrollbar rendering, searchable/scrollable commit history, and selected commit metadata with title/author/date/version/changes.
+- Project/project-manager UI polish: project browser navigation rooted at `gitmatica-projects`, conditional scrollbar rendering, searchable/scrollable commit history, and selected commit metadata with title/author/date/version/changes.
 - Project Placement page opens from the project page for semantic repos, shows read-only project/version/tracked-box metadata, and edits only the clone-local world origin in ignored `local.json`.
 - Integration coverage for semantic storage, object reuse, fake-world capture, canonical Minecraft state encoding, and semantic commits.
 
 Not done:
 
 - Full failpoint-based crash testing is not implemented yet. Future coverage should add inert main-code failpoint hooks at every operation phase boundary, enabled only by an explicit test flag, then run child-process integration tests that hard-exit at each failpoint and verify relog/open, Restart, Abort, cleanup, and visible-state refresh behavior.
-- Semantic selected-commit checkout, branch checkout, discard, and clear now use a no-freeze convergent scan/rewrite/verify/client-sync path. Semantic pull restore still needs the same hardening. Dedicated-server restore support, scheduled tick capture/restore, entity identity-aware diffing, and Litematica paste-parity testing remain unresolved before treating restore paths as production-correct.
+- Semantic selected-commit checkout, branch checkout, discard, and clear now use a no-freeze convergent scan/rewrite/verify/client-sync path. Semantic pull restore still needs the same hardening. Dedicated-server restore support, entity identity-aware diffing, and Litematica paste-parity testing remain unresolved before treating restore paths as production-correct.
 - Bugfix/polish pass for recent semantic MVP batch before starting new feature work: tracking overlay persistence/dedup, selected-commit export, selected-commit checkout restore, branch checkout restore, Clear Area, scan/preflight messaging, and project page button flows.
 - Semantic pull restore.
 - MVP mod-level config page for GitMatica/LVC settings: logging controls, overlay/change colors, and hotkeys for opening main LVC screens.
@@ -54,7 +54,7 @@ Not done:
 - Dedicated-server multiplayer support.
 - Later MVP world-I/O optimization: add a reusable execution planner that keeps semantic storage in project-relative `LvcChunkCoordinate` chunks, but maps tracked LVC positions/subchunks to translated real-world `ChunkPos` columns and chunk sections so capture/restore/scan execution, unloaded chunk handling, neighbor chunk requirements, and world access locality match Minecraft/Litematica behavior more closely. Reference Litematica's chunk planning/paste flow while designing this.
 - Storage compression experiment: on a separate test branch, remove compression from stored `.lvcidx`/`.lvcchunk` files and measure whether Git stores project changes more efficiently through its own delta/object compression.
-- Scheduled tick capture. Discard/checkout/clear no longer freeze or suppress scheduled work; they rely on bounded convergence and Litematica paste-style update suppression around block writes. Exact committed scheduled tick capture/restore is still not implemented.
+- Scheduled ticks are intentionally not stored. Discard/checkout/clear no longer freeze or suppress scheduled work; they rely on bounded convergence and Litematica paste-style update suppression around block writes.
 
 ### Import Existing `.litematic` Files
 
@@ -388,7 +388,7 @@ Future backend storage profiling design:
 
 - Add an integration-test-only `LvcStorageProfileRunner` plus Gradle `storageProfile` task.
 - Generate deterministic randomized block, block-state, and inventory mutations across configurable subchunk distributions.
-- Create real loadable LVC repos under `run/lvc-projects/<projectName>` using existing semantic commit APIs.
+- Create real loadable LVC repos under `run/gitmatica-projects/<projectName>` using existing semantic commit APIs.
 - Support JSON config plus CLI overrides for seed, commit count, output root, project name, clean mode, palettes, distributions, and reporting.
 - Record commit timings, repo/object/index growth, changed semantic chunks, inventory mutation counts, and hash evolution to JSON/CSV.
 - Keep it backend-only: no live world mutation, no packaged mod feature, no JMH for v1.

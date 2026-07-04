@@ -1,6 +1,8 @@
 package me.zly2006.lvc.task;
 
 import java.nio.file.Path;
+import java.util.HashMap;
+import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.UUID;
@@ -11,6 +13,7 @@ public final class LvcTaskRegistry
 {
     private static LvcOperationHandle activeOperation;
     private static Runnable activeAbortCleanup;
+    private static final Map<BackgroundOperationKey, LvcOperationHandle> activeBackgroundOperations = new HashMap<>();
 
     private LvcTaskRegistry()
     {
@@ -32,6 +35,24 @@ public final class LvcTaskRegistry
         return Optional.of(activeOperation);
     }
 
+    public static synchronized Optional<LvcOperationHandle> tryAcquireBackground(String name, Path repositoryDirectory)
+    {
+        Objects.requireNonNull(name, "name");
+        Objects.requireNonNull(repositoryDirectory, "repositoryDirectory");
+
+        BackgroundOperationKey key = BackgroundOperationKey.of(name, repositoryDirectory);
+
+        if (activeBackgroundOperations.containsKey(key))
+        {
+            return Optional.empty();
+        }
+
+        LvcOperationHandle handle = new LvcOperationHandle(UUID.randomUUID(), name, key.repositoryDirectory());
+        activeBackgroundOperations.put(key, handle);
+        LvcDiagnostics.debug("background operation acquired {}", LvcDiagnostics.operationTag(handle));
+        return Optional.of(handle);
+    }
+
     public static synchronized void release(LvcOperationHandle handle)
     {
         Objects.requireNonNull(handle, "handle");
@@ -41,6 +62,12 @@ public final class LvcTaskRegistry
             LvcDiagnostics.operationReleased(handle);
             activeOperation = null;
             activeAbortCleanup = null;
+            return;
+        }
+
+        if (activeBackgroundOperations.values().removeIf(operation -> operation.id().equals(handle.id())))
+        {
+            LvcDiagnostics.debug("background operation released {}", LvcDiagnostics.operationTag(handle));
         }
     }
 
@@ -65,22 +92,32 @@ public final class LvcTaskRegistry
     {
         LvcOperationHandle handle;
         Runnable cleanup;
+        int backgroundOperationCount;
 
         synchronized (LvcTaskRegistry.class)
         {
             handle = activeOperation;
             cleanup = activeAbortCleanup;
             activeAbortCleanup = null;
+            backgroundOperationCount = activeBackgroundOperations.size();
         }
 
-        if (handle == null)
+        if (handle == null && backgroundOperationCount == 0)
         {
             return;
         }
 
-        LvcDiagnostics.debug(handle, "aborting active operation because the world is unloading");
+        if (handle != null)
+        {
+            LvcDiagnostics.debug(handle, "aborting active operation because the world is unloading");
+        }
+        else
+        {
+            LvcDiagnostics.debug("aborting {} background LVC operation(s) because the world is unloading",
+                    backgroundOperationCount);
+        }
 
-        if (cleanup != null)
+        if (handle != null && cleanup != null)
         {
             try
             {
@@ -95,10 +132,24 @@ public final class LvcTaskRegistry
         boolean removedClientTask = TaskScheduler.getInstanceClient().removeTasksIf(LvcTaskRegistry::isLvcTask);
         boolean removedServerTask = TaskScheduler.getInstanceServer().removeTasksIf(LvcTaskRegistry::isLvcTask);
 
-        if (!removedClientTask && !removedServerTask)
+        if (handle != null && !removedClientTask && !removedServerTask)
         {
             release(handle);
         }
+
+        clearBackgroundOperationsForWorldUnload();
+    }
+
+    private static synchronized void clearBackgroundOperationsForWorldUnload()
+    {
+        if (activeBackgroundOperations.isEmpty())
+        {
+            return;
+        }
+
+        LvcDiagnostics.debug("clearing {} background LVC operation handle(s) after world unload task removal",
+                activeBackgroundOperations.size());
+        activeBackgroundOperations.clear();
     }
 
     private static boolean isLvcTask(Object task)
@@ -119,5 +170,18 @@ public final class LvcTaskRegistry
     public static synchronized Optional<LvcOperationHandle> activeOperation()
     {
         return Optional.ofNullable(activeOperation);
+    }
+
+    public static synchronized boolean hasActiveBackgroundOperation(String name, Path repositoryDirectory)
+    {
+        return activeBackgroundOperations.containsKey(BackgroundOperationKey.of(name, repositoryDirectory));
+    }
+
+    private record BackgroundOperationKey(String name, Path repositoryDirectory)
+    {
+        private static BackgroundOperationKey of(String name, Path repositoryDirectory)
+        {
+            return new BackgroundOperationKey(name, repositoryDirectory.toAbsolutePath().normalize());
+        }
     }
 }

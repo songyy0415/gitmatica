@@ -299,9 +299,10 @@ public final class LvcSemanticRestoreEngine
                 return false;
             }
 
-            if (this.activeSimulationClearPasses > 0 && !this.settledVerifyAttempted)
+            if (!this.settledVerifyAttempted)
             {
-                this.beginSettledStateGraceVerify();
+                this.beginSettledStateGraceVerify(this.activeSimulationClearPasses > 0 ?
+                        "active simulation" : "retry limit");
                 return false;
             }
 
@@ -361,14 +362,14 @@ public final class LvcSemanticRestoreEngine
         return false;
     }
 
-    private void beginSettledStateGraceVerify()
+    private void beginSettledStateGraceVerify(String reason)
     {
         this.settledVerifyAttempted = true;
         this.settledVerifyWaitTicks = 0;
         this.yieldAfterStep = true;
         this.phase = Phase.WAIT_FOR_SETTLED_STATE;
-        LvcDiagnostics.info("semantic {} delaying final verify after active simulation commit={} waitTicks={} dirtySubchunks={} mismatches={}",
-                this.operationName, this.commitId, FINAL_SETTLED_VERIFY_DELAY_TICKS,
+        LvcDiagnostics.info("semantic {} delaying final verify after {} commit={} waitTicks={} dirtySubchunks={} mismatches={}",
+                this.operationName, reason, this.commitId, FINAL_SETTLED_VERIFY_DELAY_TICKS,
                 this.dirtyChunkKeys.size(), this.latestScanMismatches);
     }
 

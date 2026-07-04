@@ -238,7 +238,11 @@ final class LvcVersionWorkflow
         if (commit == null)
         {
             controller.focusTrackingOverlay();
-            controller.gui.initGui();
+            controller.refreshRepositoryState();
+            controller.gui.refreshHistory();
+            controller.gui.syncBranchDropdownSelection();
+            controller.gui.updateTitle();
+            LvcDiagnostics.debug("LVC Save Version completed as no-op repo='{}'", controller.gui.repositoryDirectory);
             LvcGuiMessages.show(MessageType.INFO, "litematica.message.lvc_project.nothing_to_commit");
             return;
         }

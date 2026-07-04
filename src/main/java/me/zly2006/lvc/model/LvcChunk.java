@@ -21,21 +21,16 @@ public final class LvcChunk
     private final List<String> palette;
     private final int[] blockStateIndices;
     private final List<BlockEntityRecord> blockEntities;
-    private final List<ScheduledTickRecord> pendingBlockTicks;
-    private final List<ScheduledTickRecord> pendingFluidTicks;
     private final List<EntityRecord> entities;
 
     public LvcChunk(int sizeX, int sizeY, int sizeZ, BitSet trackedMask, List<String> palette, int[] blockStateIndices,
-                    List<BlockEntityRecord> blockEntities, List<ScheduledTickRecord> pendingBlockTicks,
-                    List<ScheduledTickRecord> pendingFluidTicks)
+                    List<BlockEntityRecord> blockEntities)
     {
-        this(sizeX, sizeY, sizeZ, trackedMask, palette, blockStateIndices, blockEntities, pendingBlockTicks,
-                pendingFluidTicks, List.of());
+        this(sizeX, sizeY, sizeZ, trackedMask, palette, blockStateIndices, blockEntities, List.of());
     }
 
     public LvcChunk(int sizeX, int sizeY, int sizeZ, BitSet trackedMask, List<String> palette, int[] blockStateIndices,
-                    List<BlockEntityRecord> blockEntities, List<ScheduledTickRecord> pendingBlockTicks,
-                    List<ScheduledTickRecord> pendingFluidTicks, List<EntityRecord> entities)
+                    List<BlockEntityRecord> blockEntities, List<EntityRecord> entities)
     {
         this.sizeX = requirePositive(sizeX, "sizeX");
         this.sizeY = requirePositive(sizeY, "sizeY");
@@ -44,8 +39,6 @@ public final class LvcChunk
         this.palette = List.copyOf(Objects.requireNonNull(palette, "palette"));
         this.blockStateIndices = Objects.requireNonNull(blockStateIndices, "blockStateIndices").clone();
         this.blockEntities = copyBlockEntities(blockEntities);
-        this.pendingBlockTicks = List.copyOf(Objects.requireNonNull(pendingBlockTicks, "pendingBlockTicks"));
-        this.pendingFluidTicks = List.copyOf(Objects.requireNonNull(pendingFluidTicks, "pendingFluidTicks"));
         this.entities = copyEntities(entities);
 
         this.validate();
@@ -58,20 +51,17 @@ public final class LvcChunk
 
     public static LvcChunk fromTrackedBlockStates(int sizeX, int sizeY, int sizeZ, BitSet trackedMask, List<String> trackedBlockStates)
     {
-        return fromTrackedContent(sizeX, sizeY, sizeZ, trackedMask, trackedBlockStates, List.of(), List.of(), List.of());
+        return fromTrackedContent(sizeX, sizeY, sizeZ, trackedMask, trackedBlockStates, List.of());
     }
 
     public static LvcChunk fromTrackedContent(int sizeX, int sizeY, int sizeZ, BitSet trackedMask, List<String> trackedBlockStates,
-                                             List<BlockEntityRecord> blockEntities, List<ScheduledTickRecord> pendingBlockTicks,
-                                             List<ScheduledTickRecord> pendingFluidTicks)
+                                             List<BlockEntityRecord> blockEntities)
     {
-        return fromTrackedContent(sizeX, sizeY, sizeZ, trackedMask, trackedBlockStates, blockEntities,
-                pendingBlockTicks, pendingFluidTicks, List.of());
+        return fromTrackedContent(sizeX, sizeY, sizeZ, trackedMask, trackedBlockStates, blockEntities, List.of());
     }
 
     public static LvcChunk fromTrackedContent(int sizeX, int sizeY, int sizeZ, BitSet trackedMask, List<String> trackedBlockStates,
-                                             List<BlockEntityRecord> blockEntities, List<ScheduledTickRecord> pendingBlockTicks,
-                                             List<ScheduledTickRecord> pendingFluidTicks, List<EntityRecord> entities)
+                                             List<BlockEntityRecord> blockEntities, List<EntityRecord> entities)
     {
         Objects.requireNonNull(trackedBlockStates, "trackedBlockStates");
         Map<String, Integer> paletteMap = new LinkedHashMap<>();
@@ -92,7 +82,7 @@ public final class LvcChunk
         }
 
         return new LvcChunk(sizeX, sizeY, sizeZ, trackedMask, new ArrayList<>(paletteMap.keySet()), indices,
-                blockEntities, pendingBlockTicks, pendingFluidTicks, entities);
+                blockEntities, entities);
     }
 
     public int sizeX()
@@ -145,16 +135,6 @@ public final class LvcChunk
         return this.blockEntities;
     }
 
-    public List<ScheduledTickRecord> pendingBlockTicks()
-    {
-        return this.pendingBlockTicks;
-    }
-
-    public List<ScheduledTickRecord> pendingFluidTicks()
-    {
-        return this.pendingFluidTicks;
-    }
-
     public List<EntityRecord> entities()
     {
         return this.entities;
@@ -198,16 +178,6 @@ public final class LvcChunk
             {
                 throw new IllegalArgumentException("LVC chunk has duplicate block entity at tracked position: " + blockEntity.index());
             }
-        }
-
-        for (ScheduledTickRecord tick : this.pendingBlockTicks)
-        {
-            requireTrackedIndex(tick.index(), "pending block tick");
-        }
-
-        for (ScheduledTickRecord tick : this.pendingFluidTicks)
-        {
-            requireTrackedIndex(tick.index(), "pending fluid tick");
         }
     }
 
@@ -298,17 +268,6 @@ public final class LvcChunk
         public byte[] canonicalNbt()
         {
             return this.canonicalNbt.clone();
-        }
-    }
-
-    public record ScheduledTickRecord(int index, String targetId, int delay, byte priority, long subTickOrder)
-    {
-        public ScheduledTickRecord
-        {
-            if (targetId == null || targetId.isBlank())
-            {
-                throw new IllegalArgumentException("scheduled tick target ID must not be blank");
-            }
         }
     }
 

@@ -168,8 +168,6 @@ public final class LvcCaptureSession
                 mask,
                 blockStates,
                 blockEntities,
-                List.of(),
-                List.of(),
                 entities
         );
         String trackedHash = LvcChunkStore.objectId(LvcChunkCodec.encodeTrackedContent(chunk));
