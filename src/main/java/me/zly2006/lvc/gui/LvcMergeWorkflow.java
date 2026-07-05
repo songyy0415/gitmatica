@@ -111,10 +111,15 @@ final class LvcMergeWorkflow
                 return;
             }
 
-            if (!scan.clean() || LvcProjectService.hasUncommittedChanges(controller.gui.repositoryDirectory))
+            boolean gitDirty = LvcProjectService.hasUncommittedChanges(controller.gui.repositoryDirectory);
+
+            if (!scan.clean() || gitDirty)
             {
                 LvcTaskRegistry.release(handle);
-                LvcGuiMessages.show(MessageType.ERROR, "litematica.error.lvc_project.merge_branch_dirty");
+                LvcDiagnostics.debug("LVC Merge Branch preflight dirty repo='{}' changedChunks={} addedChunks={} removedChunks={} gitDirty={}",
+                        controller.gui.repositoryDirectory, scan.changedChunks(), scan.addedChunks(), scan.removedChunks(),
+                        gitDirty);
+                LvcOperationCoordinator.showUnsavedChangesNotice(controller, "LVC Merge Branch");
                 return;
             }
 
@@ -177,7 +182,7 @@ final class LvcMergeWorkflow
             if (LvcProjectService.hasUncommittedChanges(controller.gui.repositoryDirectory))
             {
                 LvcTaskRegistry.release(handle);
-                LvcGuiMessages.show(MessageType.ERROR, "litematica.error.lvc_project.merge_branch_dirty");
+                LvcOperationCoordinator.showUnsavedChangesNotice(controller, "LVC Merge Branch");
                 return;
             }
 
@@ -234,12 +239,20 @@ final class LvcMergeWorkflow
                             controller.gui.focusHistoryCommitAfterNextRefresh(merge.commitId());
                             controller.gui.refreshHistory();
                             controller.gui.initGui();
-                            LvcGuiMessages.show(MessageType.SUCCESS,
-                                    merge.status() == LvcProjectService.BranchMergeStatus.FAST_FORWARD ?
-                                            "litematica.message.lvc_project.merge_branch_fast_forward" :
-                                            "litematica.message.lvc_project.merge_branch_merged",
-                                    merge.sourceBranch(), merge.targetBranch(),
-                                    LvcOperationCoordinator.regionCountText(result.restoredRegionCount()));
+                            if (result.postOperationDiffs().detected())
+                            {
+                                LvcOperationCoordinator.showPostOperationDiffsNotice(controller, "LVC Merge Branch",
+                                        result.postOperationDiffs());
+                            }
+                            else
+                            {
+                                LvcGuiMessages.show(MessageType.SUCCESS,
+                                        merge.status() == LvcProjectService.BranchMergeStatus.FAST_FORWARD ?
+                                                "litematica.message.lvc_project.merge_branch_fast_forward" :
+                                                "litematica.message.lvc_project.merge_branch_merged",
+                                        merge.sourceBranch(), merge.targetBranch(),
+                                        LvcOperationCoordinator.regionCountText(result.restoredRegionCount()));
+                            }
                         },
                         e -> LvcGuiMessages.showTaskError(Operation.MERGE_BRANCH,
                                 "litematica.error.lvc_project.merge_branch_failed", e, true),

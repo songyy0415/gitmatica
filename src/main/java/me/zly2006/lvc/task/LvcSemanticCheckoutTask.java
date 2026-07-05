@@ -541,14 +541,16 @@ public final class LvcSemanticCheckoutTask
             LvcOperationJournal.delete(this.checkout.repositoryDirectory);
             LvcCommitChunkCache.Stats cacheStats = this.checkout.chunkCacheStats();
             LvcSemanticRestoreEngine engine = this.requireRestoreEngine();
+            LvcSemanticRestoreEngine.PostOperationDiffs postOperationDiffs = engine.postOperationDiffs();
             LvcDiagnostics.debug(this.handle(),
-                    "semantic checkout apply complete target={} restoredBlocks={} changedChunks={} blockEntityRewrites={} clearedEntities={} spawnedEntities={} chunkCacheCommitHits={} chunkCacheObjectHits={} chunkCacheMisses={} chunkCacheCommitEntries={} chunkCacheObjectEntries={}",
+                    "semantic checkout apply complete target={} restoredBlocks={} changedChunks={} blockEntityRewrites={} clearedEntities={} spawnedEntities={} postOperationDiffs={} dirtySubchunks={} mismatches={} chunkCacheCommitHits={} chunkCacheObjectHits={} chunkCacheMisses={} chunkCacheCommitEntries={} chunkCacheObjectEntries={}",
                     this.checkout.targetCommit.getName(), engine.restoredBlocks(), engine.changedChunks(), engine.blockEntityRewrites(),
-                    engine.clearedEntities(), engine.spawnedEntities(),
+                    engine.clearedEntities(), engine.spawnedEntities(), postOperationDiffs.detected(),
+                    postOperationDiffs.dirtySubchunks(), postOperationDiffs.mismatches(),
                     cacheStats.commitHits(), cacheStats.objectHits(), cacheStats.misses(),
                     cacheStats.commitEntries(), cacheStats.objectEntries());
             return new Result(this.checkout.targetCommit.getName(), this.checkout.targetSite.regions().size(),
-                    engine.restoredBlocks(), engine.blockEntityRewrites());
+                    engine.restoredBlocks(), engine.blockEntityRewrites(), postOperationDiffs);
         }
 
         @Override
@@ -767,7 +769,8 @@ public final class LvcSemanticCheckoutTask
         }
     }
 
-    public record Result(String commitId, int regionCount, int restoredBlocks, int blockEntityRewrites)
+    public record Result(String commitId, int regionCount, int restoredBlocks, int blockEntityRewrites,
+                         LvcSemanticRestoreEngine.PostOperationDiffs postOperationDiffs)
     {
     }
 

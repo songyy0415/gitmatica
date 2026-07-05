@@ -5,18 +5,16 @@ import net.minecraft.client.Minecraft;
 import net.minecraft.world.level.Level;
 import me.zly2006.lvc.LvcDiagnostics;
 import me.zly2006.lvc.LvcFriendlyErrors.Operation;
-import me.zly2006.lvc.LvcProjectService;
 import me.zly2006.lvc.task.LvcOperationHandle;
 import me.zly2006.lvc.task.LvcSemanticClearTask;
 import me.zly2006.lvc.task.LvcSemanticDiscardTask;
-import me.zly2006.lvc.task.LvcSemanticScanTask;
 import me.zly2006.lvc.task.LvcTaskCallbacks;
 import me.zly2006.lvc.task.LvcTaskRegistry;
 import me.zly2006.lvc.task.LvcTaskScheduling;
 import me.zly2006.lvc.world.LvcWorldAccess;
+import fi.dy.masa.litematica.config.Configs;
 import fi.dy.masa.malilib.gui.GuiBase;
 import fi.dy.masa.malilib.gui.Message.MessageType;
-import fi.dy.masa.malilib.util.StringUtils;
 
 final class LvcAreaWorkflow
 {
@@ -45,18 +43,9 @@ final class LvcAreaWorkflow
         try
         {
             Level restoreWorld = LvcWorldAccess.resolveSemanticRestoreWorld(world);
-            LvcSemanticScanTask task = new LvcSemanticScanTask(
-                    handle.get(),
-                    controller.gui.repositoryDirectory,
-                    restoreWorld,
-                    LvcTaskCallbacks.of(
-                            result -> handleClearPreflight(controller, handle.get(), restoreWorld, result),
-                            e -> LvcGuiMessages.showTaskError(Operation.CLEAR_AREA, "litematica.error.lvc_project.clear_area_failed", e),
-                            () -> LvcGuiMessages.show(MessageType.INFO, "litematica.message.lvc_project.task_aborted", "LVC Clear Area")
-                    ),
-                    false
-            );
-            LvcOperationCoordinator.scheduleStarted(restoreWorld, task, "LVC Clear Area");
+            LvcDiagnostics.debug("LVC Clear Area starting without preflight scan repo='{}'",
+                    controller.gui.repositoryDirectory);
+            openClearAreaConfirm(controller, handle.get(), restoreWorld);
         }
         catch (Exception e)
         {
@@ -114,61 +103,6 @@ final class LvcAreaWorkflow
         LvcTaskScheduling.scheduleForWorld(restoreWorld, task);
     }
 
-    private static void handleClearPreflight(GuiLvcProjectController controller, LvcOperationHandle handle,
-                                             Level restoreWorld, LvcProjectService.SemanticScanResult scan)
-    {
-        if (scan.unknownChunks() > 0)
-        {
-            LvcTaskRegistry.release(handle);
-            LvcGuiMessages.showUnloadedTrackedChunks(Operation.CLEAR_AREA,
-                    "litematica.error.lvc_project.clear_area_failed", scan.unknownChunks());
-            return;
-        }
-
-        if (scan.clean())
-        {
-            scheduleClear(controller, handle, restoreWorld);
-            return;
-        }
-
-        controller.gui.trackingStatus = StringUtils.translate(
-                "litematica.gui.label.lvc_project.semantic_scan_dirty",
-                scan.changedChunks(),
-                scan.addedChunks(),
-                scan.removedChunks()
-        );
-        logClearPreflightDirty(controller, scan);
-        GuiBase.openGui(new GuiLvcConfirmAction(
-                340,
-                "litematica.gui.title.lvc_project.confirm_clear_area",
-                new LvcOperationCoordinator.HeldLockConfirmListener(
-                        handle,
-                        () -> scheduleClear(controller, handle, restoreWorld)
-                ),
-                LvcOperationCoordinator.confirmParent(controller),
-                "litematica.gui.message.lvc_project.confirm_clear_area",
-                scan.changedChunks(),
-                scan.addedChunks(),
-                scan.removedChunks()
-        ));
-    }
-
-    private static void logClearPreflightDirty(GuiLvcProjectController controller, LvcProjectService.SemanticScanResult scan)
-    {
-        LvcDiagnostics.debug("LVC Clear Area preflight dirty repo='{}' changedChunks={} addedChunks={} removedChunks={}",
-                controller.gui.repositoryDirectory, scan.changedChunks(), scan.addedChunks(), scan.removedChunks());
-
-        if (scan.samples().isEmpty())
-        {
-            return;
-        }
-
-        for (LvcProjectService.SemanticScanMismatch sample : scan.samples())
-        {
-            LvcDiagnostics.info("LVC Clear Area preflight mismatch: {}", sample.summary());
-        }
-    }
-
     private static void scheduleDiscard(GuiLvcProjectController controller, Level restoreWorld)
     {
         Optional<LvcOperationHandle> handle = LvcOperationCoordinator.acquire(controller, "LVC Discard Changes");
@@ -204,12 +138,28 @@ final class LvcAreaWorkflow
 
                             if (result.restoredRegionCount() > 0)
                             {
-                                LvcGuiMessages.show(MessageType.SUCCESS, "litematica.message.lvc_project.discarded_changes",
-                                        LvcOperationCoordinator.regionCountText(result.restoredRegionCount()));
+                                if (result.postOperationDiffs().detected())
+                                {
+                                    LvcOperationCoordinator.showPostOperationDiffsNotice(controller, "LVC Discard Changes",
+                                            result.postOperationDiffs());
+                                }
+                                else
+                                {
+                                    LvcGuiMessages.show(MessageType.SUCCESS, "litematica.message.lvc_project.discarded_changes",
+                                            LvcOperationCoordinator.regionCountText(result.restoredRegionCount()));
+                                }
                             }
                             else
                             {
-                                LvcGuiMessages.show(MessageType.SUCCESS, "litematica.message.lvc_project.discarded_changes_no_regions");
+                                if (result.postOperationDiffs().detected())
+                                {
+                                    LvcOperationCoordinator.showPostOperationDiffsNotice(controller, "LVC Discard Changes",
+                                            result.postOperationDiffs());
+                                }
+                                else
+                                {
+                                    LvcGuiMessages.show(MessageType.SUCCESS, "litematica.message.lvc_project.discarded_changes_no_regions");
+                                }
                             }
                         },
                         e -> LvcGuiMessages.showTaskError(Operation.DISCARD_CHANGES, "litematica.error.lvc_project.discard_failed", e, true),
@@ -221,12 +171,45 @@ final class LvcAreaWorkflow
 
     private static void openDiscardConfirm(GuiLvcProjectController controller, Runnable confirmed)
     {
-        GuiBase.openGui(new GuiLvcConfirmAction(
-                300,
+        if (!Configs.Generic.LVC_SHOW_DISCARD_CHANGES_WARNING.getBooleanValue())
+        {
+            LvcDiagnostics.debug("LVC Discard Changes confirmation skipped by global config repo='{}'",
+                    controller.gui.repositoryDirectory);
+            confirmed.run();
+            return;
+        }
+
+        GuiBase.openGui(new GuiLvcWarningConfirmDialog(
+                LvcOperationCoordinator.confirmParent(controller),
                 "litematica.gui.title.lvc_project.confirm_discard_changes",
-                new LvcOperationCoordinator.ConfirmListener(confirmed),
-                controller.gui,
-                "litematica.gui.message.lvc_project.confirm_discard_changes"
+                "litematica.gui.message.lvc_project.confirm_discard_changes",
+                Configs.Generic.LVC_SHOW_DISCARD_CHANGES_WARNING,
+                "LVC Discard Changes",
+                confirmed,
+                () -> {}
+        ));
+    }
+
+    private static void openClearAreaConfirm(GuiLvcProjectController controller, LvcOperationHandle handle, Level restoreWorld)
+    {
+        if (!Configs.Generic.LVC_SHOW_CLEAR_AREA_WARNING.getBooleanValue())
+        {
+            LvcDiagnostics.debug("LVC Clear Area confirmation skipped by global config repo='{}'",
+                    controller.gui.repositoryDirectory);
+            scheduleClear(controller, handle, restoreWorld);
+            return;
+        }
+
+        LvcDiagnostics.debug("LVC Clear Area awaiting confirmation repo='{}'",
+                controller.gui.repositoryDirectory);
+        GuiBase.openGui(new GuiLvcWarningConfirmDialog(
+                LvcOperationCoordinator.confirmParent(controller),
+                "litematica.gui.title.lvc_project.confirm_clear_area",
+                "litematica.gui.message.lvc_project.confirm_clear_area",
+                Configs.Generic.LVC_SHOW_CLEAR_AREA_WARNING,
+                "LVC Clear Area",
+                () -> scheduleClear(controller, handle, restoreWorld),
+                () -> LvcTaskRegistry.release(handle)
         ));
     }
 }

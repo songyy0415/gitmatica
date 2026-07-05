@@ -6,10 +6,11 @@ import net.minecraft.client.gui.screens.Screen;
 import net.minecraft.world.level.Level;
 import me.zly2006.lvc.LvcDiagnostics;
 import me.zly2006.lvc.task.LvcOperationHandle;
-import me.zly2006.lvc.task.LvcSemanticCheckoutTask;
+import me.zly2006.lvc.task.LvcSemanticRestoreEngine;
 import me.zly2006.lvc.task.LvcTaskRegistry;
 import me.zly2006.lvc.task.LvcTaskScheduling;
 import fi.dy.masa.litematica.scheduler.ITask;
+import fi.dy.masa.malilib.gui.GuiBase;
 import fi.dy.masa.malilib.gui.Message.MessageType;
 import fi.dy.masa.malilib.interfaces.IConfirmationListener;
 import fi.dy.masa.malilib.util.GuiUtils;
@@ -17,6 +18,11 @@ import fi.dy.masa.malilib.util.StringUtils;
 
 final class LvcOperationCoordinator
 {
+    private static final int UNSAVED_CHANGES_TEXT_COLOR = 0xFFB0B0B0;
+    private static final int UNSAVED_CHANGES_DIALOG_WIDTH = 250;
+    private static final int UNSAVED_CHANGES_DIALOG_PADDING = 8;
+    private static final int POST_OPERATION_DIFFS_TEXT_COLOR = 0xFFB0B0B0;
+
     private LvcOperationCoordinator()
     {
     }
@@ -64,67 +70,48 @@ final class LvcOperationCoordinator
         return parent;
     }
 
+    static void showUnsavedChangesNotice(GuiLvcProjectController controller, String operationName)
+    {
+        LvcDiagnostics.debug("LVC world mutation blocked by unsaved changes operation='{}' repo='{}'",
+                operationName, controller.gui.repositoryDirectory);
+        GuiBase.openGui(new GuiLvcNoticeDialog(
+                confirmParent(controller),
+                UNSAVED_CHANGES_DIALOG_WIDTH,
+                UNSAVED_CHANGES_DIALOG_PADDING,
+                "litematica.gui.title.lvc_project.unsaved_changes",
+                "litematica.gui.message.lvc_project.unsaved_changes",
+                UNSAVED_CHANGES_TEXT_COLOR
+        ));
+    }
+
+    static void showPostOperationDiffsNotice(GuiLvcProjectController controller, String operationName,
+                                             LvcSemanticRestoreEngine.PostOperationDiffs diffs)
+    {
+        if (!diffs.detected())
+        {
+            return;
+        }
+
+        LvcDiagnostics.info("LVC {} completed with post-operation diffs repo='{}' dirtySubchunks={} mismatches={} stateMismatches={} blockEntityMismatches={} dirtySubchunkPasses={} activeEntityClearPasses={} finalSettledVerify={}",
+                operationName, controller.gui.repositoryDirectory, diffs.dirtySubchunks(), diffs.mismatches(),
+                diffs.stateMismatches(), diffs.blockEntityMismatches(), diffs.dirtySubchunkRewritePasses(),
+                diffs.activeEntityClearPasses(), diffs.finalSettledVerify());
+        GuiBase.openGui(new GuiLvcNoticeDialog(
+                confirmParent(controller),
+                UNSAVED_CHANGES_DIALOG_WIDTH,
+                UNSAVED_CHANGES_DIALOG_PADDING,
+                "litematica.gui.title.lvc_project.post_operation_diffs",
+                "litematica.gui.message.lvc_project.post_operation_diffs",
+                POST_OPERATION_DIFFS_TEXT_COLOR,
+                diffs.mismatches(),
+                diffs.dirtySubchunks(),
+                diffs.dirtySubchunks() == 1 ? "" : "s"
+        ));
+    }
+
     private static String screenName(Screen screen)
     {
         return screen == null ? "<none>" : screen.getClass().getSimpleName();
-    }
-
-    record HeldLockConfirmListener(LvcOperationHandle handle, Runnable confirmed) implements IConfirmationListener
-    {
-        @Override
-        public boolean onActionConfirmed()
-        {
-            this.confirmed.run();
-            return true;
-        }
-
-        @Override
-        public boolean onActionCancelled()
-        {
-            LvcTaskRegistry.release(this.handle);
-            return true;
-        }
-    }
-
-    record HeldPreparedCheckoutConfirmListener(LvcOperationHandle handle,
-                                               LvcSemanticCheckoutTask.PreparedCheckout prepared,
-                                               Runnable confirmed,
-                                               Runnable cancelled) implements IConfirmationListener
-    {
-        HeldPreparedCheckoutConfirmListener
-        {
-            LvcTaskRegistry.setAbortCleanup(handle, prepared::close);
-        }
-
-        HeldPreparedCheckoutConfirmListener(LvcOperationHandle handle,
-                                            LvcSemanticCheckoutTask.PreparedCheckout prepared,
-                                            Runnable confirmed)
-        {
-            this(handle, prepared, confirmed, () -> { });
-        }
-
-        @Override
-        public boolean onActionConfirmed()
-        {
-            if (!LvcTaskRegistry.isActive(this.handle))
-            {
-                this.prepared.close();
-                this.cancelled.run();
-                return true;
-            }
-
-            this.confirmed.run();
-            return true;
-        }
-
-        @Override
-        public boolean onActionCancelled()
-        {
-            this.prepared.close();
-            LvcTaskRegistry.release(this.handle);
-            this.cancelled.run();
-            return true;
-        }
     }
 
     record ConfirmListener(Runnable confirmed) implements IConfirmationListener

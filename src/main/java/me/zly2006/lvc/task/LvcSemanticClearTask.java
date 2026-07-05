@@ -100,10 +100,11 @@ public final class LvcSemanticClearTask extends LvcChunkedTaskBase<LvcProjectSer
     {
         LvcSemanticRestoreEngine engine = this.requireRestoreEngine();
         LvcProjectService.SemanticWorldClearResult result =
-                new LvcProjectService.SemanticWorldClearResult(this.regionCount, engine.restoredBlocks());
-        LvcDiagnostics.debug(this.handle(), "semantic clear complete regions={} clearedBlocks={} clearedEntities={} changedChunks={} dirtySubchunkPasses={}",
+                new LvcProjectService.SemanticWorldClearResult(this.regionCount, engine.restoredBlocks(), engine.postOperationDiffs());
+        LvcDiagnostics.debug(this.handle(), "semantic clear complete regions={} clearedBlocks={} clearedEntities={} changedChunks={} dirtySubchunkPasses={} postOperationDiffs={} dirtySubchunks={} mismatches={}",
                 result.regionCount(), result.clearedBlocks(), engine.clearedEntities(), engine.changedChunks(),
-                engine.fullSubchunkRewritePasses());
+                engine.fullSubchunkRewritePasses(), result.postOperationDiffs().detected(),
+                result.postOperationDiffs().dirtySubchunks(), result.postOperationDiffs().mismatches());
         LvcRefreshMarker.write(this.repositoryDirectory, "clear", null);
         LvcOperationJournal.delete(this.repositoryDirectory);
         return result;

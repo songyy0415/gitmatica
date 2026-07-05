@@ -13,6 +13,7 @@ import me.zly2006.lvc.task.LvcTaskCallbacks;
 import me.zly2006.lvc.task.LvcTaskRegistry;
 import me.zly2006.lvc.task.LvcTaskScheduling;
 import me.zly2006.lvc.world.LvcWorldAccess;
+import fi.dy.masa.litematica.config.Configs;
 import fi.dy.masa.malilib.gui.GuiBase;
 import fi.dy.masa.malilib.gui.Message.MessageType;
 
@@ -203,11 +204,41 @@ final class LvcCheckoutWorkflow
 
         if (result.hasUncommittedChanges())
         {
-            openPreparedCheckoutConfirm(controller, handle, result.prepared(), target, result.gitChanges());
+            result.prepared().close();
+            LvcTaskRegistry.release(handle);
+            target.syncBranchDropdownIfNeeded(controller);
+            LvcOperationCoordinator.showUnsavedChangesNotice(controller, target.taskName());
             return;
         }
 
-        schedulePreparedCheckout(controller, handle, result.prepared(), target);
+        openCheckoutConfirm(controller, handle, result.prepared(), target);
+    }
+
+    private static void openCheckoutConfirm(GuiLvcProjectController controller, LvcOperationHandle handle,
+                                            LvcSemanticCheckoutTask.PreparedCheckout prepared, CheckoutTarget target)
+    {
+        if (!Configs.Generic.LVC_SHOW_CHECKOUT_WARNING.getBooleanValue())
+        {
+            LvcDiagnostics.debug("LVC Checkout confirmation skipped by global config repo='{}' target='{}'",
+                    controller.gui.repositoryDirectory, target.displayName());
+            schedulePreparedCheckout(controller, handle, prepared, target);
+            return;
+        }
+
+        GuiBase.openGui(new GuiLvcWarningConfirmDialog(
+                LvcOperationCoordinator.confirmParent(controller),
+                "litematica.gui.title.lvc_project.confirm_checkout",
+                "litematica.gui.message.lvc_project.confirm_checkout",
+                Configs.Generic.LVC_SHOW_CHECKOUT_WARNING,
+                target.taskName(),
+                () -> schedulePreparedCheckout(controller, handle, prepared, target),
+                () ->
+                {
+                    prepared.close();
+                    LvcTaskRegistry.release(handle);
+                    target.syncBranchDropdownIfNeeded(controller);
+                }
+        ));
     }
 
     private static void schedulePreparedCheckout(GuiLvcProjectController controller, LvcOperationHandle handle,
@@ -231,7 +262,15 @@ final class LvcCheckoutWorkflow
                                 }
 
                                 controller.gui.initGui();
-                                target.showSuccess(result.regionCount());
+                                if (result.postOperationDiffs().detected())
+                                {
+                                    LvcOperationCoordinator.showPostOperationDiffsNotice(controller, target.taskName(),
+                                            result.postOperationDiffs());
+                                }
+                                else
+                                {
+                                    target.showSuccess(result.regionCount());
+                                }
                             },
                             e ->
                             {
@@ -256,25 +295,6 @@ final class LvcCheckoutWorkflow
         }
     }
 
-    private static void openPreparedCheckoutConfirm(GuiLvcProjectController controller, LvcOperationHandle handle,
-                                                    LvcSemanticCheckoutTask.PreparedCheckout prepared,
-                                                    CheckoutTarget target, boolean resetFirst)
-    {
-        GuiBase.openGui(new GuiLvcConfirmAction(
-                340,
-                target.confirmTitleKey(resetFirst),
-                new LvcOperationCoordinator.HeldPreparedCheckoutConfirmListener(
-                        handle,
-                        prepared,
-                        () -> schedulePreparedCheckout(controller, handle, prepared, target),
-                        () -> target.syncBranchDropdownIfNeeded(controller)
-                ),
-                LvcOperationCoordinator.confirmParent(controller),
-                target.confirmMessageKey(resetFirst),
-                target.displayName()
-        ));
-    }
-
     private record CheckoutTarget(String commitId, String displayName, @Nullable String branchName, boolean branchSwitch)
     {
         private static CheckoutTarget commit(LvcProjectService.CommitInfo commit)
@@ -295,28 +315,6 @@ final class LvcCheckoutWorkflow
         private Operation operation()
         {
             return this.branchSwitch ? Operation.CHECKOUT_BRANCH : Operation.CHECKOUT;
-        }
-
-        private String confirmTitleKey(boolean resetFirst)
-        {
-            if (this.branchSwitch)
-            {
-                return "litematica.gui.title.lvc_project.confirm_switch_branch";
-            }
-
-            return resetFirst ? "litematica.gui.title.lvc_project.confirm_reset_checkout" :
-                    "litematica.gui.title.lvc_project.confirm_checkout";
-        }
-
-        private String confirmMessageKey(boolean resetFirst)
-        {
-            if (this.branchSwitch)
-            {
-                return "litematica.gui.message.lvc_project.confirm_switch_branch_dirty";
-            }
-
-            return resetFirst ? "litematica.gui.message.lvc_project.confirm_reset_checkout" :
-                    "litematica.gui.message.lvc_project.confirm_checkout_semantic";
         }
 
         private boolean reattachIfNeeded(GuiLvcProjectController controller)

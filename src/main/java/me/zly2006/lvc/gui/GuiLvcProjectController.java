@@ -258,8 +258,16 @@ final class GuiLvcProjectController
                             result ->
                             {
                                 this.refreshAfterLatestVersionDelete();
-                                LvcGuiMessages.show(MessageType.SUCCESS, "litematica.message.lvc_project.deleted_version_delete_changes",
-                                        commit.shortId(), LvcOperationCoordinator.regionCountText(result.regionCount()));
+                                if (result.postOperationDiffs().detected())
+                                {
+                                    LvcOperationCoordinator.showPostOperationDiffsNotice(this, "LVC Delete Version",
+                                            result.postOperationDiffs());
+                                }
+                                else
+                                {
+                                    LvcGuiMessages.show(MessageType.SUCCESS, "litematica.message.lvc_project.deleted_version_delete_changes",
+                                            commit.shortId(), LvcOperationCoordinator.regionCountText(result.regionCount()));
+                                }
                             },
                             e -> LvcGuiMessages.showTaskError(Operation.DELETE_VERSION,
                                     "litematica.error.lvc_project.delete_version_failed", e, true),

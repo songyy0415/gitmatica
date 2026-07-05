@@ -39,6 +39,7 @@ import me.zly2006.lvc.capture.LvcCaptureEngine;
 import me.zly2006.lvc.model.LvcLocalState;
 import me.zly2006.lvc.model.LvcManifest;
 import me.zly2006.lvc.storage.LvcSemanticRepository;
+import me.zly2006.lvc.task.LvcSemanticRestoreEngine;
 import me.zly2006.lvc.project.LvcProjectPaths;
 import me.zly2006.lvc.project.LvcProjectPositions;
 import me.zly2006.lvc.project.LvcProjectSelectionStorage;
@@ -666,8 +667,13 @@ public final class LvcProjectService
     {
     }
 
-    public record SemanticWorldClearResult(int regionCount, int clearedBlocks)
+    public record SemanticWorldClearResult(int regionCount, int clearedBlocks,
+                                           LvcSemanticRestoreEngine.PostOperationDiffs postOperationDiffs)
     {
+        public SemanticWorldClearResult(int regionCount, int clearedBlocks)
+        {
+            this(regionCount, clearedBlocks, LvcSemanticRestoreEngine.PostOperationDiffs.clean());
+        }
     }
 
     public record UpdateAreasResult(@Nullable RevCommit commit, int regionCount)

@@ -100,6 +100,9 @@ public class Configs implements IConfigHandler
         public static final ConfigBoolean       GENERATE_LOWERCASE_NAMES    = new ConfigBoolean("generateLowercaseNames", false).apply(GENERIC_KEY);
         public static final ConfigBoolean       HIGHLIGHT_BLOCK_IN_INV      = new ConfigBoolean("highlightBlockInInventory", false).apply(GENERIC_KEY);
         public static final ConfigBoolean       ITEM_USE_PACKET_CHECK_BYPASS= new ConfigBoolean("itemUsePacketCheckBypass", true).apply(GENERIC_KEY);
+        public static final ConfigBoolean       LVC_SHOW_CHECKOUT_WARNING   = new ConfigBoolean("lvcShowCheckoutWarning", true).apply(GENERIC_KEY);
+        public static final ConfigBoolean       LVC_SHOW_CLEAR_AREA_WARNING = new ConfigBoolean("lvcShowClearAreaWarning", true).apply(GENERIC_KEY);
+        public static final ConfigBoolean       LVC_SHOW_DISCARD_CHANGES_WARNING= new ConfigBoolean("lvcShowDiscardChangesWarning", true).apply(GENERIC_KEY);
         public static final ConfigBoolean       LAYER_MODE_DYNAMIC          = new ConfigBoolean("layerModeFollowsPlayer", false).apply(GENERIC_KEY);
         public static final ConfigBoolean       LOAD_ENTIRE_SCHEMATICS      = new ConfigBoolean("loadEntireSchematics", false).apply(GENERIC_KEY);
         public static final ConfigBoolean       MATERIAL_LIST_IGNORE_STATE  = new ConfigBoolean("materialListIgnoreState", false).apply(GENERIC_KEY);
@@ -181,6 +184,9 @@ public class Configs implements IConfigHandler
                 GENERATE_LOWERCASE_NAMES,
                 HIGHLIGHT_BLOCK_IN_INV,
                 ITEM_USE_PACKET_CHECK_BYPASS,
+                LVC_SHOW_CHECKOUT_WARNING,
+                LVC_SHOW_CLEAR_AREA_WARNING,
+                LVC_SHOW_DISCARD_CHANGES_WARNING,
                 LAYER_MODE_DYNAMIC,
                 //LOAD_ENTIRE_SCHEMATICS,
                 MATERIAL_LIST_IGNORE_STATE,

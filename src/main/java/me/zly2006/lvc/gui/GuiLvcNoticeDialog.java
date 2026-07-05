@@ -5,7 +5,6 @@ import java.util.List;
 import net.minecraft.client.gui.screens.Screen;
 import net.minecraft.client.input.KeyEvent;
 
-import fi.dy.masa.malilib.gui.GuiBase;
 import fi.dy.masa.malilib.gui.GuiDialogBase;
 import fi.dy.masa.malilib.gui.button.ButtonGeneric;
 import fi.dy.masa.malilib.render.GuiContext;
@@ -15,41 +14,50 @@ import fi.dy.masa.malilib.util.StringUtils;
 
 class GuiLvcNoticeDialog extends GuiDialogBase
 {
-    private static final int DIALOG_WIDTH = 360;
+    private static final int DEFAULT_DIALOG_WIDTH = 360;
     private static final int MIN_DIALOG_HEIGHT = 92;
-    private static final int PADDING = 10;
+    private static final int DEFAULT_PADDING = 10;
     private static final int BUTTON_HEIGHT = 20;
     private static final int LINE_HEIGHT = 12;
     private static final int BACKGROUND_MOUSE = Integer.MIN_VALUE;
 
     private final String message;
     private final int textColor;
+    private final int configuredWidth;
+    private final int padding;
     private List<String> lines = List.of();
 
     GuiLvcNoticeDialog(Screen parent, String titleKey, String messageKey, int textColor, Object... args)
     {
+        this(parent, DEFAULT_DIALOG_WIDTH, DEFAULT_PADDING, titleKey, messageKey, textColor, args);
+    }
+
+    GuiLvcNoticeDialog(Screen parent, int configuredWidth, int padding, String titleKey, String messageKey, int textColor, Object... args)
+    {
         this.message = StringUtils.translate(messageKey, args);
         this.textColor = textColor;
+        this.configuredWidth = Math.max(180, configuredWidth);
+        this.padding = Math.max(4, padding);
         this.setParent(parent);
         this.title = StringUtils.translate(titleKey);
         this.useTitleHierarchy = false;
-        this.setWidthAndHeight(DIALOG_WIDTH, MIN_DIALOG_HEIGHT);
+        this.setWidthAndHeight(this.configuredWidth, MIN_DIALOG_HEIGHT);
     }
 
     @Override
     public void initGui()
     {
         this.clearElements();
-        this.lines = this.wrapTextToWidth(this.message, DIALOG_WIDTH - PADDING * 2);
+        this.lines = this.wrapTextToWidth(this.message, this.configuredWidth - this.padding * 2);
         int textHeight = this.lines.size() * LINE_HEIGHT;
-        int dialogHeight = Math.max(MIN_DIALOG_HEIGHT, PADDING + 16 + textHeight + 14 + BUTTON_HEIGHT + PADDING);
-        this.setWidthAndHeight(DIALOG_WIDTH, dialogHeight);
+        int dialogHeight = Math.max(MIN_DIALOG_HEIGHT, this.padding + 16 + textHeight + 14 + BUTTON_HEIGHT + this.padding);
+        this.setWidthAndHeight(this.configuredWidth, dialogHeight);
         this.centerOnScreen();
 
-        String okLabel = GuiBase.TXT_GREEN + StringUtils.translate("malilib.gui.button.ok") + GuiBase.TXT_RST;
+        String okLabel = StringUtils.translate("malilib.gui.button.ok");
         int okWidth = Math.max(50, this.getStringWidth(okLabel) + 18);
-        int x = this.dialogLeft + PADDING;
-        int y = this.dialogTop + this.dialogHeight - PADDING - BUTTON_HEIGHT;
+        int x = this.dialogLeft + this.padding;
+        int y = this.dialogTop + this.dialogHeight - this.padding - BUTTON_HEIGHT;
         this.addButton(new ButtonGeneric(x, y, okWidth, BUTTON_HEIGHT, okLabel), (button, mouseButton) -> this.closeGui(true));
     }
 
@@ -76,6 +84,12 @@ class GuiLvcNoticeDialog extends GuiDialogBase
     }
 
     @Override
+    protected void drawTitle(GuiContext ctx, int mouseX, int mouseY, float partialTicks)
+    {
+        // This dialog draws its title inside the popup box.
+    }
+
+    @Override
     protected void drawContents(GuiContext ctx, int mouseX, int mouseY, float partialTicks)
     {
         Screen parent = this.getParent();
@@ -86,13 +100,13 @@ class GuiLvcNoticeDialog extends GuiDialogBase
         }
 
         RenderUtils.drawOutlinedBox(ctx, this.dialogLeft, this.dialogTop, this.dialogWidth, this.dialogHeight, 0xE0000000, COLOR_HORIZONTAL_BAR);
-        this.drawStringWithShadow(ctx, this.getTitleString(), this.dialogLeft + PADDING, this.dialogTop + 6, COLOR_WHITE);
+        this.drawStringWithShadow(ctx, this.getTitleString(), this.dialogLeft + this.padding, this.dialogTop + 6, COLOR_WHITE);
 
         int y = this.dialogTop + 28;
 
         for (String line : this.lines)
         {
-            this.drawStringWithShadow(ctx, line, this.dialogLeft + PADDING, y, this.textColor);
+            this.drawStringWithShadow(ctx, line, this.dialogLeft + this.padding, y, this.textColor);
             y += LINE_HEIGHT;
         }
 

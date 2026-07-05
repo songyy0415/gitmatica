@@ -47,11 +47,6 @@ public final class LvcGuiMessages
 
     public static void renderInGameMessages(GuiContext ctx)
     {
-        if (GuiUtils.getCurrentScreen() == null && ctx.mc().gui.hud.isHidden())
-        {
-            return;
-        }
-
         if (IN_GAME_MESSAGES.isEmpty())
         {
             return;
@@ -59,6 +54,11 @@ public final class LvcGuiMessages
 
         long now = System.currentTimeMillis();
         IN_GAME_MESSAGES.removeIf(message -> message.hasExpired(now));
+
+        if (GuiUtils.getCurrentScreen() != null || ctx.mc().gui.hud.isHidden())
+        {
+            return;
+        }
 
         if (IN_GAME_MESSAGES.isEmpty())
         {

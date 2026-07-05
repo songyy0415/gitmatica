@@ -754,7 +754,15 @@ final class GuiLvcProjectTaskActions
                             {
                                 controller.loadTrackingOverlay();
                                 controller.gui.initGui();
-                                LvcGuiMessages.show(MessageType.SUCCESS, successMessageKey, successMessageArgs);
+                                if (result.postOperationDiffs().detected())
+                                {
+                                    LvcOperationCoordinator.showPostOperationDiffsNotice(controller, displayName,
+                                            result.postOperationDiffs());
+                                }
+                                else
+                                {
+                                    LvcGuiMessages.show(MessageType.SUCCESS, successMessageKey, successMessageArgs);
+                                }
                             },
                             e -> LvcGuiMessages.showTaskError(Operation.RECOVERY, "litematica.error.lvc_project.recovery_failed", e, true),
                             () -> LvcGuiMessages.show(MessageType.INFO, "litematica.message.lvc_project.task_aborted", "LVC Recovery")
@@ -792,7 +800,15 @@ final class GuiLvcProjectTaskActions
                         {
                             controller.loadTrackingOverlay();
                             controller.gui.initGui();
-                            LvcGuiMessages.show(MessageType.SUCCESS, successMessageKey, successMessageArgs);
+                            if (result.postOperationDiffs().detected())
+                            {
+                                LvcOperationCoordinator.showPostOperationDiffsNotice(controller, "LVC Recovery",
+                                        result.postOperationDiffs());
+                            }
+                            else
+                            {
+                                LvcGuiMessages.show(MessageType.SUCCESS, successMessageKey, successMessageArgs);
+                            }
                         },
                         e -> LvcGuiMessages.showTaskError(Operation.RECOVERY, "litematica.error.lvc_project.recovery_failed", e, true),
                         () -> LvcGuiMessages.show(MessageType.INFO, "litematica.message.lvc_project.task_aborted", "LVC Recovery")
@@ -818,7 +834,15 @@ final class GuiLvcProjectTaskActions
                         {
                             controller.loadTrackingOverlay();
                             controller.gui.initGui();
-                            LvcGuiMessages.show(MessageType.SUCCESS, successMessageKey, successMessageArgs);
+                            if (result.postOperationDiffs().detected())
+                            {
+                                LvcOperationCoordinator.showPostOperationDiffsNotice(controller, "LVC Recovery",
+                                        result.postOperationDiffs());
+                            }
+                            else
+                            {
+                                LvcGuiMessages.show(MessageType.SUCCESS, successMessageKey, successMessageArgs);
+                            }
                         },
                         e -> LvcGuiMessages.showTaskError(Operation.RECOVERY, "litematica.error.lvc_project.recovery_failed", e, true),
                         () -> LvcGuiMessages.show(MessageType.INFO, "litematica.message.lvc_project.task_aborted", "LVC Recovery")
