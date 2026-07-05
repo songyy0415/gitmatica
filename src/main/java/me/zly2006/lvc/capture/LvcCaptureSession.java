@@ -82,6 +82,21 @@ public final class LvcCaptureSession
         return this.blockEntityRecords;
     }
 
+    public LvcIntPosition origin()
+    {
+        return this.plan.origin();
+    }
+
+    public LvcSiteWorkPlan.ChunkWork currentChunkWork()
+    {
+        if (this.isComplete())
+        {
+            throw new IllegalStateException("LVC capture session is complete");
+        }
+
+        return this.plan.chunks().get(this.nextChunkIndex);
+    }
+
     public void processNextChunk() throws IOException
     {
         if (this.isComplete())

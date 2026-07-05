@@ -34,26 +34,12 @@ import me.zly2006.lvc.storage.LvcChunkStore;
 
 public final class LvcSemanticRestoreEngine
 {
-    private static final int MAX_FULL_SUBCHUNK_REWRITE_PASSES = 3;
-    private static final int MAX_ACTIVE_SIMULATION_CLEAR_PASSES = 80;
-    private static final int REQUIRED_QUIET_ENTITY_CLEAR_PASSES = 2;
-    private static final int FINAL_SETTLED_VERIFY_DELAY_TICKS = 20;
-    private static final int FINAL_BLOCK_ENTITY_SETTLED_VERIFY_DELAY_TICKS = 100;
     private static final int MISMATCH_SAMPLE_LIMIT = 8;
-    private static final int[][] FACE_NEIGHBOR_OFFSETS = {
-            { 1, 0, 0 },
-            { -1, 0, 0 },
-            { 0, 1, 0 },
-            { 0, -1, 0 },
-            { 0, 0, 1 },
-            { 0, 0, -1 }
-    };
 
     private final ServerLevel world;
     private final LvcManifest.Site targetSite;
     private final LvcIntPosition origin;
     private final List<Map.Entry<String, String>> chunkRefs;
-    private final Map<String, Map.Entry<String, String>> chunkRefsByKey = new LinkedHashMap<>();
     private final ChunkReader chunkReader;
     private final MutationCallback mutationCallback;
     private final PositionCallback restoredPositionCallback;
@@ -65,21 +51,15 @@ public final class LvcSemanticRestoreEngine
     private final LongOpenHashSet authoritativeClientSyncPositions = new LongOpenHashSet();
     private final Set<UUID> restoredEntityUuids = new HashSet<>();
     private final Set<String> rewrittenChunkKeys = new HashSet<>();
-    private final Map<String, Map.Entry<String, String>> cumulativeDirtyRewriteChunkRefs = new LinkedHashMap<>();
     private final Map<Long, List<RewriteTarget>> pendingRewritesByRealChunk = new LinkedHashMap<>();
     private final List<Long> pendingRewriteRealChunkKeys = new ArrayList<>();
-    private final Map<Long, List<RewriteTarget>> pendingFullRewritesByRealChunk = new LinkedHashMap<>();
-    private final List<Long> pendingFullRewriteRealChunkKeys = new ArrayList<>();
     private final List<String> dirtyChunkKeys = new ArrayList<>();
     private final Set<String> dirtyChunkKeySet = new HashSet<>();
     private final List<String> mismatchSamples = new ArrayList<>();
     private Phase phase = Phase.INITIAL_SCAN;
     private int scanChunkIndex;
     private int rewriteIndex;
-    private int fullRewriteChunkIndex;
-    private int fullSubchunkRewritePasses;
     private int pendingRewriteCount;
-    private int pendingFullRewriteCount;
     private int restoredBlocks;
     private int changedChunks;
     private int blockEntityRewrites;
@@ -89,14 +69,9 @@ public final class LvcSemanticRestoreEngine
     private int latestScanStateMismatches;
     private int latestScanBlockEntityMismatches;
     private int latestScanOmittedSamples;
-    private int activeSimulationClearPasses;
-    private int quietEntityClearPasses;
-    private int settledVerifyWaitTicks;
-    private int settledVerifyTargetTicks = FINAL_SETTLED_VERIFY_DELAY_TICKS;
     private boolean storedEntitiesRestored;
     private boolean clientSyncScheduled;
     private boolean yieldAfterStep;
-    private boolean settledVerifyAttempted;
     private PostOperationDiffs postOperationDiffs = PostOperationDiffs.clean();
 
     public LvcSemanticRestoreEngine(ServerLevel world, LvcManifest.Site targetSite, LvcIntPosition origin,
@@ -108,10 +83,6 @@ public final class LvcSemanticRestoreEngine
         this.targetSite = Objects.requireNonNull(targetSite, "targetSite");
         this.origin = Objects.requireNonNull(origin, "origin");
         this.chunkRefs = List.copyOf(Objects.requireNonNull(chunkRefs, "chunkRefs"));
-        for (Map.Entry<String, String> entry : this.chunkRefs)
-        {
-            this.chunkRefsByKey.put(entry.getKey(), entry);
-        }
         this.chunkReader = Objects.requireNonNull(chunkReader, "chunkReader");
         this.mutationCallback = Objects.requireNonNull(mutationCallback, "mutationCallback");
         this.restoredPositionCallback = Objects.requireNonNull(restoredPositionCallback, "restoredPositionCallback");
@@ -132,9 +103,6 @@ public final class LvcSemanticRestoreEngine
             case INITIAL_SCAN -> this.processInitialScanStep();
             case INITIAL_REWRITE -> this.processInitialRewriteStep();
             case VERIFY_SCAN -> this.processVerifyScanStep();
-            case FULL_SUBCHUNK_REWRITE -> this.processFullSubchunkRewriteStep();
-            case WAIT_FOR_ACTIVE_SIMULATION -> this.processActiveSimulationQuiescenceStep();
-            case WAIT_FOR_SETTLED_STATE -> this.processSettledStateWaitStep();
             case RESTORE_ENTITIES -> this.processEntityRestoreStep();
             case CLIENT_SYNC -> this.processClientSyncStep();
             case COMPLETE -> true;
@@ -152,9 +120,6 @@ public final class LvcSemanticRestoreEngine
         {
             case INITIAL_SCAN, VERIFY_SCAN -> this.scanChunkIndex;
             case INITIAL_REWRITE -> this.rewriteIndex;
-            case FULL_SUBCHUNK_REWRITE -> this.fullRewriteChunkIndex;
-            case WAIT_FOR_ACTIVE_SIMULATION -> this.activeSimulationClearPasses;
-            case WAIT_FOR_SETTLED_STATE -> this.settledVerifyWaitTicks;
             case RESTORE_ENTITIES, CLIENT_SYNC, COMPLETE -> this.currentTotal();
         };
     }
@@ -164,9 +129,6 @@ public final class LvcSemanticRestoreEngine
         return switch (this.phase)
         {
             case INITIAL_REWRITE -> Math.max(this.pendingRewriteRealChunkKeys.size(), 1);
-            case FULL_SUBCHUNK_REWRITE -> Math.max(this.pendingFullRewriteRealChunkKeys.size(), 1);
-            case WAIT_FOR_ACTIVE_SIMULATION -> MAX_ACTIVE_SIMULATION_CLEAR_PASSES;
-            case WAIT_FOR_SETTLED_STATE -> this.settledVerifyTargetTicks;
             default -> this.chunkRefs.size();
         };
     }
@@ -199,16 +161,6 @@ public final class LvcSemanticRestoreEngine
     public int changedEntities()
     {
         return this.clearedEntities + this.spawnedEntities;
-    }
-
-    public int dirtyChunkCount()
-    {
-        return this.dirtyChunkKeys.size();
-    }
-
-    public int fullSubchunkRewritePasses()
-    {
-        return this.fullSubchunkRewritePasses;
     }
 
     public PostOperationDiffs postOperationDiffs()
@@ -282,8 +234,8 @@ public final class LvcSemanticRestoreEngine
             return false;
         }
 
-        LvcDiagnostics.debug("semantic {} verify scan complete commit={} pass={} chunks={} dirtyChunks={} mismatches={} stateMismatches={} blockEntityMismatches={} samples={} omittedSamples={}",
-                this.operationName, this.commitId, this.fullSubchunkRewritePasses,
+        LvcDiagnostics.debug("semantic {} verify scan complete commit={} chunks={} dirtyChunks={} mismatches={} stateMismatches={} blockEntityMismatches={} samples={} omittedSamples={}",
+                this.operationName, this.commitId,
                 this.chunkRefs.size(), this.dirtyChunkKeys.size(), this.latestScanMismatches,
                 this.latestScanStateMismatches, this.latestScanBlockEntityMismatches,
                 this.mismatchSamples.size(), this.latestScanOmittedSamples);
@@ -294,119 +246,8 @@ public final class LvcSemanticRestoreEngine
             return false;
         }
 
-        if (this.fullSubchunkRewritePasses >= MAX_FULL_SUBCHUNK_REWRITE_PASSES)
-        {
-            int removed = this.clearLiveEntities("convergence failure cleanup");
-
-            if (removed > 0)
-            {
-                if (this.activeSimulationClearPasses >= MAX_ACTIVE_SIMULATION_CLEAR_PASSES)
-                {
-                    this.logActiveSimulationCapReached("convergence failure cleanup", removed);
-                    this.completeWithPostOperationDiffs("active simulation cleanup cap");
-                    return false;
-                }
-
-                this.beginActiveSimulationQuiescence(removed);
-                return false;
-            }
-
-            if (!this.settledVerifyAttempted)
-            {
-                this.beginSettledStateGraceVerify(this.activeSimulationClearPasses > 0 ?
-                        "active simulation" : "retry limit");
-                return false;
-            }
-
-            this.completeWithPostOperationDiffs("retry limit");
-            return false;
-        }
-
-        this.prepareFullSubchunkRewrite();
+        this.completeWithPostOperationDiffs("post-rewrite verify");
         return false;
-    }
-
-    private boolean processActiveSimulationQuiescenceStep() throws IOException
-    {
-        this.yieldAfterStep = true;
-        int removed = this.clearLiveEntities("active simulation settle");
-        this.activeSimulationClearPasses++;
-
-        if (removed == 0)
-        {
-            this.quietEntityClearPasses++;
-        }
-        else
-        {
-            this.quietEntityClearPasses = 0;
-        }
-
-        if (this.activeSimulationClearPasses >= MAX_ACTIVE_SIMULATION_CLEAR_PASSES)
-        {
-            this.logActiveSimulationCapReached("active simulation settle", removed);
-            this.completeWithPostOperationDiffs("active simulation settle cap");
-            return false;
-        }
-
-        if (this.quietEntityClearPasses >= REQUIRED_QUIET_ENTITY_CLEAR_PASSES)
-        {
-            LvcDiagnostics.info("semantic {} active simulation settled commit={} clearPasses={} quietPasses={} dirtySubchunks={}",
-                    this.operationName, this.commitId, this.activeSimulationClearPasses,
-                    this.quietEntityClearPasses, this.dirtyChunkKeys.size());
-            this.prepareFullSubchunkRewrite();
-            return false;
-        }
-
-        return false;
-    }
-
-    private boolean processSettledStateWaitStep()
-    {
-        this.yieldAfterStep = true;
-        this.settledVerifyWaitTicks++;
-
-        if (this.settledVerifyWaitTicks >= this.settledVerifyTargetTicks)
-        {
-            LvcDiagnostics.info("semantic {} final settled-state grace verify starting commit={} waitedTicks={} dirtySubchunks={} mismatches={} stateMismatches={} blockEntityMismatches={}",
-                    this.operationName, this.commitId, this.settledVerifyWaitTicks,
-                    this.dirtyChunkKeys.size(), this.latestScanMismatches,
-                    this.latestScanStateMismatches, this.latestScanBlockEntityMismatches);
-            this.prepareVerifyScan();
-        }
-
-        return false;
-    }
-
-    private void beginSettledStateGraceVerify(String reason)
-    {
-        this.settledVerifyAttempted = true;
-        this.settledVerifyWaitTicks = 0;
-        this.settledVerifyTargetTicks = this.latestScanStateMismatches == 0 && this.latestScanBlockEntityMismatches > 0 ?
-                FINAL_BLOCK_ENTITY_SETTLED_VERIFY_DELAY_TICKS : FINAL_SETTLED_VERIFY_DELAY_TICKS;
-        this.yieldAfterStep = true;
-        this.phase = Phase.WAIT_FOR_SETTLED_STATE;
-        LvcDiagnostics.info("semantic {} delaying final verify after {} commit={} waitTicks={} dirtySubchunks={} mismatches={} stateMismatches={} blockEntityMismatches={}",
-                this.operationName, reason, this.commitId, this.settledVerifyTargetTicks,
-                this.dirtyChunkKeys.size(), this.latestScanMismatches,
-                this.latestScanStateMismatches, this.latestScanBlockEntityMismatches);
-    }
-
-    private void beginActiveSimulationQuiescence(int removed)
-    {
-        this.activeSimulationClearPasses++;
-        this.quietEntityClearPasses = 0;
-        this.yieldAfterStep = true;
-        this.phase = Phase.WAIT_FOR_ACTIVE_SIMULATION;
-        LvcDiagnostics.info("semantic {} waiting for active simulation to settle commit={} pass={} clearPasses={} reason='active simulation still produced {} live entit{}'",
-                this.operationName, this.commitId, this.fullSubchunkRewritePasses,
-                this.activeSimulationClearPasses, removed, removed == 1 ? "y" : "ies");
-    }
-
-    private void logActiveSimulationCapReached(String reason, int removed)
-    {
-        LvcDiagnostics.warn("semantic {} active simulation cap reached commit={} reason='{}' clearPasses={} maxClearPasses={} removed={} dirtySubchunks={} mismatches={}",
-                this.operationName, this.commitId, reason, this.activeSimulationClearPasses,
-                MAX_ACTIVE_SIMULATION_CLEAR_PASSES, removed, this.dirtyChunkKeys.size(), this.latestScanMismatches);
     }
 
     private void completeWithPostOperationDiffs(String reason)
@@ -415,41 +256,13 @@ public final class LvcSemanticRestoreEngine
                 this.dirtyChunkKeys.size(),
                 this.latestScanMismatches,
                 this.latestScanStateMismatches,
-                this.latestScanBlockEntityMismatches,
-                this.fullSubchunkRewritePasses,
-                this.activeSimulationClearPasses,
-                this.settledVerifyAttempted);
-        LvcDiagnostics.warn("semantic {} completed with post-operation diffs commit={} reason='{}' dirtySubchunks={} mismatches={} stateMismatches={} blockEntityMismatches={} dirtySubchunkPasses={} activeEntityClearPasses={} finalSettledVerify={} samples={} omittedSamples={}",
+                this.latestScanBlockEntityMismatches);
+        LvcDiagnostics.warn("semantic {} completed with post-operation diffs commit={} reason='{}' dirtySubchunks={} mismatches={} stateMismatches={} blockEntityMismatches={} samples={} omittedSamples={}",
                 this.operationName, this.commitId, reason, this.postOperationDiffs.dirtySubchunks(),
                 this.postOperationDiffs.mismatches(), this.postOperationDiffs.stateMismatches(),
-                this.postOperationDiffs.blockEntityMismatches(), this.postOperationDiffs.dirtySubchunkRewritePasses(),
-                this.postOperationDiffs.activeEntityClearPasses(), this.postOperationDiffs.finalSettledVerify(),
+                this.postOperationDiffs.blockEntityMismatches(),
                 this.mismatchSamples, this.latestScanOmittedSamples);
         this.phase = Phase.RESTORE_ENTITIES;
-    }
-
-    private boolean processFullSubchunkRewriteStep() throws IOException
-    {
-        if (this.fullRewriteChunkIndex == 0)
-        {
-            this.clearLiveEntities("dirty subchunk rewrite pass " + (this.fullSubchunkRewritePasses + 1));
-        }
-
-        if (this.fullRewriteChunkIndex < this.pendingFullRewriteRealChunkKeys.size())
-        {
-            long realChunkKey = this.pendingFullRewriteRealChunkKeys.get(this.fullRewriteChunkIndex);
-            List<RewriteTarget> targets = this.pendingFullRewritesByRealChunk.getOrDefault(realChunkKey, List.of());
-            this.rewriteTargets("dirty", realChunkKey, targets);
-            this.fullRewriteChunkIndex++;
-            return false;
-        }
-
-        this.pendingFullRewritesByRealChunk.clear();
-        this.pendingFullRewriteRealChunkKeys.clear();
-        this.pendingFullRewriteCount = 0;
-        this.fullSubchunkRewritePasses++;
-        this.prepareVerifyScan();
-        return false;
     }
 
     private boolean processEntityRestoreStep() throws IOException
@@ -573,83 +386,6 @@ public final class LvcSemanticRestoreEngine
         this.pendingRewriteCount++;
     }
 
-    private void addPendingFullRewriteTarget(RewriteTarget target)
-    {
-        long realChunkKey = realChunkKey(target.blockPos());
-        List<RewriteTarget> targets = this.pendingFullRewritesByRealChunk.get(realChunkKey);
-
-        if (targets == null)
-        {
-            targets = new ArrayList<>();
-            this.pendingFullRewritesByRealChunk.put(realChunkKey, targets);
-            this.pendingFullRewriteRealChunkKeys.add(realChunkKey);
-        }
-
-        targets.add(target);
-        this.pendingFullRewriteCount++;
-    }
-
-    private void prepareFullSubchunkRewrite() throws IOException
-    {
-        this.pendingFullRewritesByRealChunk.clear();
-        this.pendingFullRewriteRealChunkKeys.clear();
-        this.pendingFullRewriteCount = 0;
-        List<Map.Entry<String, String>> rewriteChunkRefs = this.expandedDirtyChunkRefs();
-
-        for (int i = 0; i < rewriteChunkRefs.size(); i++)
-        {
-            Map.Entry<String, String> entry = rewriteChunkRefs.get(i);
-
-            try
-            {
-                LvcChunk chunk = this.chunkReader.read(entry.getValue());
-                LvcChunkCoordinate coordinate = LvcChunkCoordinate.parse(entry.getKey());
-
-                for (LvcTrackedBlockCursor.StoredBlock block : LvcTrackedBlockCursor.storedBlocks(coordinate, this.origin, chunk))
-                {
-                    this.addPendingFullRewriteTarget(this.targetFor(block));
-                }
-            }
-            catch (Exception e)
-            {
-                throw this.withChunkContext("prepare dirty subchunk rewrite", entry, i, e);
-            }
-        }
-
-        LvcDiagnostics.debug("semantic {} dirty rewrite prepared commit={} pass={} dirtySubchunks={} cumulativeDirtyRewriteSubchunks={} realChunks={} targets={}",
-                this.operationName, this.commitId, this.fullSubchunkRewritePasses + 1, this.dirtyChunkKeys.size(),
-                rewriteChunkRefs.size(), this.pendingFullRewriteRealChunkKeys.size(), this.pendingFullRewriteCount);
-
-        this.phase = Phase.FULL_SUBCHUNK_REWRITE;
-        this.fullRewriteChunkIndex = 0;
-    }
-
-    private List<Map.Entry<String, String>> expandedDirtyChunkRefs() throws IOException
-    {
-        for (String dirtyChunkKey : this.dirtyChunkKeys)
-        {
-            Map.Entry<String, String> dirtyEntry = this.findChunkRef(dirtyChunkKey);
-            this.cumulativeDirtyRewriteChunkRefs.put(dirtyEntry.getKey(), dirtyEntry);
-            LvcChunkCoordinate coordinate = LvcChunkCoordinate.parse(dirtyChunkKey);
-
-            for (int[] offset : FACE_NEIGHBOR_OFFSETS)
-            {
-                LvcChunkCoordinate neighbor = new LvcChunkCoordinate(
-                        coordinate.x() + offset[0],
-                        coordinate.y() + offset[1],
-                        coordinate.z() + offset[2]);
-                Map.Entry<String, String> neighborEntry = this.chunkRefsByKey.get(neighbor.key());
-
-                if (neighborEntry != null)
-                {
-                    this.cumulativeDirtyRewriteChunkRefs.put(neighborEntry.getKey(), neighborEntry);
-                }
-            }
-        }
-
-        return List.copyOf(this.cumulativeDirtyRewriteChunkRefs.values());
-    }
-
     private void rewriteTargets(String kind, long realChunkKey, List<RewriteTarget> targets) throws IOException
     {
         try
@@ -665,8 +401,8 @@ public final class LvcSemanticRestoreEngine
                 }
             });
 
-            LvcDiagnostics.debug("semantic {} {} real chunk rewrite commit={} pass={} realChunk={} targets={} rewrittenBlocks={}",
-                    this.operationName, kind, this.commitId, this.fullSubchunkRewritePasses + 1,
+            LvcDiagnostics.debug("semantic {} {} real chunk rewrite commit={} realChunk={} targets={} rewrittenBlocks={}",
+                    this.operationName, kind, this.commitId,
                     realChunkDescription(realChunkKey), targets.size(), this.restoredBlocks - before);
         }
         catch (Exception e)
@@ -794,18 +530,6 @@ public final class LvcSemanticRestoreEngine
 
         LvcDiagnostics.debug("semantic {} entity restore complete commit={} chunksWithEntities={} clearedEntities={} spawnedEntities={}",
                 this.operationName, this.commitId, chunksWithEntities, this.clearedEntities, this.spawnedEntities);
-    }
-
-    private Map.Entry<String, String> findChunkRef(String chunkKey) throws IOException
-    {
-        Map.Entry<String, String> entry = this.chunkRefsByKey.get(chunkKey);
-
-        if (entry == null)
-        {
-            throw new IOException("Missing LVC restore chunk ref for dirty chunk " + chunkKey);
-        }
-
-        return entry;
     }
 
     private void addMismatchSample(String chunkKey, RewriteTarget target, BlockState currentState,
@@ -965,10 +689,9 @@ public final class LvcSemanticRestoreEngine
     }
 
     public record PostOperationDiffs(int dirtySubchunks, int mismatches, int stateMismatches,
-                                     int blockEntityMismatches, int dirtySubchunkRewritePasses,
-                                     int activeEntityClearPasses, boolean finalSettledVerify)
+                                     int blockEntityMismatches)
     {
-        private static final PostOperationDiffs CLEAN = new PostOperationDiffs(0, 0, 0, 0, 0, 0, false);
+        private static final PostOperationDiffs CLEAN = new PostOperationDiffs(0, 0, 0, 0);
 
         public static PostOperationDiffs clean()
         {
@@ -986,9 +709,6 @@ public final class LvcSemanticRestoreEngine
         INITIAL_SCAN("scan"),
         INITIAL_REWRITE("rewrite diffs"),
         VERIFY_SCAN("verify"),
-        FULL_SUBCHUNK_REWRITE("rewrite dirty subchunks"),
-        WAIT_FOR_ACTIVE_SIMULATION("settle active entities"),
-        WAIT_FOR_SETTLED_STATE("wait for settled state"),
         RESTORE_ENTITIES("restore entities"),
         CLIENT_SYNC("sync client"),
         COMPLETE("complete");

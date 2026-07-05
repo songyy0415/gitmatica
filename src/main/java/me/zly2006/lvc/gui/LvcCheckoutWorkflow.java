@@ -8,11 +8,14 @@ import me.zly2006.lvc.LvcDiagnostics;
 import me.zly2006.lvc.LvcFriendlyErrors.Operation;
 import me.zly2006.lvc.LvcProjectService;
 import me.zly2006.lvc.task.LvcOperationHandle;
+import me.zly2006.lvc.task.LvcRemoteServerApplyTask;
 import me.zly2006.lvc.task.LvcSemanticCheckoutTask;
+import me.zly2006.lvc.task.LvcSemanticScanTask;
 import me.zly2006.lvc.task.LvcTaskCallbacks;
 import me.zly2006.lvc.task.LvcTaskRegistry;
 import me.zly2006.lvc.task.LvcTaskScheduling;
 import me.zly2006.lvc.world.LvcWorldAccess;
+import me.zly2006.lvc.world.LvcWorldBackend;
 import fi.dy.masa.litematica.config.Configs;
 import fi.dy.masa.malilib.gui.GuiBase;
 import fi.dy.masa.malilib.gui.Message.MessageType;
@@ -50,8 +53,17 @@ final class LvcCheckoutWorkflow
                 return;
             }
 
+            CheckoutTarget target = CheckoutTarget.commit(commit);
+            LvcWorldBackend backend = LvcWorldBackend.resolve(minecraft.level);
+
+            if (backend != LvcWorldBackend.DIRECT)
+            {
+                scheduleRemoteCheckoutPreflight(controller, handle.get(), minecraft.level, target);
+                return;
+            }
+
             Level restoreWorld = LvcWorldAccess.resolveSemanticRestoreWorld(minecraft.level);
-            scheduleCheckoutPreflight(controller, handle.get(), restoreWorld, CheckoutTarget.commit(commit));
+            scheduleCheckoutPreflight(controller, handle.get(), restoreWorld, target);
         }
         catch (Exception e)
         {
@@ -79,8 +91,17 @@ final class LvcCheckoutWorkflow
 
         try
         {
+            CheckoutTarget target = CheckoutTarget.commit(commit);
+            LvcWorldBackend backend = LvcWorldBackend.resolve(minecraft.level);
+
+            if (backend != LvcWorldBackend.DIRECT)
+            {
+                scheduleRemoteCheckoutPreflight(controller, handle.get(), minecraft.level, target);
+                return;
+            }
+
             Level restoreWorld = LvcWorldAccess.resolveSemanticRestoreWorld(minecraft.level);
-            scheduleCheckoutPreflight(controller, handle.get(), restoreWorld, CheckoutTarget.commit(commit));
+            scheduleCheckoutPreflight(controller, handle.get(), restoreWorld, target);
         }
         catch (Exception e)
         {
@@ -134,8 +155,17 @@ final class LvcCheckoutWorkflow
                 return;
             }
 
+            CheckoutTarget target = CheckoutTarget.branch(trimmedBranchName, targetCommitId);
+            LvcWorldBackend backend = LvcWorldBackend.resolve(minecraft.level);
+
+            if (backend != LvcWorldBackend.DIRECT)
+            {
+                scheduleRemoteCheckoutPreflight(controller, handle.get(), minecraft.level, target);
+                return;
+            }
+
             Level restoreWorld = LvcWorldAccess.resolveSemanticRestoreWorld(minecraft.level);
-            scheduleCheckoutPreflight(controller, handle.get(), restoreWorld, CheckoutTarget.branch(trimmedBranchName, targetCommitId));
+            scheduleCheckoutPreflight(controller, handle.get(), restoreWorld, target);
         }
         catch (Exception e)
         {
@@ -193,6 +223,69 @@ final class LvcCheckoutWorkflow
         LvcOperationCoordinator.scheduleStarted(restoreWorld, task, target.taskName());
     }
 
+    private static void scheduleRemoteCheckoutPreflight(GuiLvcProjectController controller, LvcOperationHandle handle,
+                                                        Level world, CheckoutTarget target)
+    {
+        LvcSemanticScanTask task = new LvcSemanticScanTask(
+                handle,
+                controller.gui.repositoryDirectory,
+                world,
+                LvcTaskCallbacks.of(
+                        result -> handleRemoteCheckoutPreflight(controller, handle, world, target, result),
+                        e ->
+                        {
+                            target.syncBranchDropdownIfNeeded(controller);
+                            LvcGuiMessages.showTaskError(target.operation(), "litematica.error.lvc_project.checkout_failed", e);
+                        },
+                        () ->
+                        {
+                            target.syncBranchDropdownIfNeeded(controller);
+                            LvcGuiMessages.show(MessageType.INFO, "litematica.message.lvc_project.task_aborted", target.taskName());
+                        }
+                ),
+                false
+        );
+        LvcTaskScheduling.scheduleClient(task);
+    }
+
+    private static void handleRemoteCheckoutPreflight(GuiLvcProjectController controller, LvcOperationHandle handle,
+                                                      Level world, CheckoutTarget target,
+                                                      LvcProjectService.SemanticScanResult scan)
+    {
+        try
+        {
+            if (scan.unknownChunks() > 0)
+            {
+                LvcTaskRegistry.release(handle);
+                target.syncBranchDropdownIfNeeded(controller);
+                LvcGuiMessages.showUnloadedTrackedChunks(target.operation(),
+                        "litematica.error.lvc_project.checkout_failed", scan.unknownChunks());
+                return;
+            }
+
+            boolean gitDirty = LvcProjectService.hasUncommittedChanges(controller.gui.repositoryDirectory);
+
+            if (!scan.clean() || gitDirty)
+            {
+                LvcTaskRegistry.release(handle);
+                target.syncBranchDropdownIfNeeded(controller);
+                LvcDiagnostics.debug("LVC remote checkout preflight dirty repo='{}' changedChunks={} addedChunks={} removedChunks={} gitDirty={}",
+                        controller.gui.repositoryDirectory, scan.changedChunks(), scan.addedChunks(),
+                        scan.removedChunks(), gitDirty);
+                LvcOperationCoordinator.showUnsavedChangesNotice(controller, target.taskName());
+                return;
+            }
+
+            openRemoteCheckoutConfirm(controller, handle, world, target);
+        }
+        catch (Exception e)
+        {
+            LvcTaskRegistry.release(handle);
+            target.syncBranchDropdownIfNeeded(controller);
+            LvcGuiMessages.showTaskError(target.operation(), "litematica.error.lvc_project.checkout_failed", e);
+        }
+    }
+
     private static void handleCheckoutPreflight(GuiLvcProjectController controller, LvcOperationHandle handle,
                                                 CheckoutTarget target,
                                                 LvcSemanticCheckoutTask.PreflightResult result)
@@ -235,6 +328,32 @@ final class LvcCheckoutWorkflow
                 () ->
                 {
                     prepared.close();
+                    LvcTaskRegistry.release(handle);
+                    target.syncBranchDropdownIfNeeded(controller);
+                }
+        ));
+    }
+
+    private static void openRemoteCheckoutConfirm(GuiLvcProjectController controller, LvcOperationHandle handle,
+                                                  Level world, CheckoutTarget target)
+    {
+        if (!Configs.Generic.LVC_SHOW_CHECKOUT_WARNING.getBooleanValue())
+        {
+            LvcDiagnostics.debug("LVC remote Checkout confirmation skipped by global config repo='{}' target='{}'",
+                    controller.gui.repositoryDirectory, target.displayName());
+            scheduleRemoteCheckout(controller, handle, world, target);
+            return;
+        }
+
+        GuiBase.openGui(new GuiLvcWarningConfirmDialog(
+                LvcOperationCoordinator.confirmParent(controller),
+                "litematica.gui.title.lvc_project.confirm_checkout",
+                "litematica.gui.message.lvc_project.confirm_checkout",
+                Configs.Generic.LVC_SHOW_CHECKOUT_WARNING,
+                target.taskName(),
+                () -> scheduleRemoteCheckout(controller, handle, world, target),
+                () ->
+                {
                     LvcTaskRegistry.release(handle);
                     target.syncBranchDropdownIfNeeded(controller);
                 }
@@ -292,6 +411,61 @@ final class LvcCheckoutWorkflow
             LvcTaskRegistry.release(handle);
             target.syncBranchDropdownIfNeeded(controller);
             LvcGuiMessages.showTaskError(target.operation(), "litematica.error.lvc_project.checkout_failed", e);
+        }
+    }
+
+    private static void scheduleRemoteCheckout(GuiLvcProjectController controller, LvcOperationHandle handle,
+                                               Level world, CheckoutTarget target)
+    {
+        try
+        {
+            controller.removeTrackingOverlay();
+            LvcRemoteServerApplyTask task = LvcRemoteServerApplyTask.checkout(
+                    handle,
+                    controller.gui.repositoryDirectory,
+                    world,
+                    target.commitId(),
+                    target.branchName(),
+                    LvcTaskCallbacks.of(
+                            result ->
+                            {
+                                controller.loadTrackingOverlay();
+                                if (!target.reattachIfNeeded(controller))
+                                {
+                                    return;
+                                }
+
+                                controller.gui.initGui();
+                                target.showSuccess(result.regionCount());
+                                showLossyRemoteWarning(result);
+                            },
+                            e ->
+                            {
+                                target.syncBranchDropdownIfNeeded(controller);
+                                LvcGuiMessages.showTaskError(target.operation(), "litematica.error.lvc_project.checkout_failed", e, true);
+                            },
+                            () ->
+                            {
+                                target.syncBranchDropdownIfNeeded(controller);
+                                LvcGuiMessages.show(MessageType.INFO, "litematica.message.lvc_project.task_aborted", target.taskName());
+                            }
+                    )
+            );
+            LvcTaskScheduling.scheduleClient(task);
+        }
+        catch (Exception e)
+        {
+            LvcTaskRegistry.release(handle);
+            target.syncBranchDropdownIfNeeded(controller);
+            LvcGuiMessages.showTaskError(target.operation(), "litematica.error.lvc_project.checkout_failed", e);
+        }
+    }
+
+    private static void showLossyRemoteWarning(LvcRemoteServerApplyTask.Result result)
+    {
+        if (result.lossy())
+        {
+            LvcGuiMessages.show(MessageType.WARNING, "litematica.message.lvc_project.lossy_command_apply");
         }
     }
 

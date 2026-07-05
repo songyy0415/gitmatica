@@ -9,9 +9,9 @@ import me.zly2006.lvc.LvcDiagnostics;
 import me.zly2006.lvc.LvcProjectService;
 import me.zly2006.lvc.capture.LvcCaptureEngine;
 import me.zly2006.lvc.capture.LvcCaptureSession;
-import me.zly2006.lvc.capture.LvcMinecraftWorldReader;
 import me.zly2006.lvc.capture.LvcSiteWorkPlan;
 import me.zly2006.lvc.storage.LvcSemanticRepository;
+import me.zly2006.lvc.world.LvcWorldBackend;
 import fi.dy.masa.malilib.gui.GuiBase;
 import fi.dy.masa.malilib.util.StringUtils;
 
@@ -25,6 +25,9 @@ public final class LvcSemanticScanTask extends LvcChunkedTaskBase<LvcProjectServ
     @Nullable private LvcCaptureSession session;
     @Nullable private LvcCaptureEngine.Result scanResult;
     @Nullable private LvcProjectService.SemanticScanResult result;
+    @Nullable private LvcWorldBackend backend;
+    @Nullable private LvcServuxBulkRequestPlanner servuxRequests;
+    private boolean waitingForServux;
 
     public LvcSemanticScanTask(LvcOperationHandle handle, Path repositoryDirectory, Level world,
                                LvcTaskCallbacks<LvcProjectService.SemanticScanResult> callbacks,
@@ -42,16 +45,22 @@ public final class LvcSemanticScanTask extends LvcChunkedTaskBase<LvcProjectServ
         {
             this.project = LvcSemanticTaskContext.readActiveProject(this.repositoryDirectory);
             LvcSemanticTaskContext.validatePlacementDimension(this.project.placement(), this.world);
+            this.backend = LvcWorldBackend.resolve(this.world);
+            LvcSiteWorkPlan plan = LvcSiteWorkPlan.create(this.project.site(), this.project.placement());
             this.session = new LvcCaptureSession(
-                    LvcSiteWorkPlan.create(this.project.site(), this.project.placement()),
-                    new LvcMinecraftWorldReader(this.world),
+                    plan,
+                    this.backend.createReader(this.world),
                     null,
                     true,
                     false
             );
-            LvcDiagnostics.debug(this.handle(), "semantic scan initialized site={} dimension={} origin={} chunks={} budgetNanos={}",
+            this.servuxRequests = this.backend == LvcWorldBackend.SERVUX ? LvcServuxBulkRequestPlanner.create(plan) : null;
+            LvcDiagnostics.debug(this.handle(), "semantic scan initialized site={} dimension={} origin={} chunks={} backend={} lossy={} blockEntities={} entities={} servuxColumns={} budgetNanos={}",
                     this.project.siteId(), this.project.placement().dimension(), this.project.placement().origin(),
-                    this.session.totalChunks(), LITEMATICA_VERIFIER_BUDGET_NANOS);
+                    this.session.totalChunks(), this.backend.id(), this.backend.lossy(),
+                    this.backend.capturesBlockEntities(), this.backend.capturesEntities(),
+                    this.servuxRequests == null ? 0 : this.servuxRequests.totalColumns(),
+                    LITEMATICA_VERIFIER_BUDGET_NANOS);
             this.updateProgressHud();
         }
         catch (Exception e)
@@ -67,6 +76,11 @@ public final class LvcSemanticScanTask extends LvcChunkedTaskBase<LvcProjectServ
 
         if (!currentSession.isComplete())
         {
+            if (!this.waitForServuxChunkIfNeeded(currentSession))
+            {
+                return false;
+            }
+
             currentSession.processNextChunk();
         }
 
@@ -78,7 +92,8 @@ public final class LvcSemanticScanTask extends LvcChunkedTaskBase<LvcProjectServ
         LvcSemanticTaskContext.ActiveProject currentProject = Objects.requireNonNull(this.project, "project");
         LvcCaptureEngine.Result scanResult = currentSession.result();
         this.scanResult = scanResult;
-        Map<String, String> expectedTrackedHashes = LvcSemanticRepository.computeTrackedHashesFromFullObjects(this.repositoryDirectory, currentProject.site());
+        Map<String, String> expectedTrackedHashes = LvcSemanticRepository.computeTrackedHashesFromFullObjects(
+                this.repositoryDirectory, currentProject.site(), this.requireBackend().capturesBlockEntities());
         this.result = LvcProjectService.SemanticScanResult.compare(
                 currentProject.siteId(),
                 expectedTrackedHashes,
@@ -113,6 +128,12 @@ public final class LvcSemanticScanTask extends LvcChunkedTaskBase<LvcProjectServ
         return Objects.requireNonNull(this.result, "result");
     }
 
+    @Override
+    protected boolean shouldContinueWithinTick()
+    {
+        return !this.waitingForServux;
+    }
+
     LvcSemanticTaskContext.ActiveProject activeProject()
     {
         return Objects.requireNonNull(this.project, "project");
@@ -143,6 +164,25 @@ public final class LvcSemanticScanTask extends LvcChunkedTaskBase<LvcProjectServ
         }
 
         return this.session;
+    }
+
+    private LvcWorldBackend requireBackend()
+    {
+        return Objects.requireNonNull(this.backend, "backend");
+    }
+
+    private boolean waitForServuxChunkIfNeeded(LvcCaptureSession currentSession)
+    {
+        if (this.requireBackend() != LvcWorldBackend.SERVUX)
+        {
+            this.waitingForServux = false;
+            return true;
+        }
+
+        LvcServuxBulkRequestPlanner requests = Objects.requireNonNull(this.servuxRequests, "servuxRequests");
+        boolean ready = requests.ensureReadyForCurrentChunk(currentSession, this.handle(), "semantic scan");
+        this.waitingForServux = !ready;
+        return ready;
     }
 
     private void logMismatchSamples()

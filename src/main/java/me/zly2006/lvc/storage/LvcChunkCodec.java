@@ -79,6 +79,16 @@ public final class LvcChunkCodec
 
     public static byte[] encodeTrackedContent(LvcChunk chunk) throws IOException
     {
+        return encodeTrackedContent(chunk, true);
+    }
+
+    public static byte[] encodeTrackedBlockStateContent(LvcChunk chunk) throws IOException
+    {
+        return encodeTrackedContent(chunk, false);
+    }
+
+    private static byte[] encodeTrackedContent(LvcChunk chunk, boolean includeBlockEntities) throws IOException
+    {
         Objects.requireNonNull(chunk, "chunk");
         int[] blockStateIndices = chunk.blockStateIndices();
         List<String> trackedBlockStates = new ArrayList<>(blockStateIndices.length);
@@ -94,7 +104,7 @@ public final class LvcChunkCodec
                 chunk.sizeZ(),
                 chunk.trackedMask(),
                 trackedBlockStates,
-                chunk.blockEntities()
+                includeBlockEntities ? chunk.blockEntities() : List.of()
         ));
     }
 

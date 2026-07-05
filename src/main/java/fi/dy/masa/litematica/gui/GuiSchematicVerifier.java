@@ -14,7 +14,6 @@ import fi.dy.masa.litematica.schematic.placement.SchematicPlacement;
 import fi.dy.masa.litematica.schematic.verifier.SchematicVerifier;
 import fi.dy.masa.litematica.schematic.verifier.SchematicVerifier.BlockMismatch;
 import fi.dy.masa.litematica.schematic.verifier.SchematicVerifier.MismatchType;
-import fi.dy.masa.litematica.schematic.verifier.inventory.VerifierInventoryPreview;
 import fi.dy.masa.litematica.util.BlockInfoListType;
 import fi.dy.masa.litematica.world.SchematicWorldHandler;
 import fi.dy.masa.litematica.world.WorldSchematic;
@@ -38,7 +37,6 @@ public class GuiSchematicVerifier   extends GuiListBase<BlockMismatchEntry, Widg
 
     private final SchematicPlacement placement;
     private final SchematicVerifier verifier;
-    @Nullable private BlockMismatch inventoryPreviewMismatch;
 
     public GuiSchematicVerifier(SchematicPlacement placement)
     {
@@ -91,7 +89,6 @@ public class GuiSchematicVerifier   extends GuiListBase<BlockMismatchEntry, Widg
 
         x = 12;
         x += this.createButton(x, y, -1, ButtonListener.Type.SET_RESULT_MODE_ALL) + 4;
-        x += this.createButton(x, y, -1, ButtonListener.Type.SET_RESULT_MODE_WRONG_INVENTORIES) + 4;
         x += this.createButton(x, y, -1, ButtonListener.Type.SET_RESULT_MODE_WRONG_BLOCKS) + 4;
         x += this.createButton(x, y, -1, ButtonListener.Type.SET_RESULT_MODE_WRONG_STATES) + 4;
         x += this.createButton(x, y, -1, ButtonListener.Type.SET_RESULT_MODE_EXTRA) + 4;
@@ -118,13 +115,12 @@ public class GuiSchematicVerifier   extends GuiListBase<BlockMismatchEntry, Widg
             Integer e = this.verifier.getExtraBlocks();
             Integer c = this.verifier.getCorrectStatesCount();
             Integer d = this.verifier.getDiffBlocks();
-            Integer inv = this.verifier.getWrongInventories();
             Integer t = this.verifier.getSchematicTotalBlocks();
-            String str = StringUtils.translate("litematica.gui.label.schematic_verifier.status.done_errors.inventory.no_diff", inv, wb, ws, m, e);
+            String str = StringUtils.translate("litematica.gui.label.schematic_verifier.status.done_errors.no_diff", wb, ws, m, e);
 
             if (Configs.Generic.ENABLE_DIFFERENT_BLOCKS.getBooleanValue())
             {
-                str = StringUtils.translate("litematica.gui.label.schematic_verifier.status.done_errors.inventory", inv, wb, ws, m, e, d);
+                str = StringUtils.translate("litematica.gui.label.schematic_verifier.status.done_errors", wb, ws, m, e, d);
             }
 
             this.addLabel(12, y, 100, 12, 0xFFF0F0F0, str);
@@ -144,6 +140,7 @@ public class GuiSchematicVerifier   extends GuiListBase<BlockMismatchEntry, Widg
     {
         ButtonListener listener = new ButtonListener(type, this.placement, this);
         boolean enabled = true;
+        MismatchType currentResultMode = this.getResultMode();
         String label = "";
 
         switch (type)
@@ -157,42 +154,37 @@ public class GuiSchematicVerifier   extends GuiListBase<BlockMismatchEntry, Widg
                 {
                     label = StringUtils.translate("litematica.gui.label.schematic_verifier_display_type.all_not_ignored");
                 }
-                enabled = resultMode != MismatchType.ALL;
+                enabled = currentResultMode != MismatchType.ALL;
                 break;
 
             case SET_RESULT_MODE_WRONG_BLOCKS:
                 label = MismatchType.WRONG_BLOCK.getDisplayname();
-                enabled = resultMode != MismatchType.WRONG_BLOCK;
-                break;
-
-            case SET_RESULT_MODE_WRONG_INVENTORIES:
-                label = MismatchType.WRONG_INVENTORIES.getDisplayname();
-                enabled = resultMode != MismatchType.WRONG_INVENTORIES;
+                enabled = currentResultMode != MismatchType.WRONG_BLOCK;
                 break;
 
             case SET_RESULT_MODE_DIFF_BLOCKS:
                 label = MismatchType.DIFF_BLOCK.getDisplayname();
-                enabled = resultMode != MismatchType.DIFF_BLOCK;
+                enabled = currentResultMode != MismatchType.DIFF_BLOCK;
                 break;
 
             case SET_RESULT_MODE_WRONG_STATES:
                 label = MismatchType.WRONG_STATE.getDisplayname();
-                enabled = resultMode != MismatchType.WRONG_STATE;
+                enabled = currentResultMode != MismatchType.WRONG_STATE;
                 break;
 
             case SET_RESULT_MODE_EXTRA:
                 label = MismatchType.EXTRA.getDisplayname();
-                enabled = resultMode != MismatchType.EXTRA;
+                enabled = currentResultMode != MismatchType.EXTRA;
                 break;
 
             case SET_RESULT_MODE_MISSING:
                 label = MismatchType.MISSING.getDisplayname();
-                enabled = resultMode != MismatchType.MISSING;
+                enabled = currentResultMode != MismatchType.MISSING;
                 break;
 
             case SET_RESULT_MODE_CORRECT:
                 label = MismatchType.CORRECT_STATE.getDisplayname();
-                enabled = resultMode != MismatchType.CORRECT_STATE;
+                enabled = currentResultMode != MismatchType.CORRECT_STATE;
                 break;
 
             case START:
@@ -228,7 +220,7 @@ public class GuiSchematicVerifier   extends GuiListBase<BlockMismatchEntry, Widg
 
             case RESET_IGNORED:
                 label = StringUtils.translate("litematica.gui.button.schematic_verifier.reset_ignored");
-                enabled = this.verifier.getIgnoredMismatches().size() > 0 || this.verifier.getIgnoredInventoryMismatchesCount() > 0;
+                enabled = this.verifier.getIgnoredMismatches().size() > 0;
                 break;
 
             case TOGGLE_INFO_HUD:
@@ -261,24 +253,17 @@ public class GuiSchematicVerifier   extends GuiListBase<BlockMismatchEntry, Widg
 
     public MismatchType getResultMode()
     {
+        if (resultMode == MismatchType.WRONG_INVENTORIES)
+        {
+            resultMode = MismatchType.ALL;
+        }
+
         return resultMode;
     }
 
     private void setResultMode(MismatchType type)
     {
         resultMode = type;
-        this.inventoryPreviewMismatch = null;
-    }
-
-    @Nullable
-    public VerifierInventoryPreview getInventoryPreview()
-    {
-        return this.inventoryPreviewMismatch != null ? this.inventoryPreviewMismatch.getInventoryPreview() : null;
-    }
-
-    public void toggleInventoryPreview(BlockMismatch mismatch)
-    {
-        this.inventoryPreviewMismatch = this.inventoryPreviewMismatch == mismatch ? null : mismatch;
     }
 
     @Override
@@ -448,10 +433,6 @@ public class GuiSchematicVerifier   extends GuiListBase<BlockMismatchEntry, Widg
                     this.parent.setResultMode(MismatchType.WRONG_BLOCK);
                     break;
 
-                case SET_RESULT_MODE_WRONG_INVENTORIES:
-                    this.parent.setResultMode(MismatchType.WRONG_INVENTORIES);
-                    break;
-
                 case SET_RESULT_MODE_DIFF_BLOCKS:
                     this.parent.setResultMode(MismatchType.DIFF_BLOCK);
                     break;
@@ -542,7 +523,6 @@ public class GuiSchematicVerifier   extends GuiListBase<BlockMismatchEntry, Widg
         {
             SET_RESULT_MODE_ALL,
             SET_RESULT_MODE_WRONG_BLOCKS,
-            SET_RESULT_MODE_WRONG_INVENTORIES,
             SET_RESULT_MODE_DIFF_BLOCKS,
             SET_RESULT_MODE_WRONG_STATES,
             SET_RESULT_MODE_EXTRA,

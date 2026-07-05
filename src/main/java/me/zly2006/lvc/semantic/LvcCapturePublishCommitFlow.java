@@ -15,6 +15,7 @@ import me.zly2006.lvc.model.LvcManifest;
 import me.zly2006.lvc.project.LvcProjectPositions;
 import me.zly2006.lvc.storage.LvcSemanticRepository;
 import me.zly2006.lvc.world.LvcWorldAccess;
+import me.zly2006.lvc.world.LvcWorldBackend;
 
 final class LvcCapturePublishCommitFlow
 {
@@ -36,7 +37,7 @@ final class LvcCapturePublishCommitFlow
                         projectName,
                         site,
                         placement,
-                        new LvcMinecraftWorldReader(authoritativeWorld),
+                        LvcWorldBackend.resolve(authoritativeWorld).createReader(authoritativeWorld),
                         player
                 )
         );
@@ -64,7 +65,7 @@ final class LvcCapturePublishCommitFlow
                         activeSite.manifest(),
                         activeSite.localState(),
                         activeSite.siteId(),
-                        new LvcMinecraftWorldReader(authoritativeWorld),
+                        LvcWorldBackend.resolve(authoritativeWorld).createReader(authoritativeWorld),
                         player,
                         commitMessage
                 )
@@ -89,7 +90,7 @@ final class LvcCapturePublishCommitFlow
                         activeSite.localState(),
                         activeSite.siteId(),
                         updatedRegions,
-                        new LvcMinecraftWorldReader(authoritativeWorld),
+                        LvcWorldBackend.resolve(authoritativeWorld).createReader(authoritativeWorld),
                         player,
                         commitMessage
                 )

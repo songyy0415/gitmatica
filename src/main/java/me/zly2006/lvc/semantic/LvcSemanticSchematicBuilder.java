@@ -124,6 +124,40 @@ public final class LvcSemanticSchematicBuilder
         return new BuildSession(manifest.name(), site, objectReader, schematic, regions, worldOrigin, lootPreviewWorld);
     }
 
+    public static LitematicaSchematic buildAirSchematic(LvcManifest manifest, LvcLocalState localState,
+                                                        String siteId) throws IOException
+    {
+        Objects.requireNonNull(manifest, "manifest");
+        Objects.requireNonNull(localState, "localState");
+        Objects.requireNonNull(siteId, "siteId");
+
+        LvcManifest.Site site = manifest.site(siteId);
+        LvcLocalState.SitePlacement placement = localState.sites().get(siteId);
+
+        if (placement == null)
+        {
+            throw new IOException("Missing local placement for LVC site: " + siteId);
+        }
+
+        if (site.regions().isEmpty())
+        {
+            throw new IOException("LVC project has no sub-regions to clear");
+        }
+
+        LitematicaSchematic schematic = LitematicaSchematic.createEmptySchematic(
+                createSelection(manifest.name(), placement, createRegionViews(site)), "LVC");
+
+        if (schematic == null)
+        {
+            throw new IOException("Failed to create semantic LVC clear schematic");
+        }
+
+        schematic.getMetadata().setName(manifest.name());
+        schematic.getMetadata().setTimeCreated(System.currentTimeMillis());
+        schematic.getMetadata().setTimeModifiedToNow();
+        return schematic;
+    }
+
     public static final class BuildSession
     {
         private final String projectName;

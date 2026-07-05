@@ -27,9 +27,9 @@ Done:
 - Semantic project open/commit/update-area reconstructs the active working-tree state from full hash refs loaded from `.lvcidx` into a file-backed Litematica schematic cache under `.git/lvc-cache/` and adds a normal placement so Litematica can persist it across restarts. Initial project open reuses matching restart-persisted placements without restarting the verifier; Clear Area and Discard Changes reuse a descriptor-matching overlay and restart verifier, falling back to reload/rebuild when the overlay is missing or stale. If either operation shows reliability issues, revert them to always do the full reload/rebuild.
 - Semantic project page can export the selected commit to the schematics folder as a deterministic `<ProjectName>-<shortCommitId>.litematic`, overwriting that same generated file on repeat export without checking out or mutating the world.
 - Semantic selected-commit checkout runs a server-authoritative preflight scan, checks out the commit, refreshes tracked blocks/block entities/entities into the integrated-server world, and refreshes the overlay.
-- Semantic branch checkout from the project page branch dropdown is implemented. Same-tip branch switches attach to the selected branch without restore and preserve uncommitted changes; different-tip switches use the same server-authoritative checkout preflight plus convergent restore path as selected-commit checkout and block with an Unsaved Changes popup when dirty Git/world state exists.
-- Semantic Clear Area skips dirty preflight, opens its destructive warning when enabled, uses the convergent restore engine with an air target, removes live non-player entities inside tracked sub-region bounds only when tracked block rewrites are needed, refreshes verifier against the existing overlay when valid, and reports normal clear completion without a post-operation diff popup.
-- Semantic Discard Changes requires confirmation, scans target chunks chunk-by-chunk, removes live non-player entities inside tracked sub-region bounds only when block/block-entity rewrites are needed, repeats that cleanup at later rewrite/final-restore boundaries, rewrites mismatched block states and block entities grouped by real Minecraft chunk column, verifies the full tracked site, rewrites still-dirty LVC subchunks grouped by real Minecraft chunk column for up to three passes, refreshes stored non-player entities after the restore attempt, schedules a delayed authoritative server block update for tracked positions to clear client/verifier desync, resets Git files when needed, refreshes verifier against the existing overlay when valid, and reports residual post-operation diffs in a blocking OK popup instead of marking the operation failed.
+- Semantic branch checkout from the project page branch dropdown is implemented. Same-tip branch switches attach to the selected branch without restore and preserve uncommitted changes; different-tip switches use the same server-authoritative checkout preflight plus one-pass restore path as selected-commit checkout and block with an Unsaved Changes popup when dirty Git/world state exists.
+- Semantic Clear Area skips dirty preflight, opens its destructive warning when enabled, uses the one-pass restore engine with an air target, removes live non-player entities inside tracked sub-region bounds only when tracked block rewrites are needed, refreshes verifier against the existing overlay when valid, and reports normal clear completion without a post-operation diff popup.
+- Semantic Discard Changes requires confirmation, scans target chunks chunk-by-chunk, removes live non-player entities inside tracked sub-region bounds only when block/block-entity rewrites are needed, rewrites mismatched block states and block entities grouped by real Minecraft chunk column, verifies the full tracked site once, refreshes stored non-player entities after the restore attempt, schedules a delayed authoritative server block update for tracked positions to clear client/verifier desync, resets Git files when needed, refreshes verifier against the existing overlay when valid, and reports residual post-operation diffs in a blocking OK popup instead of marking the operation failed.
 - Branch UI/actions: the project page top branch control is a searchable dropdown with branch/check icons, ellipsized long names, conditional scrolling, and right-click branch action popup. Create Branch validates names, creates/checks out from current HEAD, stores branch-start metadata for focused history, and avoids extra dirty-state messaging. Delete Branch opens a searchable dropdown of non-current branches and deletes the selected branch. Rename Branch opens a searchable branch dropdown plus new-name input, validates the target name, renames current or non-current local branches, and preserves branch-start metadata. Merge Branch opens a searchable dropdown of non-current branches, blocks detached HEAD and dirty Git/world state, performs fast-forward or semantic three-way merge, creates real two-parent Git merge commits for diverged branches, shows an MVP all-conflicts choice popup for Base/Incoming/Yours/Cancel when conflicts are detected, restores the merged active state, and refreshes overlay/verifier.
 - Interrupted-operation recovery is user-controlled for world-mutating operations. Pending checkout/discard/clear/merge journals prompt on the next attempted operation with Restart, Abort, or Cancel. Checkout journals record the previous HEAD/branch before Git moves, so Abort rolls back through a restore/overlay refresh instead of merely clearing recovery data. Merge journals record the previous HEAD before Git moves, so Abort rolls the target branch back and restores the world/overlay to that previous version. Non-world interrupted operations are silently cleaned on world join and report a concise cancellation dialog. Operation journals are checksummed, atomically written with backup generations, corrupt journals are quarantined, merge journals cover the Git-mutation gap, and `.git/lvc-refresh-needed.json` forces overlay/verifier refresh after crashes that happen after world mutation but before visible-state refresh.
 - Semantic repo init and commit through JGit.
@@ -43,7 +43,7 @@ Done:
 Not done:
 
 - Full failpoint-based crash testing is not implemented yet. Future coverage should add inert main-code failpoint hooks at every operation phase boundary, enabled only by an explicit test flag, then run child-process integration tests that hard-exit at each failpoint and verify relog/open, Restart, Abort, cleanup, and visible-state refresh behavior.
-- Semantic selected-commit checkout, branch checkout, discard, and clear now use a no-freeze convergent scan/rewrite/verify/client-sync path. Semantic pull restore still needs the same hardening. Dedicated-server restore support, entity identity-aware diffing, and Litematica paste-parity testing remain unresolved before treating restore paths as production-correct.
+- Semantic selected-commit checkout, branch checkout, discard, and clear now use a no-freeze scan/rewrite/one-verify/client-sync path in singleplayer. Dedicated-server support is partial via Servux capture/paste or lossy block-state-only command fallback. Semantic pull restore, dedicated-server hardening, entity identity-aware diffing, and Litematica paste-parity testing remain unresolved before treating restore paths as production-correct.
 - Bugfix/polish pass for recent semantic MVP batch before starting new feature work: tracking overlay persistence/dedup, selected-commit export, selected-commit checkout restore, branch checkout restore, Clear Area, scan/preflight messaging, and project page button flows.
 - Semantic pull restore.
 - MVP mod-level config page for GitMatica/LVC settings: logging controls, overlay/change colors, and hotkeys for opening main LVC screens.
@@ -51,10 +51,10 @@ Not done:
 - Optional import workflow for existing `.litematic` files into semantic LVC repos, preserving sub-region definitions so users do not need to paste, reselect, and recreate sub-regions manually.
 - Rich update-area preview and explicit origin-change controls.
 - Multi-site Project Editor UX; the MVP editor intentionally exposes only the active `main` site even though the manifest supports sites internally.
-- Dedicated-server multiplayer support.
+- Dedicated-server multiplayer support hardening: test Servux capture/paste, command-mode lossy commits/applies, no-Servux permission failures, chunk unknown handling, and overlay/verifier refresh after remote operations.
 - Later MVP world-I/O optimization: add a reusable execution planner that keeps semantic storage in project-relative `LvcChunkCoordinate` chunks, but maps tracked LVC positions/subchunks to translated real-world `ChunkPos` columns and chunk sections so capture/restore/scan execution, unloaded chunk handling, neighbor chunk requirements, and world access locality match Minecraft/Litematica behavior more closely. Reference Litematica's chunk planning/paste flow while designing this.
 - Raw `.lvcidx`/`.lvcchunk` storage is canonical after profiling showed better packed Git history than pre-compressed storage.
-- Scheduled ticks are intentionally not stored. Discard/checkout/clear no longer freeze or suppress scheduled work; they rely on bounded convergence and Litematica paste-style update suppression around block writes.
+- Scheduled ticks are intentionally not stored. Discard/checkout/clear no longer freeze or suppress scheduled work; they do one direct rewrite plus one verification scan and rely on Litematica paste-style update suppression around block writes.
 
 ### Import Existing `.litematic` Files
 
@@ -115,16 +115,16 @@ Current concern:
 
 - Complex Litematica builds ingested into GitMatica can restore with mismatched states after Clear Area plus Checkout.
 - Observed symptoms include missing shulker boxes and pistons not extended when they should be.
-- Pull restore can still trigger redstone contraptions mid-restore because it has not moved to the discard/selected-checkout/branch-checkout convergent restore path yet.
+- Pull restore can still trigger redstone contraptions mid-restore because it has not moved to the discard/selected-checkout/branch-checkout scan/rewrite/one-verify restore path yet.
 - The likely root area is world write semantics: LVC currently restores chunk-by-chunk with direct block/entity writes, which may differ from Litematica's paste ordering, block update suppression, block entity placement, neighbor update handling, or server-side execution model.
 
 Required behavior:
 
 - Analyze Litematica's paste/placement implementation before changing LVC restore semantics.
 - Preserve exact block states and block entity NBT for storage blocks and stateful redstone components.
-- Avoid unnecessary neighbor updates/redstone ticks mid-restore when the intended operation is restoring a static committed schematic state. Use the discard/selected-checkout/branch-checkout convergent scan/rewrite/verify path as the current reference for future pull restore work.
+- Avoid unnecessary neighbor updates/redstone ticks mid-restore when the intended operation is restoring a static committed schematic state. Use the discard/selected-checkout/branch-checkout scan/rewrite/one-verify path as the current reference for future pull restore work.
 - Consider a two-pass or multi-pass restore like Litematica if needed: place safe base states first, apply block entities, then apply sensitive/redstone/stateful blocks in a stable order.
-- Re-run verifier after restore. For checkout/discard/merge/recovery restore, if bounded restore attempts still leave diffs, complete the operation, refresh overlay/verifier, and show a blocking OK popup telling the user to run Scan Changes now and judge whether the remaining diffs matter for their build. Clear Area keeps normal clear completion.
+- Re-run verifier after restore. For checkout/discard/merge/recovery restore, if the one post-rewrite verify scan still leaves diffs, complete the operation, refresh overlay/verifier, and show a blocking OK popup telling the user to run Scan Changes now and judge whether the remaining diffs matter for their build. Clear Area keeps normal clear completion.
 
 Relevant files:
 
@@ -276,20 +276,20 @@ Relevant files:
 
 Current state:
 
-- Restore uses `Level#setBlock` on the current client world.
-- This is enough for local/integrated testing paths but may not be server-authoritative on multiplayer servers.
-- There is no permission check, command mode, or server-side apply path.
-- Semantic init/commit capture now resolves integrated-server `ServerLevel` in singleplayer when available.
-- Client-only multiplayer semantic capture still falls back to the client `Level`, which is not authoritative.
-- Research note: Servux is likely the best model/path for dedicated-server support. It is a server-side Fabric mod for masa client mods, server-only on Modrinth, and 0.3.x added Litematica server-side saving/pasting with full tile entity data. See https://modrinth.com/mod/servux and https://github.com/maruohon/servux.
+- Singleplayer restore uses integrated-server direct world writes through the scan/rewrite/one-verify restore engine.
+- Dedicated-server support is partial. `LvcWorldBackend` follows Litematica's Servux config/handshake and otherwise falls back to command mode.
+- Servux capture requests Litematica Servux BE/entity cache data per chunk and Servux apply sends generated Litematica placements to the server. Remote apply clears non-player entities in tracked boxes with commands before paste.
+- Remote entity cleanup must become a pure server-side discard, not `/kill`. `/kill @e[...]` can trigger mob drops/death side effects; if any remote cleanup issues appear, replace the command cleanup with a Servux/server-side clear request that calls entity discard/remove directly inside tracked boxes. When doing that work, also recheck selector/bounds semantics against Litematica's command delete paths.
+- Command mode is intentionally lossy: capture/apply block states only and omit inventories, block entity NBT, and stored entities.
+- Permission/error feedback, Servux completion confirmation, and manual server smoke coverage are still incomplete.
 
 Required behavior:
 
-- Decide the supported restore modes: single-player direct world write, integrated-server task, multiplayer command placement, or server-side LVC support.
-- Prefer investigating a Servux-backed or Servux-compatible server protocol before inventing a separate server mod path.
-- Refuse checkout/pull restore when the current world cannot be modified authoritatively.
-- Report a clear message instead of silently creating client-only visual changes.
-- For dedicated servers, require server-side LVC support for reliable scan/commit/restore.
+- Keep direct integrated-server restore as the authoritative singleplayer path.
+- Keep Servux as the full-fidelity dedicated-server path when available through Litematica's own config.
+- Keep command mode available but clearly lossy; do not claim inventory/block-entity/entity fidelity there.
+- Add better permission/error feedback instead of treating denied commands or denied Servux pastes as success.
+- Add manual and automated smoke coverage for Servux server launch, capture, checkout, discard, clear, and command fallback behavior.
 
 Relevant files:
 
@@ -302,13 +302,13 @@ Current state:
 
 - Semantic full snapshots store non-player entity NBT per `.lvcchunk` with project-relative `Pos` and attachment coordinates.
 - Schematic export/overlay includes stored entities and assigns each entity to one containing sub-region.
-- Checkout/discard/delete-version restore scans first; when block/block-entity rewrites are needed, it removes live non-player entities inside tracked sub-region bounds, restores blocks, then spawns the target commit's stored entities after the bounded restore attempt. Clear Area removes live non-player entities inside tracked sub-region bounds only when tracked block rewrites are needed.
+- Checkout/discard/delete-version restore scans first; when block/block-entity rewrites are needed, it removes live non-player entities inside tracked sub-region bounds, restores blocks, then spawns the target commit's stored entities after the restore attempt. Clear Area removes live non-player entities inside tracked sub-region bounds only when tracked block rewrites are needed.
 - Entity-only changes are hidden for v1: they do not make Scan Changes dirty and do not create no-op-breaking commits.
 
 Risk:
 
 - Entity identity-aware diffs and conflicts do not exist yet. If both merge sides changed entity payload in the same chunk, MVP merge keeps yours/current and logs a breadcrumb.
-- Restore does not freeze entity ticking; the convergent loop clears live non-player entities only when block/block-entity rewrites are needed, repeats cleanup at later restore boundaries, and respawns hidden entity snapshots after the bounded restore attempt. Residual block/block-entity diffs are reported to the user with a Scan Changes prompt instead of turning the operation into a failure. Clean initial scans skip entity refresh so entity-only drift remains hidden MVP behavior.
+- Restore does not freeze entity ticking; the restore path clears live non-player entities only when block/block-entity rewrites are needed and respawns hidden entity snapshots after the restore attempt. Residual block/block-entity diffs are reported to the user with a Scan Changes prompt instead of turning the operation into a failure. Clean initial scans skip entity refresh so entity-only drift remains hidden MVP behavior.
 
 Required behavior:
 

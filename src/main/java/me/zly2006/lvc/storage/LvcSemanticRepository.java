@@ -281,6 +281,12 @@ public final class LvcSemanticRepository
 
     public static Map<String, String> computeTrackedHashesFromFullObjects(Path repositoryDirectory, LvcManifest.Site site) throws IOException
     {
+        return computeTrackedHashesFromFullObjects(repositoryDirectory, site, true);
+    }
+
+    public static Map<String, String> computeTrackedHashesFromFullObjects(Path repositoryDirectory, LvcManifest.Site site,
+                                                                          boolean includeBlockEntities) throws IOException
+    {
         Objects.requireNonNull(repositoryDirectory, "repositoryDirectory");
         Objects.requireNonNull(site, "site");
         Map<String, String> trackedHashes = new java.util.TreeMap<>();
@@ -293,7 +299,10 @@ public final class LvcSemanticRepository
             if (trackedHash == null)
             {
                 LvcChunk chunk = LvcChunkCodec.decode(LvcChunkStore.readObject(repositoryDirectory, entry.getValue()));
-                trackedHash = LvcChunkStore.objectId(LvcChunkCodec.encodeTrackedContent(chunk));
+                byte[] trackedContent = includeBlockEntities ?
+                        LvcChunkCodec.encodeTrackedContent(chunk) :
+                        LvcChunkCodec.encodeTrackedBlockStateContent(chunk);
+                trackedHash = LvcChunkStore.objectId(trackedContent);
                 trackedHashesByFullObjectId.put(entry.getValue(), trackedHash);
             }
 
@@ -305,8 +314,8 @@ public final class LvcSemanticRepository
             return site.trackedHashesForComparison();
         }
 
-        LvcDiagnostics.debug("LvcSemanticRepository: computed tracked hashes from full objects repo='{}' chunks={} uniqueObjects={}",
-                repositoryDirectory, trackedHashes.size(), trackedHashesByFullObjectId.size());
+        LvcDiagnostics.debug("LvcSemanticRepository: computed tracked hashes from full objects repo='{}' chunks={} uniqueObjects={} includeBlockEntities={}",
+                repositoryDirectory, trackedHashes.size(), trackedHashesByFullObjectId.size(), includeBlockEntities);
         return Map.copyOf(trackedHashes);
     }
 

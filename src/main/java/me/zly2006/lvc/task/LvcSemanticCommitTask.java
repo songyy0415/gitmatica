@@ -19,6 +19,7 @@ import me.zly2006.lvc.model.LvcManifest;
 import me.zly2006.lvc.storage.LvcChunkCodec;
 import me.zly2006.lvc.storage.LvcChunkStagingStore;
 import me.zly2006.lvc.storage.LvcSemanticRepository;
+import me.zly2006.lvc.world.LvcWorldBackend;
 import fi.dy.masa.malilib.gui.GuiBase;
 import fi.dy.masa.malilib.util.StringUtils;
 
@@ -37,6 +38,9 @@ public final class LvcSemanticCommitTask extends LvcChunkedTaskBase<LvcSemanticC
     @Nullable private LvcChunkStagingStore stagingStore;
     @Nullable private LvcCaptureSession captureSession;
     @Nullable private LvcCaptureEngine.Result captureResult;
+    @Nullable private LvcWorldBackend backend;
+    @Nullable private LvcServuxBulkRequestPlanner servuxRequests;
+    private boolean waitingForServux;
     private List<String> publishObjectIds = List.of();
     private Phase phase = Phase.CAPTURE;
     private int nextPublishIndex;
@@ -65,22 +69,27 @@ public final class LvcSemanticCommitTask extends LvcChunkedTaskBase<LvcSemanticC
             this.project = LvcSemanticTaskContext.readActiveProject(this.repositoryDirectory);
             LvcSemanticTaskContext.validatePlacementDimension(this.project.placement(), this.world);
             this.captureSite = this.mode == Mode.UPDATE_AREAS ? this.project.site().withRegions(this.updatedRegions) : this.project.site();
+            this.backend = LvcWorldBackend.resolve(this.world);
             this.stagingStore = new LvcChunkStagingStore(
                     this.repositoryDirectory,
                     LvcOperationJournal.stagingDirectory(this.repositoryDirectory, this.handle())
             );
+            LvcSiteWorkPlan plan = LvcSiteWorkPlan.create(this.captureSite, this.project.placement());
             this.captureSession = new LvcCaptureSession(
-                    LvcSiteWorkPlan.create(this.captureSite, this.project.placement()),
-                    new LvcMinecraftWorldReader(this.world),
+                    plan,
+                    this.backend.createReader(this.world),
                     this.stagingStore::writeObject,
                     false,
                     true
             );
+            this.servuxRequests = this.backend == LvcWorldBackend.SERVUX ? LvcServuxBulkRequestPlanner.create(plan) : null;
             LvcOperationJournal.write(this.repositoryDirectory, this.mode.journalOperation, null, "capture");
             this.journalWritten = true;
-            LvcDiagnostics.debug(this.handle(), "semantic commit initialized mode={} site={} dimension={} origin={} chunks={} updatedRegions={}",
+            LvcDiagnostics.debug(this.handle(), "semantic commit initialized mode={} site={} dimension={} origin={} chunks={} updatedRegions={} backend={} lossy={} blockEntities={} entities={} servuxColumns={}",
                     this.mode, this.project.siteId(), this.project.placement().dimension(), this.project.placement().origin(),
-                    this.captureSession.totalChunks(), this.updatedRegions.size());
+                    this.captureSession.totalChunks(), this.updatedRegions.size(), this.backend.id(), this.backend.lossy(),
+                    this.backend.capturesBlockEntities(), this.backend.capturesEntities(),
+                    this.servuxRequests == null ? 0 : this.servuxRequests.totalColumns());
             this.updateProgressHud();
         }
         catch (Exception e)
@@ -98,6 +107,11 @@ public final class LvcSemanticCommitTask extends LvcChunkedTaskBase<LvcSemanticC
 
             if (!session.isComplete())
             {
+                if (!this.waitForServuxChunkIfNeeded(session))
+                {
+                    return false;
+                }
+
                 session.processNextChunk();
                 return false;
             }
@@ -154,7 +168,13 @@ public final class LvcSemanticCommitTask extends LvcChunkedTaskBase<LvcSemanticC
         this.requireStagingStore().cleanup();
         LvcOperationJournal.delete(this.repositoryDirectory);
         this.cleanupStagingOnStop = false;
-        return new Result(this.commit, this.captureSite().regions().size());
+        return new Result(this.commit, this.captureSite().regions().size(), this.requireBackend().lossy());
+    }
+
+    @Override
+    protected boolean shouldContinueWithinTick()
+    {
+        return !this.waitingForServux;
     }
 
     @Override
@@ -237,6 +257,25 @@ public final class LvcSemanticCommitTask extends LvcChunkedTaskBase<LvcSemanticC
         return Objects.requireNonNull(this.captureSession, "captureSession");
     }
 
+    private LvcWorldBackend requireBackend()
+    {
+        return Objects.requireNonNull(this.backend, "backend");
+    }
+
+    private boolean waitForServuxChunkIfNeeded(LvcCaptureSession session)
+    {
+        if (this.requireBackend() != LvcWorldBackend.SERVUX)
+        {
+            this.waitingForServux = false;
+            return true;
+        }
+
+        LvcServuxBulkRequestPlanner requests = Objects.requireNonNull(this.servuxRequests, "servuxRequests");
+        boolean ready = requests.ensureReadyForCurrentChunk(session, this.handle(), "semantic commit");
+        this.waitingForServux = !ready;
+        return ready;
+    }
+
     private LvcChunkStagingStore requireStagingStore()
     {
         return Objects.requireNonNull(this.stagingStore, "stagingStore");
@@ -309,7 +348,7 @@ public final class LvcSemanticCommitTask extends LvcChunkedTaskBase<LvcSemanticC
         }
     }
 
-    public record Result(@Nullable RevCommit commit, int regionCount)
+    public record Result(@Nullable RevCommit commit, int regionCount, boolean lossyCapture)
     {
     }
 }

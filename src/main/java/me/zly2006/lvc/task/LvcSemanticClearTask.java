@@ -59,7 +59,7 @@ public final class LvcSemanticClearTask extends LvcChunkedTaskBase<LvcProjectSer
                     this::writeJournalIfNeeded,
                     projectPos -> { },
                     LvcSemanticRestoreEngine.Options.clear());
-            LvcDiagnostics.debug(this.handle(), "semantic clear initialized site={} dimension={} origin={} chunks={} convergentRestore={}",
+            LvcDiagnostics.debug(this.handle(), "semantic clear initialized site={} dimension={} origin={} chunks={} oneVerifyRestore={}",
                     project.siteId(), project.placement().dimension(), project.placement().origin(), chunkRefs.size(), true);
             this.updateProgressHud();
         }
@@ -101,9 +101,9 @@ public final class LvcSemanticClearTask extends LvcChunkedTaskBase<LvcProjectSer
         LvcSemanticRestoreEngine engine = this.requireRestoreEngine();
         LvcProjectService.SemanticWorldClearResult result =
                 new LvcProjectService.SemanticWorldClearResult(this.regionCount, engine.restoredBlocks(), engine.postOperationDiffs());
-        LvcDiagnostics.debug(this.handle(), "semantic clear complete regions={} clearedBlocks={} clearedEntities={} changedChunks={} dirtySubchunkPasses={} postOperationDiffs={} dirtySubchunks={} mismatches={}",
+        LvcDiagnostics.debug(this.handle(), "semantic clear complete regions={} clearedBlocks={} clearedEntities={} changedChunks={} postOperationDiffs={} dirtySubchunks={} mismatches={}",
                 result.regionCount(), result.clearedBlocks(), engine.clearedEntities(), engine.changedChunks(),
-                engine.fullSubchunkRewritePasses(), result.postOperationDiffs().detected(),
+                result.postOperationDiffs().detected(),
                 result.postOperationDiffs().dirtySubchunks(), result.postOperationDiffs().mismatches());
         LvcRefreshMarker.write(this.repositoryDirectory, "clear", null);
         LvcOperationJournal.delete(this.repositoryDirectory);
@@ -122,7 +122,6 @@ public final class LvcSemanticClearTask extends LvcChunkedTaskBase<LvcProjectSer
             this.infoHudLines.add(StringUtils.translate("litematica.gui.label.lvc_project.task_chunks",
                     this.restoreEngine.currentProgress(), this.restoreEngine.currentTotal()));
             this.infoHudLines.add("Cleared blocks: " + this.restoreEngine.restoredBlocks());
-            this.infoHudLines.add("Dirty subchunk passes: " + this.restoreEngine.fullSubchunkRewritePasses());
         }
     }
 

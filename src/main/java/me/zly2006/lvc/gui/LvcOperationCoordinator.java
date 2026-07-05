@@ -92,10 +92,9 @@ final class LvcOperationCoordinator
             return;
         }
 
-        LvcDiagnostics.info("LVC {} completed with post-operation diffs repo='{}' dirtySubchunks={} mismatches={} stateMismatches={} blockEntityMismatches={} dirtySubchunkPasses={} activeEntityClearPasses={} finalSettledVerify={}",
+        LvcDiagnostics.info("LVC {} completed with post-operation diffs repo='{}' dirtySubchunks={} mismatches={} stateMismatches={} blockEntityMismatches={}",
                 operationName, controller.gui.repositoryDirectory, diffs.dirtySubchunks(), diffs.mismatches(),
-                diffs.stateMismatches(), diffs.blockEntityMismatches(), diffs.dirtySubchunkRewritePasses(),
-                diffs.activeEntityClearPasses(), diffs.finalSettledVerify());
+                diffs.stateMismatches(), diffs.blockEntityMismatches());
         GuiBase.openGui(new GuiLvcNoticeDialog(
                 confirmParent(controller),
                 UNSAVED_CHANGES_DIALOG_WIDTH,

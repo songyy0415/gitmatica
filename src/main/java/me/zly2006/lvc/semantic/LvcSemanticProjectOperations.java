@@ -39,6 +39,7 @@ import me.zly2006.lvc.task.LvcAuthoritativeClientSyncTask;
 import me.zly2006.lvc.task.LvcSemanticRestoreEngine;
 import me.zly2006.lvc.task.LvcSemanticScanMismatchSampler;
 import me.zly2006.lvc.world.LvcWorldAccess;
+import me.zly2006.lvc.world.LvcWorldBackend;
 import me.zly2006.lvc.util.LvcLitematicExportFiles;
 
 import fi.dy.masa.litematica.schematic.LitematicaSchematic;
@@ -174,8 +175,11 @@ public final class LvcSemanticProjectOperations
 
         return LvcWorldAccess.runOnSemanticCaptureWorld(captureWorld, authoritativeWorld ->
         {
-            LvcCaptureEngine.Result scan = LvcCaptureEngine.scanSite(site, placement, new LvcMinecraftWorldReader(authoritativeWorld));
-            Map<String, String> expectedTrackedHashes = LvcSemanticRepository.computeTrackedHashesFromFullObjects(repositoryDirectory, site);
+            LvcWorldBackend backend = LvcWorldBackend.resolve(authoritativeWorld);
+            LvcCaptureEngine.Result scan = LvcCaptureEngine.scanSite(site, placement,
+                    backend.createReader(authoritativeWorld));
+            Map<String, String> expectedTrackedHashes = LvcSemanticRepository.computeTrackedHashesFromFullObjects(
+                    repositoryDirectory, site, backend.capturesBlockEntities());
             return LvcProjectService.SemanticScanResult.compare(siteId, expectedTrackedHashes, scan);
         });
     }

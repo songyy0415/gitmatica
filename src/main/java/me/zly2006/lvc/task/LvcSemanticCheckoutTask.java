@@ -578,7 +578,6 @@ public final class LvcSemanticCheckoutTask
             this.infoHudLines.add(StringUtils.translate("litematica.gui.label.lvc_project.task_phase", phaseLabel));
             this.infoHudLines.add(StringUtils.translate("litematica.gui.label.lvc_project.task_chunks", progress, total));
             this.infoHudLines.add("Restored blocks: " + (engine == null ? 0 : engine.restoredBlocks()));
-            this.infoHudLines.add("Dirty subchunk passes: " + (engine == null ? 0 : engine.fullSubchunkRewritePasses()));
         }
 
         private LvcSemanticRestoreEngine requireRestoreEngine()

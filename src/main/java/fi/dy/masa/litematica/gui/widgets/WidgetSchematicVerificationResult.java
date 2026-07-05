@@ -31,7 +31,6 @@ import fi.dy.masa.litematica.util.ItemUtils;
 
 public class WidgetSchematicVerificationResult extends WidgetListEntrySortable<BlockMismatchEntry>
 {
-    private static final int RIGHT_MOUSE_BUTTON = 1;
 //    private static final LocalRandom RAND = new LocalRandom(0);
 
     public static final String HEADER_EXPECTED = "litematica.gui.label.schematic_verifier.expected";
@@ -165,13 +164,6 @@ public class WidgetSchematicVerificationResult extends WidgetListEntrySortable<B
     @Override
     protected boolean onMouseClickedImpl(MouseButtonEvent click, boolean doubleClick)
     {
-        if (click.input() == RIGHT_MOUSE_BUTTON && this.canShowInventoryPreview() &&
-            (this.buttonIgnore == null || click.x() < this.buttonIgnore.getX()))
-        {
-            this.guiSchematicVerifier.toggleInventoryPreview(this.mismatchEntry.blockMismatch);
-            return true;
-        }
-
         if (super.onMouseClickedImpl(click, doubleClick))
         {
             return true;
@@ -333,12 +325,6 @@ public class WidgetSchematicVerificationResult extends WidgetListEntrySortable<B
     @Override
     public void postRenderHovered(GuiContext ctx, int mouseX, int mouseY, boolean selected)
     {
-        if (this.canShowInventoryPreview() && (this.buttonIgnore == null || mouseX < this.buttonIgnore.getX()))
-        {
-            RenderUtils.drawHoverText(ctx, mouseX, mouseY, List.of(StringUtils.translate("litematica.gui.label.schematic_verifier.inventory_preview_hint")));
-            return;
-        }
-
         if (this.mismatchInfo != null && this.buttonIgnore != null && mouseX < this.buttonIgnore.getX())
         {
 	        ctx.pose().pushMatrix();
@@ -364,13 +350,6 @@ public class WidgetSchematicVerificationResult extends WidgetListEntrySortable<B
 
 	        ctx.pose().popMatrix();
         }
-    }
-
-    private boolean canShowInventoryPreview()
-    {
-        return this.mismatchEntry.type == BlockMismatchEntry.Type.DATA &&
-               this.mismatchEntry.blockMismatch != null &&
-               this.mismatchEntry.blockMismatch.hasInventoryPreview();
     }
 
     public static class BlockMismatchInfo

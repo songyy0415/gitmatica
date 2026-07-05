@@ -131,7 +131,7 @@ public final class LvcSemanticDiscardTask extends LvcChunkedTaskBase<LvcSemantic
                     this::markOperationWillDiscard,
                     this::markAffectedRegions,
                     LvcSemanticRestoreEngine.Options.discard(this.requestedCommitId));
-            LvcDiagnostics.debug(this.handle(), "semantic discard initialized site={} commit={} dimension={} origin={} chunks={} trackedBlocks={} gitDirty={} convergentRestore={}",
+            LvcDiagnostics.debug(this.handle(), "semantic discard initialized site={} commit={} dimension={} origin={} chunks={} trackedBlocks={} gitDirty={} oneVerifyRestore={}",
                     siteId, this.requestedCommitId, this.placement.dimension(), this.placement.origin(),
                     this.chunkRefs.size(), this.workPlan.blockCount(), this.hasGitChanges, true);
             this.updateProgressHud();
@@ -214,7 +214,6 @@ public final class LvcSemanticDiscardTask extends LvcChunkedTaskBase<LvcSemantic
         this.infoHudLines.add("Restored blocks: " + (engine == null ? 0 : engine.restoredBlocks()));
         this.infoHudLines.add("Refreshed entities: " + (engine == null ? 0 : engine.changedEntities()));
         this.infoHudLines.add("Changed subchunks: " + (engine == null ? 0 : engine.changedChunks()));
-        this.infoHudLines.add("Dirty subchunk passes: " + (engine == null ? 0 : engine.fullSubchunkRewritePasses()));
     }
 
     @Override

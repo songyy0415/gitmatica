@@ -81,6 +81,69 @@ public final class LvcEntityNbt
         return LvcCanonicalNbt.encodeUnnamed(tag);
     }
 
+    @Nullable
+    public static byte[] captureProjectRelative(CompoundTag sourceTag, Entity fallbackEntity, Level world,
+                                                LvcIntPosition origin) throws IOException
+    {
+        CompoundTag tag = sourceTag.copy();
+        Identifier id = EntityType.getKey(fallbackEntity.getType());
+
+        if (id == null)
+        {
+            return null;
+        }
+
+        if (!tag.contains("id"))
+        {
+            tag.putString("id", id.toString());
+        }
+
+        stripRuntimeEntityFields(tag);
+
+        Vec3 absolutePos = NbtUtils.getVec3dCodec(tag, "Pos");
+
+        if (absolutePos == null)
+        {
+            absolutePos = new Vec3(fallbackEntity.getX(), fallbackEntity.getY(), fallbackEntity.getZ());
+            NbtUtils.putVec3dCodec(tag, absolutePos, "Pos");
+        }
+
+        offsetEntityTree(tag, -origin.x(), -origin.y(), -origin.z());
+        Vec3 projectPos = new Vec3(absolutePos.x - origin.x(), absolutePos.y - origin.y(), absolutePos.z - origin.z());
+        NbtUtils.putVec3dCodec(tag, projectPos, "Pos");
+
+        if (fallbackEntity instanceof HangingEntity decorationEntity && !tag.contains("TileX"))
+        {
+            BlockPos pos = decorationEntity.blockPosition();
+            tag.putInt("TileX", pos.getX() - origin.x());
+            tag.putInt("TileY", pos.getY() - origin.y());
+            tag.putInt("TileZ", pos.getZ() - origin.z());
+        }
+
+        if (fallbackEntity instanceof BlockAttachedEntity attachedEntity && !tag.contains("block_pos"))
+        {
+            BlockPos pos = attachedEntity.getPos();
+            tag.store("block_pos", BlockPos.CODEC, new BlockPos(pos.getX() - origin.x(), pos.getY() - origin.y(), pos.getZ() - origin.z()));
+        }
+
+        if (tag.contains("SleepingX"))
+        {
+            tag.putInt("SleepingX", floor(projectPos.x));
+        }
+
+        if (tag.contains("SleepingY"))
+        {
+            tag.putInt("SleepingY", floor(projectPos.y));
+        }
+
+        if (tag.contains("SleepingZ"))
+        {
+            tag.putInt("SleepingZ", floor(projectPos.z));
+        }
+
+        return LvcCanonicalNbt.encodeUnnamed(tag);
+    }
+
     public static CompoundTag materializeForWorld(byte[] canonicalNbt, LvcIntPosition origin) throws IOException
     {
         CompoundTag tag = LvcCanonicalNbt.decodeUnnamedCompound(canonicalNbt);

@@ -23,6 +23,7 @@ import me.zly2006.lvc.project.LvcProjectSelectionStorage;
 import me.zly2006.lvc.storage.LvcChunkCodec;
 import me.zly2006.lvc.storage.LvcChunkStagingStore;
 import me.zly2006.lvc.storage.LvcSemanticRepository;
+import me.zly2006.lvc.world.LvcWorldBackend;
 import fi.dy.masa.litematica.selection.AreaSelection;
 import fi.dy.masa.malilib.gui.GuiBase;
 import fi.dy.masa.malilib.util.StringUtils;
@@ -40,6 +41,9 @@ public final class LvcSemanticInitProjectTask extends LvcChunkedTaskBase<LvcProj
     @Nullable private LvcChunkStagingStore stagingStore;
     @Nullable private LvcCaptureSession captureSession;
     @Nullable private LvcCaptureEngine.Result captureResult;
+    @Nullable private LvcWorldBackend backend;
+    @Nullable private LvcServuxBulkRequestPlanner servuxRequests;
+    private boolean waitingForServux;
     private List<String> publishObjectIds = List.of();
     private Phase phase = Phase.CAPTURE;
     private int nextPublishIndex;
@@ -100,19 +104,26 @@ public final class LvcSemanticInitProjectTask extends LvcChunkedTaskBase<LvcProj
             String dimensionId = LvcMinecraftWorldReader.dimensionId(this.world);
             this.site = LvcProjectSelectionStorage.createMainSiteFromSelection(displayName, dimensionId, this.selection);
             this.placement = LvcProjectSelectionStorage.createSitePlacement(this.selection.getEffectiveOrigin(), dimensionId);
-            LvcDiagnostics.debug(this.handle(), "semantic init prepared repo='{}' project='{}' dimension='{}' regions={} origin='{}'",
-                    this.repositoryDirectory, displayName, dimensionId, validBoxCount, this.placement.origin());
+            this.backend = LvcWorldBackend.resolve(this.world);
+            LvcDiagnostics.debug(this.handle(), "semantic init prepared repo='{}' project='{}' dimension='{}' regions={} origin='{}' backend={} lossy={} blockEntities={} entities={}",
+                    this.repositoryDirectory, displayName, dimensionId, validBoxCount, this.placement.origin(),
+                    this.backend.id(), this.backend.lossy(), this.backend.capturesBlockEntities(),
+                    this.backend.capturesEntities());
             this.stagingStore = new LvcChunkStagingStore(
                     this.repositoryDirectory,
                     LvcOperationJournal.stagingDirectory(this.repositoryDirectory, this.handle())
             );
+            LvcSiteWorkPlan plan = LvcSiteWorkPlan.create(this.site, this.placement);
             this.captureSession = new LvcCaptureSession(
-                    LvcSiteWorkPlan.create(this.site, this.placement),
-                    new LvcMinecraftWorldReader(this.world),
+                    plan,
+                    this.backend.createReader(this.world),
                     this.stagingStore::writeObject,
                     false,
                     true
             );
+            this.servuxRequests = this.backend == LvcWorldBackend.SERVUX ? LvcServuxBulkRequestPlanner.create(plan) : null;
+            LvcDiagnostics.debug(this.handle(), "semantic init capture planned chunks={} servuxColumns={}",
+                    this.captureSession.totalChunks(), this.servuxRequests == null ? 0 : this.servuxRequests.totalColumns());
             LvcOperationJournal.write(this.repositoryDirectory, LvcOperationJournal.Operation.INIT, null, "capture");
             this.updateProgressHud();
         }
@@ -131,6 +142,11 @@ public final class LvcSemanticInitProjectTask extends LvcChunkedTaskBase<LvcProj
 
             if (!session.isComplete())
             {
+                if (!this.waitForServuxChunkIfNeeded(session))
+                {
+                    return false;
+                }
+
                 session.processNextChunk();
                 return false;
             }
@@ -183,6 +199,12 @@ public final class LvcSemanticInitProjectTask extends LvcChunkedTaskBase<LvcProj
         this.requireStagingStore().cleanup();
         LvcOperationJournal.delete(this.requireRepositoryDirectory());
         return new LvcProjectService.Result(this.requireRepositoryDirectory(), Objects.requireNonNull(this.commit, "commit").getName());
+    }
+
+    @Override
+    protected boolean shouldContinueWithinTick()
+    {
+        return !this.waitingForServux;
     }
 
     @Override
@@ -254,6 +276,25 @@ public final class LvcSemanticInitProjectTask extends LvcChunkedTaskBase<LvcProj
     private LvcCaptureSession requireCaptureSession()
     {
         return Objects.requireNonNull(this.captureSession, "captureSession");
+    }
+
+    private LvcWorldBackend requireBackend()
+    {
+        return Objects.requireNonNull(this.backend, "backend");
+    }
+
+    private boolean waitForServuxChunkIfNeeded(LvcCaptureSession session)
+    {
+        if (this.requireBackend() != LvcWorldBackend.SERVUX)
+        {
+            this.waitingForServux = false;
+            return true;
+        }
+
+        LvcServuxBulkRequestPlanner requests = Objects.requireNonNull(this.servuxRequests, "servuxRequests");
+        boolean ready = requests.ensureReadyForCurrentChunk(session, this.handle(), "semantic init");
+        this.waitingForServux = !ready;
+        return ready;
     }
 
     private LvcChunkStagingStore requireStagingStore()

@@ -61,10 +61,16 @@ public class TaskScheduler
         {
             if (this.tasks.isEmpty() == false)
             {
-                for (int i = 0; i < this.tasks.size(); ++i)
+                List<ITask> tasksThisTick = new ArrayList<>(this.tasks);
+
+                for (ITask task : tasksThisTick)
                 {
                     boolean finished = false;
-                    ITask task = this.tasks.get(i);
+
+                    if (this.tasks.contains(task) == false)
+                    {
+                        continue;
+                    }
 
                     if (task.shouldRemove())
                     {
@@ -78,8 +84,7 @@ public class TaskScheduler
                     if (finished)
                     {
                         task.stop();
-                        this.tasks.remove(i);
-                        --i;
+                        this.tasks.remove(task);
                     }
                 }
             }
@@ -184,7 +189,10 @@ public class TaskScheduler
 
     public ImmutableList<ITask> getAllTasks()
     {
-        return ImmutableList.copyOf(this.tasks);
+        synchronized (this)
+        {
+            return ImmutableList.copyOf(this.tasks);
+        }
     }
 
     public boolean removeTask(ITask task)
@@ -201,29 +209,26 @@ public class TaskScheduler
         synchronized (this)
         {
             boolean removed = false;
+            List<ITask> tasksSnapshot = new ArrayList<>(this.tasks);
 
-            for (int i = 0; i < this.tasks.size(); ++i)
+            for (ITask task : tasksSnapshot)
             {
-                ITask task = this.tasks.get(i);
-
-                if (predicate.test(task))
+                if (this.tasks.contains(task) && predicate.test(task))
                 {
                     task.stop();
-                    this.tasks.remove(i);
-                    --i;
+                    this.tasks.remove(task);
                     removed = true;
                 }
             }
 
-            for (int i = 0; i < this.tasksToAdd.size(); ++i)
-            {
-                ITask task = this.tasksToAdd.get(i);
+            List<ITask> tasksToAddSnapshot = new ArrayList<>(this.tasksToAdd);
 
-                if (predicate.test(task))
+            for (ITask task : tasksToAddSnapshot)
+            {
+                if (this.tasksToAdd.contains(task) && predicate.test(task))
                 {
                     task.stop();
-                    this.tasksToAdd.remove(i);
-                    --i;
+                    this.tasksToAdd.remove(task);
                     removed = true;
                 }
             }

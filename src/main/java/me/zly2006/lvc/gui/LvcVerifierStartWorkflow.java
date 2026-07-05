@@ -12,9 +12,12 @@ import me.zly2006.lvc.LvcFriendlyErrors.Operation;
 import me.zly2006.lvc.overlay.LvcTrackingOverlayService;
 import me.zly2006.lvc.task.LvcAuthoritativeScanSync;
 import me.zly2006.lvc.task.LvcOperationHandle;
+import me.zly2006.lvc.task.LvcSemanticScanTask;
 import me.zly2006.lvc.task.LvcTaskCallbacks;
 import me.zly2006.lvc.task.LvcTaskRegistry;
+import me.zly2006.lvc.task.LvcTaskScheduling;
 import me.zly2006.lvc.world.LvcWorldAccess;
+import me.zly2006.lvc.world.LvcWorldBackend;
 import fi.dy.masa.litematica.schematic.placement.SchematicPlacement;
 import fi.dy.masa.litematica.schematic.verifier.SchematicVerifier;
 import fi.dy.masa.litematica.world.SchematicWorldHandler;
@@ -62,6 +65,14 @@ public final class LvcVerifierStartWorkflow
         {
             LvcGuiMessages.show(MessageType.ERROR, "litematica.error.generic.schematic_world_not_loaded");
             return true;
+        }
+
+        LvcWorldBackend backend = LvcWorldBackend.resolve(clientWorld);
+
+        if (backend != LvcWorldBackend.DIRECT)
+        {
+            return startRemoteVerifierAfterScan(repositoryDirectory, placement, verifierCompletionListener, refreshGui,
+                    clientWorld, verifier, backend);
         }
 
         ServerLevel serverWorld;
@@ -126,6 +137,57 @@ public final class LvcVerifierStartWorkflow
         return true;
     }
 
+    private static boolean startRemoteVerifierAfterScan(Path repositoryDirectory,
+                                                        SchematicPlacement placement,
+                                                        ICompletionListener verifierCompletionListener,
+                                                        Runnable refreshGui,
+                                                        ClientLevel clientWorld,
+                                                        SchematicVerifier verifier,
+                                                        LvcWorldBackend backend)
+    {
+        Optional<LvcOperationHandle> handle = LvcTaskRegistry.tryAcquire("LVC Start Verification", repositoryDirectory);
+
+        if (handle.isEmpty())
+        {
+            LvcGuiMessages.show(MessageType.ERROR, "litematica.error.lvc_project.operation_running",
+                    LvcTaskRegistry.activeOperationName());
+            return true;
+        }
+
+        try
+        {
+            LvcDiagnostics.info(handle.get(), "GitMatica remote verifier start delayed until backend scan completes repo='{}' placement='{}' backend={}",
+                    repositoryDirectory, placement.getName(), backend.id());
+            LvcSemanticScanTask task = new LvcSemanticScanTask(
+                    handle.get(),
+                    repositoryDirectory,
+                    clientWorld,
+                    LvcTaskCallbacks.of(
+                            result -> startVerifierAfterRemoteScan(placement, verifierCompletionListener, refreshGui, result),
+                            e -> LvcGuiMessages.showTaskError(Operation.START_VERIFICATION, "litematica.error.lvc_project.start_verification_failed", e),
+                            () -> LvcGuiMessages.show(MessageType.INFO, "litematica.message.lvc_project.task_aborted", "LVC Start Verification")
+                    ),
+                    true
+            );
+            LvcTaskScheduling.scheduleClient(task);
+        }
+        catch (Exception e)
+        {
+            LvcTaskRegistry.release(handle.get());
+            LvcGuiMessages.showTaskError(Operation.START_VERIFICATION, "litematica.error.lvc_project.start_verification_failed", e);
+            return true;
+        }
+
+        int staleErrors = verifier.getTotalErrors();
+        int staleInventoryErrors = verifier.getWrongInventories();
+        verifier.reset();
+        refreshGui.run();
+        LvcDiagnostics.debug(handle.get(), "GitMatica remote verifier cleared stale rows before backend scan repo='{}' placement='{}' errors={} inventoryErrors={}",
+                repositoryDirectory, placement.getName(), staleErrors, staleInventoryErrors);
+        LvcGuiMessages.show(MessageType.INFO, "litematica.message.lvc_project.task_started", "LVC Start Verification");
+        return true;
+    }
+
     private static void startVerifierAfterSync(SchematicPlacement placement,
                                                ICompletionListener verifierCompletionListener,
                                                Runnable refreshGui,
@@ -150,6 +212,33 @@ public final class LvcVerifierStartWorkflow
         LvcDiagnostics.info("GitMatica verifier starting after three-way scan sync placement='{}' clean={} dirtyChunks={} staleChunks={} syncedPositions={}",
                 placement.getName(), result.scanResult().clean(), result.scanResult().dirtyChunks(),
                 result.staleChunks(), result.syncedPositions());
+        placement.getSchematicVerifier().startVerification(clientWorld, schematicWorld, placement, verifierCompletionListener);
+        refreshGui.run();
+    }
+
+    private static void startVerifierAfterRemoteScan(SchematicPlacement placement,
+                                                     ICompletionListener verifierCompletionListener,
+                                                     Runnable refreshGui,
+                                                     me.zly2006.lvc.LvcProjectService.SemanticScanResult result)
+    {
+        Minecraft minecraft = Minecraft.getInstance();
+        ClientLevel clientWorld = minecraft.level;
+        WorldSchematic schematicWorld = SchematicWorldHandler.getSchematicWorld();
+
+        if (clientWorld == null)
+        {
+            LvcGuiMessages.show(MessageType.ERROR, "litematica.error.lvc_project.no_world");
+            return;
+        }
+
+        if (schematicWorld == null)
+        {
+            LvcGuiMessages.show(MessageType.ERROR, "litematica.error.generic.schematic_world_not_loaded");
+            return;
+        }
+
+        LvcDiagnostics.info("GitMatica verifier starting after remote backend scan placement='{}' clean={} dirtyChunks={} unknownChunks={}",
+                placement.getName(), result.clean(), result.dirtyChunks(), result.unknownChunks());
         placement.getSchematicVerifier().startVerification(clientWorld, schematicWorld, placement, verifierCompletionListener);
         refreshGui.run();
     }

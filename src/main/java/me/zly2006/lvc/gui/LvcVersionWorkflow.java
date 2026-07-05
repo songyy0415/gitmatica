@@ -16,9 +16,12 @@ import me.zly2006.lvc.model.LvcManifest;
 import me.zly2006.lvc.task.LvcAuthoritativeScanSync;
 import me.zly2006.lvc.task.LvcOperationHandle;
 import me.zly2006.lvc.task.LvcSemanticCommitTask;
+import me.zly2006.lvc.task.LvcSemanticScanTask;
 import me.zly2006.lvc.task.LvcTaskCallbacks;
 import me.zly2006.lvc.task.LvcTaskRegistry;
+import me.zly2006.lvc.task.LvcTaskScheduling;
 import me.zly2006.lvc.world.LvcWorldAccess;
+import me.zly2006.lvc.world.LvcWorldBackend;
 import fi.dy.masa.litematica.data.DataManager;
 import fi.dy.masa.litematica.selection.AreaSelection;
 import fi.dy.masa.malilib.gui.Message.MessageType;
@@ -41,25 +44,6 @@ final class LvcVersionWorkflow
             return;
         }
 
-        ServerLevel serverWorld;
-
-        try
-        {
-            Level authoritativeWorld = LvcWorldAccess.resolveSemanticRestoreWorld(world);
-
-            if (!(authoritativeWorld instanceof ServerLevel resolvedServerWorld))
-            {
-                throw new IllegalStateException("Scan Changes requires a server-authoritative world");
-            }
-
-            serverWorld = resolvedServerWorld;
-        }
-        catch (Exception e)
-        {
-            LvcGuiMessages.showTaskError(Operation.SCAN_CHANGES, "litematica.error.lvc_project.scan_failed", e);
-            return;
-        }
-
         Optional<LvcOperationHandle> handle = LvcOperationCoordinator.acquire(controller, "LVC Scan Changes");
 
         if (handle.isEmpty())
@@ -69,6 +53,33 @@ final class LvcVersionWorkflow
 
         try
         {
+            LvcWorldBackend backend = LvcWorldBackend.resolve(world);
+
+            if (backend != LvcWorldBackend.DIRECT)
+            {
+                LvcSemanticScanTask task = new LvcSemanticScanTask(
+                        handle.get(),
+                        controller.gui.repositoryDirectory,
+                        world,
+                        LvcTaskCallbacks.of(
+                                result -> reportScanResult(controller, result),
+                                e -> LvcGuiMessages.showTaskError(Operation.SCAN_CHANGES, "litematica.error.lvc_project.scan_failed", e),
+                                () -> LvcGuiMessages.show(MessageType.INFO, "litematica.message.lvc_project.task_aborted", "LVC Scan Changes")
+                        ),
+                        true
+                );
+                LvcTaskScheduling.scheduleClient(task);
+                LvcGuiMessages.show(MessageType.INFO, "litematica.message.lvc_project.task_started", "LVC Scan Changes");
+                return;
+            }
+
+            Level authoritativeWorld = LvcWorldAccess.resolveSemanticRestoreWorld(world);
+
+            if (!(authoritativeWorld instanceof ServerLevel serverWorld))
+            {
+                throw new IllegalStateException("Scan Changes requires a server-authoritative world");
+            }
+
             LvcAuthoritativeScanSync.schedule(
                     handle.get(),
                     controller.gui.repositoryDirectory,
@@ -134,7 +145,7 @@ final class LvcVersionWorkflow
                     LvcSemanticCommitTask.Mode.SAVE_VERSION,
                     List.of(),
                     LvcTaskCallbacks.of(
-                            result -> handleCommitResult(controller, result.commit()),
+                            result -> handleCommitResult(controller, result),
                             e -> LvcGuiMessages.showTaskError(Operation.SAVE_VERSION, "litematica.error.lvc_project.commit_failed", e),
                             () -> LvcGuiMessages.show(MessageType.INFO, "litematica.message.lvc_project.task_aborted", "LVC Save Version")
                     )
@@ -219,6 +230,11 @@ final class LvcVersionWorkflow
                                 controller.gui.initGui();
                                 LvcGuiMessages.show(MessageType.SUCCESS, "litematica.message.lvc_project.update_areas_updated",
                                         LvcOperationCoordinator.regionCountText(result.regionCount()));
+
+                                if (result.lossyCapture())
+                                {
+                                    LvcGuiMessages.show(MessageType.WARNING, "litematica.message.lvc_project.lossy_command_commit");
+                                }
                             },
                             e -> LvcGuiMessages.showTaskError(Operation.UPDATE_AREAS, "litematica.error.lvc_project.update_areas_failed", e),
                             () -> LvcGuiMessages.show(MessageType.INFO, "litematica.message.lvc_project.task_aborted", "LVC Update Areas")
@@ -233,8 +249,10 @@ final class LvcVersionWorkflow
         }
     }
 
-    private static void handleCommitResult(GuiLvcProjectController controller, RevCommit commit)
+    private static void handleCommitResult(GuiLvcProjectController controller, LvcSemanticCommitTask.Result result)
     {
+        RevCommit commit = result.commit();
+
         if (commit == null)
         {
             controller.focusTrackingOverlay();
@@ -253,6 +271,11 @@ final class LvcVersionWorkflow
         String shortCommitId = shortCommitId(commit);
         LvcDiagnostics.debug("LVC Save Version completed commit={}", shortCommitId);
         LvcGuiMessages.show(MessageType.SUCCESS, "litematica.message.lvc_project.committed", shortCommitId);
+
+        if (result.lossyCapture())
+        {
+            LvcGuiMessages.show(MessageType.WARNING, "litematica.message.lvc_project.lossy_command_commit");
+        }
     }
 
     private static String shortCommitId(RevCommit commit)
