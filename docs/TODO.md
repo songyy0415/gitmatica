@@ -13,8 +13,8 @@ New LVC projects now use the semantic chunk storage direction described in `docs
 Done:
 
 - Semantic manifest/local state: `lvc.json` and local-only `local.json`.
-- Compressed binary hash indexes: `indexes/*.lvcidx` stores full/tracked chunk hash refs outside `lvc.json`.
-- Compressed content-addressed `.lvcchunk` objects under `objects/sha256/`.
+- Raw binary hash indexes: `indexes/*.lvcidx` stores full/tracked chunk hash refs outside `lvc.json`.
+- Raw content-addressed `.lvcchunk` objects under `objects/sha256/`.
 - Semantic content commits candidate-prune current-tree `.lvcchunk` files whose old chunk refs are no longer referenced by the resulting indexes; historical commit objects remain preserved by Git.
 - Deterministic block state storage.
 - Deterministic block entity NBT storage with absolute `x/y/z` removed.
@@ -53,7 +53,7 @@ Not done:
 - Multi-site Project Editor UX; the MVP editor intentionally exposes only the active `main` site even though the manifest supports sites internally.
 - Dedicated-server multiplayer support.
 - Later MVP world-I/O optimization: add a reusable execution planner that keeps semantic storage in project-relative `LvcChunkCoordinate` chunks, but maps tracked LVC positions/subchunks to translated real-world `ChunkPos` columns and chunk sections so capture/restore/scan execution, unloaded chunk handling, neighbor chunk requirements, and world access locality match Minecraft/Litematica behavior more closely. Reference Litematica's chunk planning/paste flow while designing this.
-- Storage compression experiment: on a separate test branch, remove compression from stored `.lvcidx`/`.lvcchunk` files and measure whether Git stores project changes more efficiently through its own delta/object compression.
+- Raw `.lvcidx`/`.lvcchunk` storage is canonical after profiling showed better packed Git history than pre-compressed storage.
 - Scheduled ticks are intentionally not stored. Discard/checkout/clear no longer freeze or suppress scheduled work; they rely on bounded convergence and Litematica paste-style update suppression around block writes.
 
 ### Import Existing `.litematic` Files
@@ -483,7 +483,7 @@ Relevant file:
 
 Current state:
 
-- New projects use compressed semantic `.lvcchunk` objects and `lvc.json`.
+- New projects use raw semantic `.lvcchunk` objects and `lvc.json`.
 - There is no released legacy repo format; do not preserve or reintroduce `index.nbt` compatibility paths.
 
 Risk:
@@ -492,7 +492,7 @@ Risk:
 
 Required behavior:
 
-- Treat `lvc.json`, `.lvcidx`, and compressed content-addressed chunks as canonical for new MVP work.
+- Treat `lvc.json`, `.lvcidx`, and raw content-addressed chunks as canonical for new MVP work.
 - Do not add `history.json`.
 - Do not adopt PRD directory suggestions unless they fit the Git-backed semantic model.
 

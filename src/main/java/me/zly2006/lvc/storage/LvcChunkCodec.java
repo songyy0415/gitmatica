@@ -12,17 +12,14 @@ import java.util.Arrays;
 import java.util.BitSet;
 import java.util.List;
 import java.util.Objects;
-import java.util.zip.DataFormatException;
-import java.util.zip.Deflater;
-import java.util.zip.DeflaterOutputStream;
-import java.util.zip.Inflater;
 import me.zly2006.lvc.model.LvcChunk;
 
 public final class LvcChunkCodec
 {
-    public static final int COMPRESSION_LEVEL = Deflater.BEST_SPEED;
+    public static final String STORAGE_MODE = "raw";
 
-    private static final byte[] STORAGE_MAGIC = new byte[] { 'L', 'V', 'C', 'C', 'H', 'Z', '1', 0 };
+    private static final byte[] STORAGE_MAGIC = new byte[] { 'L', 'V', 'C', 'C', 'H', 'R', '1', 0 };
+    public static final int STORAGE_HEADER_LENGTH = STORAGE_MAGIC.length;
     private static final byte[] CONTENT_MAGIC = new byte[] { 'L', 'V', 'C', 'C', 'H', 'N', '3', 0 };
 
     private LvcChunkCodec()
@@ -75,17 +72,7 @@ public final class LvcChunkCodec
         Objects.requireNonNull(hashContentBytes, "hashContentBytes");
         ByteArrayOutputStream bytes = new ByteArrayOutputStream();
         bytes.write(STORAGE_MAGIC);
-
-        Deflater deflater = new Deflater(COMPRESSION_LEVEL);
-
-        try (DeflaterOutputStream out = new DeflaterOutputStream(bytes, deflater))
-        {
-            out.write(hashContentBytes);
-        }
-        finally
-        {
-            deflater.end();
-        }
+        bytes.write(hashContentBytes);
 
         return bytes.toByteArray();
     }
@@ -126,7 +113,7 @@ public final class LvcChunkCodec
     public static LvcChunk decode(byte[] bytes) throws IOException
     {
         Objects.requireNonNull(bytes, "bytes");
-        return decodeHashContent(inflateStorageBytes(bytes));
+        return decodeHashContent(readStorageBytes(bytes));
     }
 
     private static LvcChunk decodeHashContent(byte[] bytes) throws IOException
@@ -188,57 +175,14 @@ public final class LvcChunkCodec
                 entities);
     }
 
-    private static byte[] inflateStorageBytes(byte[] bytes) throws IOException
+    private static byte[] readStorageBytes(byte[] bytes) throws IOException
     {
         if (bytes.length <= STORAGE_MAGIC.length || !Arrays.equals(STORAGE_MAGIC, Arrays.copyOf(bytes, STORAGE_MAGIC.length)))
         {
             throw new IOException("Invalid LVC chunk storage magic");
         }
 
-        Inflater inflater = new Inflater();
-        inflater.setInput(bytes, STORAGE_MAGIC.length, bytes.length - STORAGE_MAGIC.length);
-        ByteArrayOutputStream inflated = new ByteArrayOutputStream();
-        byte[] buffer = new byte[8192];
-
-        try
-        {
-            while (!inflater.finished())
-            {
-                int count = inflater.inflate(buffer);
-
-                if (count > 0)
-                {
-                    inflated.write(buffer, 0, count);
-                }
-                else if (inflater.needsInput())
-                {
-                    throw new EOFException("Unexpected end of compressed LVC chunk payload");
-                }
-                else if (inflater.needsDictionary())
-                {
-                    throw new IOException("Compressed LVC chunk payload requires a dictionary");
-                }
-                else
-                {
-                    throw new IOException("Compressed LVC chunk payload made no progress");
-                }
-            }
-
-            if (inflater.getBytesRead() != bytes.length - STORAGE_MAGIC.length)
-            {
-                throw new IOException("Trailing bytes after compressed LVC chunk payload");
-            }
-        }
-        catch (DataFormatException e)
-        {
-            throw new IOException("Invalid compressed LVC chunk payload", e);
-        }
-        finally
-        {
-            inflater.end();
-        }
-
-        return inflated.toByteArray();
+        return Arrays.copyOfRange(bytes, STORAGE_MAGIC.length, bytes.length);
     }
 
     static byte[] maskToBytes(BitSet mask, int volume)

@@ -25,7 +25,7 @@ public record LvcManifest(
         List<Site> sites)
 {
     public static final String FORMAT = "lvc-manifest-v1";
-    public static final String CHUNK_FORMAT = "lvcchunk-deflate-v2";
+    public static final String CHUNK_FORMAT = "lvcchunk-raw-v1";
     private static final Gson GSON = new GsonBuilder().setPrettyPrinting().create();
 
     public LvcManifest

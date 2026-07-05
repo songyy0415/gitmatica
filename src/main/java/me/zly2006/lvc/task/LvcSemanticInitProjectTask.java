@@ -137,10 +137,10 @@ public final class LvcSemanticInitProjectTask extends LvcChunkedTaskBase<LvcProj
 
             this.captureResult = session.result();
             this.publishObjectIds = new ArrayList<>(this.captureResult.fullHashes().values());
-            LvcDiagnostics.debug(this.handle(), "semantic init capture completed chunks={} objects={} canonicalBytes={} storedBytes={} blockEntityReadAttempts={} blockEntityRecords={} chunkFormat={} compressionLevel={} scheduledTicksStored=false",
+            LvcDiagnostics.debug(this.handle(), "semantic init capture completed chunks={} objects={} canonicalBytes={} storedBytes={} blockEntityReadAttempts={} blockEntityRecords={} chunkFormat={} storageMode={} scheduledTicksStored=false",
                     session.totalChunks(), this.publishObjectIds.size(), session.fullHashContentBytes(), session.storedObjectBytes(),
                     session.blockEntityReadAttempts(), session.blockEntityRecords(),
-                    LvcManifest.CHUNK_FORMAT, LvcChunkCodec.COMPRESSION_LEVEL);
+                    LvcManifest.CHUNK_FORMAT, LvcChunkCodec.STORAGE_MODE);
             this.phase = Phase.PUBLISH;
             return false;
         }

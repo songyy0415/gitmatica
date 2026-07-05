@@ -1,15 +1,15 @@
 # Future Storage Notes
 
-## Revisit `.lvcidx` Encoding
+## Raw Storage Decision
 
-For future storage optimization, benchmark whether versioned hash indexes should switch from compressed monolithic `.lvcidx` files to an uncompressed deterministic format.
+Versioned hash indexes and chunk objects now use raw deterministic files instead of pre-compressed storage.
 
-Hypothesis: uncompressed, sorted, deterministic index records may be larger in the working tree but pack better across history because Git can delta-compress similar blobs. This may be a better first step than chunking index files, which adds more file and merge complexity.
+Profiling with matching Yams Storage histories showed raw files are larger in the checked-out working tree, but pack better after `git gc` because Git can delta-compress similar blobs across history.
 
-Benchmark before changing format:
+Current direction:
 
-- Current compressed monolithic `.lvcidx`.
-- Uncompressed deterministic `.lvcidx`.
-- Optional chunked/page index format.
+- Keep raw deterministic `.lvcidx`.
+- Keep raw deterministic `.lvcchunk`.
+- Use packed Git size, not loose working-tree size alone, when evaluating history storage.
 
-Use a realistic project with many commits changing a small number of semantic chunks each, run `git gc`, then compare packed repo size, read/write cost, and implementation complexity.
+Optional future work: benchmark chunked/page index formats only if `.lvcidx` files become a measurable bottleneck.

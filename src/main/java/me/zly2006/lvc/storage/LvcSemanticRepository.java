@@ -381,8 +381,8 @@ public final class LvcSemanticRepository
         {
             Path indexPath = resolveVersionedPath(repositoryDirectory, site.hashIndex());
             LvcHashIndexCodec.write(indexPath, site.fullHashes(), site.trackedHashesForComparison());
-            LvcDiagnostics.debug("LvcSemanticRepository: wrote hash index '{}' site={} chunks={} bytes={} compressionLevel={}",
-                    site.hashIndex(), site.id(), site.fullHashes().size(), Files.size(indexPath), LvcHashIndexCodec.COMPRESSION_LEVEL);
+            LvcDiagnostics.debug("LvcSemanticRepository: wrote hash index '{}' site={} chunks={} bytes={} storageMode={}",
+                    site.hashIndex(), site.id(), site.fullHashes().size(), Files.size(indexPath), LvcHashIndexCodec.STORAGE_MODE);
         }
     }
 

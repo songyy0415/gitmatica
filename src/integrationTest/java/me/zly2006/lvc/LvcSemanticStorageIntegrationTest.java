@@ -70,7 +70,7 @@ final class LvcSemanticStorageIntegrationTest
     static void runAll() throws Exception
     {
         IntegrationTestSupport.run("semantic chunk encoding is deterministic and round trips", LvcSemanticStorageIntegrationTest::semanticChunkEncodingIsDeterministicAndRoundTrips);
-        IntegrationTestSupport.run("semantic chunk storage compresses repeated payloads", LvcSemanticStorageIntegrationTest::semanticChunkStorageCompressesRepeatedPayloads);
+        IntegrationTestSupport.run("semantic chunk storage writes raw payloads", LvcSemanticStorageIntegrationTest::semanticChunkStorageWritesRawPayloads);
         IntegrationTestSupport.run("semantic chunk rejects duplicate block entity records", LvcSemanticStorageIntegrationTest::semanticChunkRejectsDuplicateBlockEntityRecords);
         IntegrationTestSupport.run("semantic chunk decode rejects truncated payloads", LvcSemanticStorageIntegrationTest::semanticChunkDecodeRejectsTruncatedPayloads);
         IntegrationTestSupport.run("semantic chunk store writes content addressed objects once", LvcSemanticStorageIntegrationTest::semanticChunkStoreWritesContentAddressedObjectsOnce);
@@ -151,7 +151,7 @@ final class LvcSemanticStorageIntegrationTest
         IntegrationTestSupport.assertEquals(0, trackedView.entities().size(), "tracked view should hide entity NBT");
     }
 
-    private static void semanticChunkStorageCompressesRepeatedPayloads() throws Exception
+    private static void semanticChunkStorageWritesRawPayloads() throws Exception
     {
         BitSet mask = new BitSet(LvcChunk.DEFAULT_VOLUME);
         mask.set(0, LvcChunk.DEFAULT_VOLUME);
@@ -162,9 +162,9 @@ final class LvcSemanticStorageIntegrationTest
         byte[] stored = LvcChunkCodec.encode(chunk);
         LvcChunk decoded = LvcChunkCodec.decode(stored);
 
-        IntegrationTestSupport.assertTrue(stored.length < canonical.length / 2, "compressed chunk storage should be much smaller than canonical repeated payload");
-        IntegrationTestSupport.assertEquals(blockState, decoded.blockStateAtTrackedOrdinal(LvcChunk.DEFAULT_VOLUME - 1), "compressed chunk should decode repeated block state");
-        IntegrationTestSupport.assertTrue(!LvcChunkStore.objectId(canonical).equals(LvcChunkStore.objectId(stored)), "object id should be based on canonical content, not compressed storage bytes");
+        IntegrationTestSupport.assertEquals(canonical.length + LvcChunkCodec.STORAGE_HEADER_LENGTH, stored.length, "raw chunk storage should only add storage magic");
+        IntegrationTestSupport.assertEquals(blockState, decoded.blockStateAtTrackedOrdinal(LvcChunk.DEFAULT_VOLUME - 1), "raw chunk should decode repeated block state");
+        IntegrationTestSupport.assertTrue(!LvcChunkStore.objectId(canonical).equals(LvcChunkStore.objectId(stored)), "object id should be based on canonical content, not storage wrapper bytes");
     }
 
     private static void semanticChunkRejectsDuplicateBlockEntityRecords()
@@ -242,7 +242,7 @@ final class LvcSemanticStorageIntegrationTest
         IntegrationTestSupport.assertTrue(Files.exists(objectPath), "object file should exist");
         IntegrationTestSupport.assertEquals(firstModified, secondModified, "existing object should not be rewritten");
         IntegrationTestSupport.assertTrue(Arrays.equals(bytes, LvcChunkStore.readObject(repoDir, objectId)), "object bytes should read back unchanged");
-        IntegrationTestSupport.assertEquals("minecraft:stone", LvcChunkCodec.decode(LvcChunkStore.readObject(repoDir, objectId)).blockStateAtTrackedOrdinal(0), "stored compressed object should decode");
+        IntegrationTestSupport.assertEquals("minecraft:stone", LvcChunkCodec.decode(LvcChunkStore.readObject(repoDir, objectId)).blockStateAtTrackedOrdinal(0), "stored raw object should decode");
         IntegrationTestSupport.assertTrue(objectPath.toString().contains("/objects/sha256/"), "object path should use sha256 fanout directory");
     }
 

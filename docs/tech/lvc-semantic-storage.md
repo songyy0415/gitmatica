@@ -19,7 +19,7 @@ Implemented:
 - local-only `local.json` model.
 - fixed-size `16x16x16` LVC chunks.
 - tracked mask semantics where mask false means untracked, not air.
-- deterministic compressed `.lvcchunk` codec.
+- deterministic raw `.lvcchunk` codec.
 - content-addressed object store under `objects/sha256/`.
 - SHA-256 hashing through Java `MessageDigest`.
 - fake-world capture for integration tests.
@@ -60,7 +60,7 @@ project/
 Versioned files:
 
 - `lvc.json`: project manifest, sites, regions, and per-site hash index references.
-- `indexes/*.lvcidx`: compressed binary per-site full/tracked hash indexes.
+- `indexes/*.lvcidx`: raw binary per-site full/tracked hash indexes.
 - `objects/sha256/**.lvcchunk`: immutable content-addressed storage chunks.
 - `.gitignore`: must ignore `/local.json`.
 
@@ -153,9 +153,9 @@ Required rules:
 - `site.name` and `region.name` are user-facing and may be renamed.
 - `region.min` is relative to the site's project coordinate space.
 - `region.size` is positive on every axis.
-- `site.hash_index` points to a versioned compressed binary `.lvcidx` file for that site.
+- `site.hash_index` points to a versioned raw binary `.lvcidx` file for that site.
 - The hash index maps LVC chunk coordinates to full content object hashes for restore/export and to verifier-visible tracked-content hashes for scan/diff/merge/no-op decisions.
-- `.lvcidx` files use zlib/deflate with Java `Deflater.BEST_SPEED`. Most payload bytes are raw SHA-256 hashes, so deeper compression costs extra CPU for little size reduction.
+- `.lvcidx` files are deterministic raw binary records so Git can delta-compress similar index blobs across history.
 - Tracked-content hashes include tracked block IDs/states and canonical block entity NBT for tracked positions, so inventories affect scan/diff/merge/no-op decisions. They still ignore entity payload. Full object bytes store all supported payload for restore/export. Scheduled block/fluid ticks are intentionally not part of the storage format.
 - A chunk key is `x,y,z` using signed decimal integers.
 - A chunk object must only contain positions tracked by the union of regions intersecting that chunk.
@@ -214,20 +214,20 @@ Example:
 objects/sha256/ab/abcdef0123....lvcchunk
 ```
 
-The object path hash is over the uncompressed canonical chunk content bytes, not over the compressed file bytes. If the object file already exists at that canonical content hash, do not rewrite it.
+The object path hash is over the canonical chunk content bytes, not over the storage wrapper bytes. If the object file already exists at that canonical content hash, do not rewrite it.
 
 ## `.lvcchunk` Format
 
-`.lvcchunk` is a compressed deterministic binary object. It stores content only, not the site ID or chunk coordinate. The manifest owns placement.
+`.lvcchunk` is a raw deterministic binary object. It stores content only, not the site ID or chunk coordinate. The manifest owns placement.
 
 Storage wrapper:
 
 ```text
-storage_magic      8 bytes   ASCII "LVCCHZ1\0"
-deflate_payload    bytes     zlib/deflate-compressed canonical chunk content
+storage_magic      8 bytes   ASCII "LVCCHR1\0"
+raw_payload        bytes     canonical chunk content
 ```
 
-The current implementation uses Java `Deflater.BEST_SPEED` so commits avoid max-compression CPU cost while still removing most repeated palette/NBT text. The compression level is not part of the semantic object ID because object IDs hash the uncompressed canonical content.
+The storage layer intentionally does not pre-compress chunk storage so Git can delta-compress similar object blobs across history. The raw wrapper is not part of the semantic object ID because object IDs hash canonical content.
 
 Encoding primitives:
 
@@ -336,7 +336,7 @@ Algorithm:
 8. If block has a block entity, read and normalize block entity NBT.
 9. Encode canonical full chunk content bytes.
 10. Hash canonical full content bytes with SHA-256.
-11. Deflate the canonical full content bytes and write the compressed `.lvcchunk` object if missing.
+11. Wrap the canonical full content bytes and write the raw `.lvcchunk` object if missing.
 12. Hash verifier-visible canonical tracked-content bytes for the tracked hash index entry.
 13. Update the site's `.lvcidx` full/tracked hash entry for the chunk key.
 14. Remove old chunk entries no longer intersecting any tracked region.

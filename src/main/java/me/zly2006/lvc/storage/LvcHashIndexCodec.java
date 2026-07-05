@@ -13,19 +13,16 @@ import java.util.HexFormat;
 import java.util.Map;
 import java.util.Objects;
 import java.util.TreeMap;
-import java.util.zip.Deflater;
-import java.util.zip.DeflaterOutputStream;
-import java.util.zip.InflaterInputStream;
 import me.zly2006.lvc.model.LvcChunkCoordinate;
 
 public final class LvcHashIndexCodec
 {
-    public static final String FORMAT = "lvchash-index-v1";
+    public static final String FORMAT = "lvchash-index-raw-v1";
     public static final String INDEXES_DIRECTORY = "indexes";
     public static final String EXTENSION = ".lvcidx";
-    public static final int COMPRESSION_LEVEL = Deflater.BEST_SPEED;
+    public static final String STORAGE_MODE = "raw";
 
-    private static final byte[] MAGIC = new byte[] { 'L', 'V', 'C', 'I', 'D', 'X', '1', 0 };
+    private static final byte[] MAGIC = new byte[] { 'L', 'V', 'C', 'I', 'D', 'R', '1', 0 };
     private static final int HASH_BYTES = 32;
     private static final HexFormat HEX = HexFormat.of();
 
@@ -76,10 +73,8 @@ public final class LvcHashIndexCodec
 
         ByteArrayOutputStream bytes = new ByteArrayOutputStream();
         bytes.write(MAGIC);
-        Deflater deflater = new Deflater(COMPRESSION_LEVEL);
 
-        try (DeflaterOutputStream deflaterStream = new DeflaterOutputStream(bytes, deflater);
-             DataOutputStream out = new DataOutputStream(deflaterStream))
+        try (DataOutputStream out = new DataOutputStream(bytes))
         {
             TreeMap<LvcChunkCoordinate, HashPair> sorted = sortRefs(fullHashes, trackedHashes);
             writeVarUInt(out, sorted.size());
@@ -101,10 +96,6 @@ public final class LvcHashIndexCodec
                 previousZ = coordinate.z();
             }
         }
-        finally
-        {
-            deflater.end();
-        }
 
         return bytes.toByteArray();
     }
@@ -118,8 +109,7 @@ public final class LvcHashIndexCodec
             throw new IOException("Invalid LVC hash index magic");
         }
 
-        try (InflaterInputStream inflater = new InflaterInputStream(new ByteArrayInputStream(bytes, MAGIC.length, bytes.length - MAGIC.length));
-             DataInputStream in = new DataInputStream(inflater))
+        try (DataInputStream in = new DataInputStream(new ByteArrayInputStream(bytes, MAGIC.length, bytes.length - MAGIC.length)))
         {
             int count = readVarUInt(in);
             TreeMap<String, String> fullHashes = new TreeMap<>();

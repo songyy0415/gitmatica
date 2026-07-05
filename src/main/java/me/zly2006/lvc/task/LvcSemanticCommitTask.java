@@ -103,10 +103,10 @@ public final class LvcSemanticCommitTask extends LvcChunkedTaskBase<LvcSemanticC
             }
 
             this.captureResult = session.result();
-            LvcDiagnostics.debug(this.handle(), "semantic capture completed mode={} chunks={} objects={} canonicalBytes={} storedBytes={} blockEntityReadAttempts={} blockEntityRecords={} chunkFormat={} compressionLevel={} scheduledTicksStored=false",
+            LvcDiagnostics.debug(this.handle(), "semantic capture completed mode={} chunks={} objects={} canonicalBytes={} storedBytes={} blockEntityReadAttempts={} blockEntityRecords={} chunkFormat={} storageMode={} scheduledTicksStored=false",
                     this.mode, session.totalChunks(), this.captureResult.fullHashes().size(), session.fullHashContentBytes(), session.storedObjectBytes(),
                     session.blockEntityReadAttempts(), session.blockEntityRecords(),
-                    LvcManifest.CHUNK_FORMAT, LvcChunkCodec.COMPRESSION_LEVEL);
+                    LvcManifest.CHUNK_FORMAT, LvcChunkCodec.STORAGE_MODE);
 
             if (this.mode == Mode.SAVE_VERSION)
             {

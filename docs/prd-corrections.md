@@ -10,7 +10,7 @@ The implementation authority is:
 
 Do not treat the external PRD as authoritative when it conflicts with these corrections.
 
-2026-06-05 implementation update: the mod has not been released, so there is no legacy repository compatibility contract. The supported repository format is semantic `lvc.json`, compressed binary `indexes/*.lvcidx`, compressed content-addressed `.lvcchunk` objects, and ignored clone-local `local.json`. Older notes in this file that mention `index.json`, `index.nbt`, `local_selection`, or `master_origin` are historical context only and must not be used to justify keeping or reintroducing legacy repo code.
+2026-06-05 implementation update: the mod has not been released, so there is no legacy repository compatibility contract. The supported repository format is semantic `lvc.json`, raw binary `indexes/*.lvcidx`, raw content-addressed `.lvcchunk` objects, and ignored clone-local `local.json`. Older notes in this file that mention `index.json`, `index.nbt`, `local_selection`, or `master_origin` are historical context only and must not be used to justify keeping or reintroducing legacy repo code.
 
 ## Gameplay State Rule
 
