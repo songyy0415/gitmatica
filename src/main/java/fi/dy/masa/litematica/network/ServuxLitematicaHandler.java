@@ -26,6 +26,7 @@ import fi.dy.masa.litematica.data.DataManager;
 import fi.dy.masa.litematica.data.EntityDataManager;
 import fi.dy.masa.litematica.schematic.LitematicaSchematic;
 import fi.dy.masa.litematica.schematic.placement.SchematicPlacement;
+import me.zly2006.lvc.capture.LvcServuxBulkEntityCache;
 
 @Environment(EnvType.CLIENT)
 public abstract class ServuxLitematicaHandler<T extends CustomPacketPayload> implements IPluginClientPlayHandler<T>
@@ -149,7 +150,11 @@ public abstract class ServuxLitematicaHandler<T extends CustomPacketPayload> imp
                     }
                 }
             }
-            default -> EntityDataManager.getInstance().handleBulkEntityData(type, DataConverterNbt.fromVanillaCompound(nbt));
+            default ->
+            {
+                LvcServuxBulkEntityCache.recordBulkReply(nbt);
+                EntityDataManager.getInstance().handleBulkEntityData(type, DataConverterNbt.fromVanillaCompound(nbt));
+            }
         }
     }
 

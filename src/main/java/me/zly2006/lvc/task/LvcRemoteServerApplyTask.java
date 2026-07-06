@@ -3,6 +3,10 @@ package me.zly2006.lvc.task;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.ArrayDeque;
+import java.util.ArrayList;
+import java.util.Arrays;
+import java.util.Deque;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
@@ -17,11 +21,14 @@ import org.eclipse.jgit.revwalk.RevWalk;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.player.LocalPlayer;
 import net.minecraft.core.BlockPos;
+import net.minecraft.core.SectionPos;
 import net.minecraft.nbt.CompoundTag;
 import net.minecraft.server.permissions.Permissions;
 import net.minecraft.util.RandomSource;
 import net.minecraft.util.Util;
 import net.minecraft.world.level.Level;
+import net.minecraft.world.level.block.Blocks;
+import net.minecraft.world.level.block.state.BlockState;
 import fi.dy.masa.malilib.config.IConfigOptionListEntry;
 import fi.dy.masa.malilib.gui.GuiBase;
 import fi.dy.masa.malilib.interfaces.ICompletionListener;
@@ -42,22 +49,31 @@ import fi.dy.masa.litematica.util.PasteLayerBehavior;
 import fi.dy.masa.litematica.util.PasteNbtBehavior;
 import fi.dy.masa.litematica.util.ReplaceBehavior;
 import me.zly2006.lvc.LvcDiagnostics;
+import me.zly2006.lvc.capture.LvcSiteWorkPlan;
+import me.zly2006.lvc.capture.LvcWorldReader;
 import me.zly2006.lvc.git.LvcProjectGitOps;
+import me.zly2006.lvc.model.LvcChunk;
 import me.zly2006.lvc.model.LvcLocalState;
 import me.zly2006.lvc.model.LvcManifest;
 import me.zly2006.lvc.project.LvcProjectPositions;
 import me.zly2006.lvc.semantic.LvcSemanticSchematicBuilder;
+import me.zly2006.lvc.semantic.LvcTrackedBlockCursor;
+import me.zly2006.lvc.storage.LvcChunkCodec;
 import me.zly2006.lvc.storage.LvcChunkStore;
 import me.zly2006.lvc.storage.LvcSemanticRepository;
 import me.zly2006.lvc.world.LvcWorldBackend;
 
 public final class LvcRemoteServerApplyTask extends LvcChunkedTaskBase<LvcRemoteServerApplyTask.Result>
 {
+    private static final long DROP_CLEANUP_DELAY_MS = 1_000L;
+    private static final int CLEANUP_COMMANDS_PER_TICK = 4;
+
     private final Path repositoryDirectory;
     private final Level world;
     private final Mode mode;
     @Nullable private final String targetCommitId;
     @Nullable private final String targetBranchName;
+    @Nullable private final List<BlockPos> furnaceXpCleanupCandidates;
 
     @Nullable private LvcWorldBackend backend;
     @Nullable private Git git;
@@ -69,11 +85,14 @@ public final class LvcRemoteServerApplyTask extends LvcChunkedTaskBase<LvcRemote
     @Nullable private LvcLocalState localState;
     @Nullable private String siteId;
     @Nullable private LvcLocalState.SitePlacement placement;
+    @Nullable private LvcSiteWorkPlan cleanupPlan;
     @Nullable private BlockPos origin;
     @Nullable private Result result;
     @Nullable private CommandPasteConfigOverride commandConfigOverride;
     @Nullable private SchematicPlacement commandPlacement;
     @Nullable private LitematicaSchematic commandSchematic;
+    @Nullable private LvcWorldReader sparseTargetReader;
+    private final List<BlockPos> sparseFurnaceXpCleanupCandidates = new ArrayList<>();
     @Nullable private String previousHead;
     @Nullable private String previousBranch;
     private Phase phase = Phase.BUILD;
@@ -83,14 +102,31 @@ public final class LvcRemoteServerApplyTask extends LvcChunkedTaskBase<LvcRemote
     private boolean commandPasteSucceeded;
     private boolean journalWritten;
     private boolean gitMoved;
+    private boolean entityCleanupPrepared;
+    private boolean dropCleanupPrepared;
+    private long dropCleanupReadyAtMillis;
+    private int furnaceXpCleanupChunkIndex;
+    private int furnaceXpCleanupCommandsPrepared;
+    private int sparseTargetScannedBlocks;
+    private int sparseTargetStateMismatches;
+    private int sparseTargetBlockEntityMismatches;
+    private final Deque<String> cleanupCommandQueue = new ArrayDeque<>();
 
     public static LvcRemoteServerApplyTask checkout(LvcOperationHandle handle, Path repositoryDirectory, Level world,
                                                     String targetCommitId, @Nullable String targetBranchName,
                                                     LvcTaskCallbacks<Result> callbacks)
     {
+        return checkout(handle, repositoryDirectory, world, targetCommitId, targetBranchName, null, callbacks);
+    }
+
+    public static LvcRemoteServerApplyTask checkout(LvcOperationHandle handle, Path repositoryDirectory, Level world,
+                                                    String targetCommitId, @Nullable String targetBranchName,
+                                                    @Nullable List<BlockPos> furnaceXpCleanupCandidates,
+                                                    LvcTaskCallbacks<Result> callbacks)
+    {
         Mode mode = targetBranchName == null || targetBranchName.isBlank() ? Mode.CHECKOUT : Mode.CHECKOUT_BRANCH;
         return new LvcRemoteServerApplyTask(handle, repositoryDirectory, world, mode, targetCommitId,
-                targetBranchName, callbacks);
+                targetBranchName, furnaceXpCleanupCandidates, callbacks);
     }
 
     public static LvcRemoteServerApplyTask discard(LvcOperationHandle handle, Path repositoryDirectory, Level world,
@@ -98,18 +134,28 @@ public final class LvcRemoteServerApplyTask extends LvcChunkedTaskBase<LvcRemote
                                                    LvcTaskCallbacks<Result> callbacks)
     {
         return new LvcRemoteServerApplyTask(handle, repositoryDirectory, world, Mode.DISCARD, targetCommitId,
-                null, callbacks);
+                null, null, callbacks);
     }
 
     public static LvcRemoteServerApplyTask clear(LvcOperationHandle handle, Path repositoryDirectory, Level world,
                                                  LvcTaskCallbacks<Result> callbacks)
     {
-        return new LvcRemoteServerApplyTask(handle, repositoryDirectory, world, Mode.CLEAR, null, null, callbacks);
+        return new LvcRemoteServerApplyTask(handle, repositoryDirectory, world, Mode.CLEAR, null, null, null, callbacks);
+    }
+
+    public static LvcRemoteServerApplyTask deleteVersion(LvcOperationHandle handle, Path repositoryDirectory, Level world,
+                                                         String targetCommitId, String targetBranchName,
+                                                         LvcTaskCallbacks<Result> callbacks)
+    {
+        return new LvcRemoteServerApplyTask(handle, repositoryDirectory, world, Mode.DELETE_VERSION, targetCommitId,
+                targetBranchName, null, callbacks);
     }
 
     private LvcRemoteServerApplyTask(LvcOperationHandle handle, Path repositoryDirectory, Level world,
                                      Mode mode, @Nullable String targetCommitId,
-                                     @Nullable String targetBranchName, LvcTaskCallbacks<Result> callbacks)
+                                     @Nullable String targetBranchName,
+                                     @Nullable List<BlockPos> furnaceXpCleanupCandidates,
+                                     LvcTaskCallbacks<Result> callbacks)
     {
         super(handle, mode.displayName, callbacks, true);
         this.repositoryDirectory = Objects.requireNonNull(repositoryDirectory, "repositoryDirectory");
@@ -117,6 +163,7 @@ public final class LvcRemoteServerApplyTask extends LvcChunkedTaskBase<LvcRemote
         this.mode = Objects.requireNonNull(mode, "mode");
         this.targetCommitId = normalize(targetCommitId);
         this.targetBranchName = normalize(targetBranchName);
+        this.furnaceXpCleanupCandidates = furnaceXpCleanupCandidates == null ? null : List.copyOf(furnaceXpCleanupCandidates);
     }
 
     @Override
@@ -151,22 +198,26 @@ public final class LvcRemoteServerApplyTask extends LvcChunkedTaskBase<LvcRemote
                 this.targetCommit = this.resolveTargetCommit(repository);
                 this.manifest = LvcSemanticRepository.readCommitManifest(repository, this.targetCommit);
                 this.preparePlacementState();
+                this.sparseTargetReader = this.shouldBuildSparseTargetSchematic() ? this.requireBackend().createReader(this.world) : null;
                 this.buildSession = LvcSemanticSchematicBuilder.beginSchematicBuild(
                         this.manifest,
                         this.localState,
                         this.siteId,
-                        objectId -> this.readCommitObject(this.requireTargetCommit(), objectId)
+                        objectId -> this.readCommitObject(this.requireTargetCommit(), objectId),
+                        null,
+                        this.sparseTargetReader == null ? null : this::shouldIncludeSparseTargetBlock
                 );
                 this.phase = Phase.BUILD;
             }
 
             LvcDiagnostics.debug(this.handle(),
-                    "remote server apply initialized mode={} backend={} lossy={} site={} target={} branch='{}' regions={} chunks={} dimension={} origin={}",
+                    "remote server apply initialized mode={} backend={} lossy={} site={} target={} branch='{}' regions={} chunks={} dimension={} origin={} sparseTarget={}",
                     this.mode.name(), this.backend.id(), this.backend.lossy(), this.siteId,
                     this.targetCommit == null ? "<none>" : this.targetCommit.getName(),
                     this.targetBranchName == null ? "<none>" : this.targetBranchName,
                     this.regionCount, this.buildSession == null ? 0 : this.buildSession.totalChunks(),
-                    this.requirePlacement().dimension(), this.requirePlacement().origin());
+                    this.requirePlacement().dimension(), this.requirePlacement().origin(),
+                    this.sparseTargetReader != null);
             this.updateProgressHud();
         }
         catch (Exception e)
@@ -189,6 +240,11 @@ public final class LvcRemoteServerApplyTask extends LvcChunkedTaskBase<LvcRemote
             }
 
             this.schematic = session.result();
+            LvcDiagnostics.debug(this.handle(),
+                    "remote server apply target schematic built sparse={} chunks={} includedBlocks={} structureVoidBlocks={} scannedBlocks={} stateMismatches={} blockEntityMismatches={}",
+                    this.sparseTargetReader != null, session.totalChunks(), session.includedBlocks(),
+                    session.structureVoidBlocks(), this.sparseTargetScannedBlocks,
+                    this.sparseTargetStateMismatches, this.sparseTargetBlockEntityMismatches);
             this.phase = Phase.WRITE_JOURNAL;
             return false;
         }
@@ -204,8 +260,52 @@ public final class LvcRemoteServerApplyTask extends LvcChunkedTaskBase<LvcRemote
 
         if (this.phase == Phase.CLEAR_ENTITIES)
         {
-            this.sendEntityCleanupCommands();
-            this.phase = Phase.SEND_PASTE;
+            this.prepareEntityCleanupCommands();
+
+            if (this.sendQueuedCleanupCommands())
+            {
+                this.dropCleanupReadyAtMillis = Util.getMillis() + DROP_CLEANUP_DELAY_MS;
+                this.phase = Phase.WAIT_ENTITY_DROPS;
+            }
+
+            return false;
+        }
+
+        if (this.phase == Phase.WAIT_ENTITY_DROPS)
+        {
+            if (Util.getMillis() < this.dropCleanupReadyAtMillis)
+            {
+                return false;
+            }
+
+            this.phase = Phase.CLEAR_DROPS;
+            return false;
+        }
+
+        if (this.phase == Phase.CLEAR_DROPS)
+        {
+            this.prepareEntityDropCleanupCommands();
+
+            if (this.sendQueuedCleanupCommands())
+            {
+                this.phase = Phase.CLEAR_FURNACE_XP;
+            }
+
+            return false;
+        }
+
+        if (this.phase == Phase.CLEAR_FURNACE_XP)
+        {
+            this.prepareFurnaceXpCleanupCommands();
+
+            if (this.sendQueuedCleanupCommands() && this.furnaceXpCleanupComplete())
+            {
+                LvcDiagnostics.debug(this.handle(), "remote server apply furnace XP cleanup complete source={} workUnits={} commands={}",
+                        this.furnaceXpCleanupSource(),
+                        this.furnaceXpCleanupWorkUnits(), this.furnaceXpCleanupCommandsPrepared);
+                this.phase = Phase.SEND_PASTE;
+            }
+
             return false;
         }
 
@@ -240,6 +340,13 @@ public final class LvcRemoteServerApplyTask extends LvcChunkedTaskBase<LvcRemote
         }
 
         return true;
+    }
+
+    @Override
+    protected boolean shouldContinueWithinTick()
+    {
+        return this.phase == Phase.BUILD ||
+                (this.phase == Phase.CLEAR_FURNACE_XP && this.cleanupCommandQueue.isEmpty());
     }
 
     @Override
@@ -284,6 +391,32 @@ public final class LvcRemoteServerApplyTask extends LvcChunkedTaskBase<LvcRemote
             this.infoHudLines.add(String.format(Locale.ROOT, "Chunks: %d / %d",
                     this.buildSession.processedChunks(), this.buildSession.totalChunks()));
         }
+        else if (this.phase == Phase.WAIT_ENTITY_DROPS)
+        {
+            long remainingMs = Math.max(0L, this.dropCleanupReadyAtMillis - Util.getMillis());
+            this.infoHudLines.add(String.format(Locale.ROOT, "Drop cleanup: %.1fs",
+                    remainingMs / 1000.0D));
+        }
+        else if ((this.phase == Phase.CLEAR_ENTITIES || this.phase == Phase.CLEAR_DROPS ||
+                this.phase == Phase.CLEAR_FURNACE_XP) &&
+                this.cleanupCommandQueue.isEmpty() == false)
+        {
+            this.infoHudLines.add(String.format(Locale.ROOT, "Cleanup commands: %d",
+                    this.cleanupCommandQueue.size()));
+        }
+        else if (this.phase == Phase.CLEAR_FURNACE_XP && this.cleanupPlan != null)
+        {
+            this.infoHudLines.add(String.format(Locale.ROOT, "Furnace XP cleanup: %d / %d",
+                    Math.min(this.furnaceXpCleanupChunkIndex, this.cleanupPlan.chunkCount()),
+                    this.cleanupPlan.chunkCount()));
+        }
+        else if (this.phase == Phase.CLEAR_FURNACE_XP && this.activeFurnaceXpCleanupCandidates() != null)
+        {
+            List<BlockPos> candidates = Objects.requireNonNull(this.activeFurnaceXpCleanupCandidates(), "activeFurnaceXpCleanupCandidates");
+            this.infoHudLines.add(String.format(Locale.ROOT, "Furnace XP cleanup: %d / %d",
+                    Math.min(this.furnaceXpCleanupChunkIndex, candidates.size()),
+                    candidates.size()));
+        }
     }
 
     private void preparePlacementState() throws IOException
@@ -301,12 +434,65 @@ public final class LvcRemoteServerApplyTask extends LvcChunkedTaskBase<LvcRemote
 
         LvcSemanticTaskContext.validatePlacementDimension(sitePlacement, this.world);
         this.placement = sitePlacement;
+        this.cleanupPlan = this.furnaceXpCleanupCandidates == null && !this.shouldBuildSparseTargetSchematic() ?
+                LvcSiteWorkPlan.create(site, sitePlacement) : null;
         this.origin = LvcProjectPositions.blockPosFromList(sitePlacement.origin());
         this.regionCount = site.regions().size();
 
         if (this.regionCount == 0)
         {
             throw new IOException("LVC project has no tracked sub-regions");
+        }
+    }
+
+    private boolean shouldBuildSparseTargetSchematic()
+    {
+        return this.requireBackend() == LvcWorldBackend.SERVUX && this.mode != Mode.CLEAR;
+    }
+
+    private boolean shouldIncludeSparseTargetBlock(LvcSemanticSchematicBuilder.TargetBlock block,
+                                                   BlockState targetState) throws IOException
+    {
+        LvcWorldReader reader = Objects.requireNonNull(this.sparseTargetReader, "sparseTargetReader");
+
+        if (!reader.canReadAt(block.worldPos()))
+        {
+            throw new IOException("LVC remote sparse target diff cannot read tracked block at " + block.blockPos());
+        }
+
+        this.sparseTargetScannedBlocks++;
+        String currentBlockState = LvcChunkCodec.canonicalTrackedBlockState(reader.blockStateAt(block.worldPos()));
+        String targetBlockState = LvcChunkCodec.canonicalTrackedBlockState(block.blockState());
+
+        if (!Objects.equals(currentBlockState, targetBlockState))
+        {
+            this.sparseTargetStateMismatches++;
+            this.addSparseFurnaceXpCleanupCandidateIfNeeded(currentBlockState, block.blockPos());
+            return true;
+        }
+
+        byte[] targetBlockEntity = block.blockEntityBytes();
+
+        if (targetBlockEntity != null)
+        {
+            byte[] currentBlockEntity = reader.blockEntityNbtAt(block.worldPos());
+
+            if (!Arrays.equals(currentBlockEntity, targetBlockEntity))
+            {
+                this.sparseTargetBlockEntityMismatches++;
+                this.addSparseFurnaceXpCleanupCandidateIfNeeded(currentBlockState, block.blockPos());
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    private void addSparseFurnaceXpCleanupCandidateIfNeeded(String currentBlockState, BlockPos pos)
+    {
+        if (isFurnaceLikeBlockState(currentBlockState))
+        {
+            this.sparseFurnaceXpCleanupCandidates.add(pos);
         }
     }
 
@@ -332,7 +518,7 @@ public final class LvcRemoteServerApplyTask extends LvcChunkedTaskBase<LvcRemote
 
     private void validateRemoteBackendReady() throws IOException
     {
-        if (this.requireBackend() != LvcWorldBackend.COMMANDS || this.hasGamemasterCommandPermission())
+        if (this.hasGamemasterCommandPermission())
         {
             return;
         }
@@ -349,6 +535,11 @@ public final class LvcRemoteServerApplyTask extends LvcChunkedTaskBase<LvcRemote
             {
                 hint = " Servux paste is enabled, but the client has not completed a Servux handshake yet.";
             }
+        }
+
+        if (this.requireBackend() == LvcWorldBackend.SERVUX)
+        {
+            throw new IOException("Remote Servux apply requires gamemaster command permission to clear entities before paste.");
         }
 
         throw new IOException("Remote command fallback requires gamemaster command permission on the server." + hint);
@@ -384,6 +575,16 @@ public final class LvcRemoteServerApplyTask extends LvcChunkedTaskBase<LvcRemote
         {
             LvcProjectGitOps.resetWorkingTreeToHead(this.repositoryDirectory);
         }
+        else if (this.mode == Mode.DELETE_VERSION)
+        {
+            if (this.targetBranchName == null || this.targetBranchName.isBlank())
+            {
+                throw new IOException("Remote delete-version apply requires a target branch");
+            }
+
+            LvcProjectGitOps.checkoutBranchAndResetToCommit(this.repositoryDirectory, this.targetBranchName,
+                    this.requireTargetCommit().getName());
+        }
 
         this.gitMoved = true;
     }
@@ -398,6 +599,11 @@ public final class LvcRemoteServerApplyTask extends LvcChunkedTaskBase<LvcRemote
         if (this.mode == Mode.CHECKOUT || this.mode == Mode.CHECKOUT_BRANCH)
         {
             LvcOperationJournal.writeCheckout(this.repositoryDirectory, this.requireTargetCommit().getName(),
+                    this.targetBranchName, this.previousHead, this.previousBranch, phase);
+        }
+        else if (this.mode == Mode.DELETE_VERSION)
+        {
+            LvcOperationJournal.writeDeleteVersion(this.repositoryDirectory, this.requireTargetCommit().getName(),
                     this.targetBranchName, this.previousHead, this.previousBranch, phase);
         }
         else
@@ -515,30 +721,195 @@ public final class LvcRemoteServerApplyTask extends LvcChunkedTaskBase<LvcRemote
                 blockEntities, entities);
     }
 
-    private void sendEntityCleanupCommands()
+    private void prepareEntityCleanupCommands()
     {
-        Minecraft minecraft = Minecraft.getInstance();
-
-        if (minecraft.player == null)
+        if (this.entityCleanupPrepared)
         {
             return;
         }
 
+        int commands = this.enqueueBoundedEntityKillCommands("type=!player");
+        this.entityCleanupPrepared = true;
+
+        LvcDiagnostics.debug(this.handle(), "remote server apply prepared bounded entity cleanup commands regions={} commands={} batchSize={}",
+                this.regionCount, commands, CLEANUP_COMMANDS_PER_TICK);
+    }
+
+    private void prepareEntityDropCleanupCommands()
+    {
+        if (this.dropCleanupPrepared)
+        {
+            return;
+        }
+
+        int commands = this.enqueueBoundedEntityKillCommands("type=minecraft:item");
+        commands += this.enqueueBoundedEntityKillCommands("type=minecraft:experience_orb");
+        this.dropCleanupPrepared = true;
+
+        LvcDiagnostics.debug(this.handle(), "remote server apply prepared bounded drop cleanup commands regions={} commands={} delayMs={} batchSize={}",
+                this.regionCount, commands, DROP_CLEANUP_DELAY_MS, CLEANUP_COMMANDS_PER_TICK);
+    }
+
+    private void prepareFurnaceXpCleanupCommands()
+    {
+        if (this.cleanupCommandQueue.isEmpty() == false)
+        {
+            return;
+        }
+
+        if (this.activeFurnaceXpCleanupCandidates() != null)
+        {
+            this.prepareCandidateFurnaceXpCleanupCommands();
+            return;
+        }
+
+        LvcSiteWorkPlan plan = this.requireCleanupPlan();
+
+        if (this.furnaceXpCleanupChunkIndex < plan.chunks().size())
+        {
+            LvcSiteWorkPlan.ChunkWork work = plan.chunks().get(this.furnaceXpCleanupChunkIndex);
+            this.furnaceXpCleanupChunkIndex++;
+
+            for (LvcTrackedBlockCursor.Position tracked : LvcTrackedBlockCursor.positions(work.coordinate(), plan.origin(), work.mask(),
+                    LvcChunk.DEFAULT_SIZE, LvcChunk.DEFAULT_SIZE, LvcChunk.DEFAULT_SIZE))
+            {
+                if (!this.world.hasChunk(SectionPos.blockToSectionCoord(tracked.blockPos().getX()),
+                        SectionPos.blockToSectionCoord(tracked.blockPos().getZ())))
+                {
+                    continue;
+                }
+
+                BlockState state = this.world.getBlockState(tracked.blockPos());
+
+                if (isFurnaceLike(state))
+                {
+                    this.enqueueFurnaceRecipesUsedCleanupCommand(tracked.blockPos());
+                }
+            }
+        }
+    }
+
+    private void prepareCandidateFurnaceXpCleanupCommands()
+    {
+        List<BlockPos> candidates = Objects.requireNonNull(this.activeFurnaceXpCleanupCandidates(), "activeFurnaceXpCleanupCandidates");
+
+        while (this.furnaceXpCleanupChunkIndex < candidates.size() && this.cleanupCommandQueue.isEmpty())
+        {
+            BlockPos pos = candidates.get(this.furnaceXpCleanupChunkIndex);
+            this.furnaceXpCleanupChunkIndex++;
+
+            if (!this.world.hasChunk(SectionPos.blockToSectionCoord(pos.getX()), SectionPos.blockToSectionCoord(pos.getZ())))
+            {
+                continue;
+            }
+
+            BlockState state = this.world.getBlockState(pos);
+
+            if (isFurnaceLike(state))
+            {
+                this.enqueueFurnaceRecipesUsedCleanupCommand(pos);
+            }
+        }
+    }
+
+    private boolean furnaceXpCleanupComplete()
+    {
+        return this.furnaceXpCleanupChunkIndex >= this.furnaceXpCleanupWorkUnits();
+    }
+
+    private int furnaceXpCleanupWorkUnits()
+    {
+        List<BlockPos> candidates = this.activeFurnaceXpCleanupCandidates();
+        return candidates == null ? this.requireCleanupPlan().chunks().size() : candidates.size();
+    }
+
+    private String furnaceXpCleanupSource()
+    {
+        if (this.shouldBuildSparseTargetSchematic())
+        {
+            return "sparse";
+        }
+
+        return this.furnaceXpCleanupCandidates == null ? "scan" : "preflight";
+    }
+
+    @Nullable
+    private List<BlockPos> activeFurnaceXpCleanupCandidates()
+    {
+        if (this.shouldBuildSparseTargetSchematic())
+        {
+            return this.sparseFurnaceXpCleanupCandidates;
+        }
+
+        return this.furnaceXpCleanupCandidates;
+    }
+
+    private void enqueueFurnaceRecipesUsedCleanupCommand(BlockPos pos)
+    {
+        String command = String.format(Locale.ROOT, "data remove block %d %d %d RecipesUsed",
+                pos.getX(), pos.getY(), pos.getZ());
+        this.cleanupCommandQueue.addLast(command);
+        this.furnaceXpCleanupCommandsPrepared++;
+    }
+
+    private static boolean isFurnaceLike(BlockState state)
+    {
+        return state.is(Blocks.FURNACE) || state.is(Blocks.BLAST_FURNACE) || state.is(Blocks.SMOKER);
+    }
+
+    private static boolean isFurnaceLikeBlockState(String blockState)
+    {
+        return blockState.equals("minecraft:furnace") || blockState.startsWith("minecraft:furnace[") ||
+                blockState.equals("minecraft:blast_furnace") || blockState.startsWith("minecraft:blast_furnace[") ||
+                blockState.equals("minecraft:smoker") || blockState.startsWith("minecraft:smoker[");
+    }
+
+    private int enqueueBoundedEntityKillCommands(String selectorFilter)
+    {
         BlockPos siteOrigin = this.requireOrigin();
+        int commands = 0;
 
         for (LvcManifest.Region region : this.requireManifest().site(this.requireSiteId()).regions())
         {
             BlockPos min = siteOrigin.offset(LvcProjectPositions.blockPosFromList(region.min()));
             BlockPos size = LvcProjectPositions.blockPosFromList(region.size());
             String command = String.format(Locale.ROOT,
-                    "kill @e[type=!player,x=%d,y=%d,z=%d,dx=%d,dy=%d,dz=%d]",
+                    "kill @e[%s,x=%d,y=%d,z=%d,dx=%d,dy=%d,dz=%d]",
+                    selectorFilter,
                     min.getX(), min.getY(), min.getZ(),
                     Math.max(0, size.getX() - 1), Math.max(0, size.getY() - 1), Math.max(0, size.getZ() - 1));
-            minecraft.player.connection.sendCommand(command);
+            this.cleanupCommandQueue.addLast(command);
+            commands++;
         }
 
-        LvcDiagnostics.debug(this.handle(), "remote server apply queued entity cleanup commands regions={}",
-                this.regionCount);
+        return commands;
+    }
+
+    private boolean sendQueuedCleanupCommands()
+    {
+        LocalPlayer player = Minecraft.getInstance().player;
+
+        if (player == null)
+        {
+            this.cleanupCommandQueue.clear();
+            return true;
+        }
+
+        int sent = 0;
+
+        while (sent < CLEANUP_COMMANDS_PER_TICK && this.cleanupCommandQueue.isEmpty() == false)
+        {
+            player.connection.sendCommand(this.cleanupCommandQueue.removeFirst());
+            sent++;
+        }
+
+        if (sent > 0)
+        {
+            LvcDiagnostics.debug(this.handle(), "remote server apply sent cleanup command batch sent={} remaining={}",
+                    sent, this.cleanupCommandQueue.size());
+        }
+
+        return this.cleanupCommandQueue.isEmpty();
     }
 
     private LitematicaSchematic writeAndReloadTempSchematic(LitematicaSchematic currentSchematic) throws IOException
@@ -654,6 +1025,11 @@ public final class LvcRemoteServerApplyTask extends LvcChunkedTaskBase<LvcRemote
         return Objects.requireNonNull(this.placement, "placement");
     }
 
+    private LvcSiteWorkPlan requireCleanupPlan()
+    {
+        return Objects.requireNonNull(this.cleanupPlan, "cleanupPlan");
+    }
+
     private BlockPos requireOrigin()
     {
         return Objects.requireNonNull(this.origin, "origin");
@@ -717,7 +1093,8 @@ public final class LvcRemoteServerApplyTask extends LvcChunkedTaskBase<LvcRemote
         CHECKOUT("LVC Checkout", LvcOperationJournal.Operation.CHECKOUT, "checkout"),
         CHECKOUT_BRANCH("LVC Checkout Branch", LvcOperationJournal.Operation.CHECKOUT, "checkout"),
         DISCARD("LVC Discard Changes", LvcOperationJournal.Operation.DISCARD, "discard"),
-        CLEAR("LVC Clear Area", LvcOperationJournal.Operation.CLEAR, "clear");
+        CLEAR("LVC Clear Area", LvcOperationJournal.Operation.CLEAR, "clear"),
+        DELETE_VERSION("LVC Delete Version", LvcOperationJournal.Operation.DELETE_VERSION, "restore");
 
         private final String displayName;
         private final LvcOperationJournal.Operation journalOperation;
@@ -736,6 +1113,9 @@ public final class LvcRemoteServerApplyTask extends LvcChunkedTaskBase<LvcRemote
         BUILD("build target"),
         WRITE_JOURNAL("prepare Git"),
         CLEAR_ENTITIES("clear entities"),
+        WAIT_ENTITY_DROPS("wait drops"),
+        CLEAR_DROPS("clear drops"),
+        CLEAR_FURNACE_XP("clear furnace xp"),
         SEND_PASTE("send paste"),
         WAIT_COMMANDS("wait commands"),
         FINISH("finish"),

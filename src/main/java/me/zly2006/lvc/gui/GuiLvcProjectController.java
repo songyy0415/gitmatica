@@ -12,6 +12,7 @@ import me.zly2006.lvc.LvcProjectService;
 import me.zly2006.lvc.gui.widgets.WidgetLvcBranchActionMenu;
 import me.zly2006.lvc.task.LvcOperationHandle;
 import me.zly2006.lvc.task.LvcOperationJournal;
+import me.zly2006.lvc.task.LvcRemoteServerApplyTask;
 import me.zly2006.lvc.task.LvcSemanticCheckoutTask;
 import me.zly2006.lvc.task.LvcRefreshMarker;
 import me.zly2006.lvc.task.LvcSemanticExportTask;
@@ -20,6 +21,7 @@ import me.zly2006.lvc.task.LvcTaskCallbacks;
 import me.zly2006.lvc.task.LvcTaskRegistry;
 import me.zly2006.lvc.task.LvcTaskScheduling;
 import me.zly2006.lvc.world.LvcWorldAccess;
+import me.zly2006.lvc.world.LvcWorldBackend;
 
 import fi.dy.masa.litematica.data.DataManager;
 import fi.dy.masa.litematica.gui.GuiMainMenu;
@@ -235,7 +237,15 @@ final class GuiLvcProjectController
         {
             LvcDiagnostics.debug("GuiLvcProjectManager: delete latest version delete changes selected repo='{}' commit='{}'",
                     this.gui.repositoryDirectory, commit.id());
-            Level restoreWorld = LvcWorldAccess.resolveSemanticRestoreWorld(minecraft.level);
+            Level restoreWorld = minecraft.level;
+
+            if (LvcWorldBackend.resolve(restoreWorld) != LvcWorldBackend.DIRECT)
+            {
+                this.scheduleRemoteLatestVersionDelete(handle.get(), restoreWorld, commit);
+                return;
+            }
+
+            restoreWorld = LvcWorldAccess.resolveSemanticRestoreWorld(restoreWorld);
             prepared = LvcSemanticCheckoutTask.prepareLatestCommitDelete(handle.get(), this.gui.repositoryDirectory, restoreWorld);
             String targetBranch = prepared.currentBranchName();
 
@@ -286,6 +296,50 @@ final class GuiLvcProjectController
 
             LvcTaskRegistry.release(handle.get());
             LvcGuiMessages.showTaskError(Operation.DELETE_VERSION, "litematica.error.lvc_project.delete_version_failed", e);
+        }
+    }
+
+    private void scheduleRemoteLatestVersionDelete(LvcOperationHandle handle, Level restoreWorld,
+                                                   LvcProjectService.CommitInfo commit) throws Exception
+    {
+        LvcProjectService.LatestCommitUndoTarget target = LvcProjectService.latestCommitUndoTarget(this.gui.repositoryDirectory);
+        String targetBranch = target.branchName();
+
+        if (targetBranch == null || targetBranch.isBlank())
+        {
+            throw new IllegalStateException("LVC repository is not on a local branch");
+        }
+
+        this.removeTrackingOverlay();
+        LvcRemoteServerApplyTask task = LvcRemoteServerApplyTask.deleteVersion(
+                handle,
+                this.gui.repositoryDirectory,
+                restoreWorld,
+                target.parentCommitId(),
+                targetBranch,
+                LvcTaskCallbacks.of(
+                        result ->
+                        {
+                            this.refreshAfterLatestVersionDelete();
+                            LvcGuiMessages.show(MessageType.SUCCESS, "litematica.message.lvc_project.deleted_version_delete_changes",
+                                    commit.shortId(), LvcOperationCoordinator.regionCountText(result.regionCount()));
+                            this.showLossyRemoteApplyWarning(result);
+                        },
+                        e -> LvcGuiMessages.showTaskError(Operation.DELETE_VERSION,
+                                "litematica.error.lvc_project.delete_version_failed", e, true),
+                        () -> LvcGuiMessages.show(MessageType.INFO, "litematica.message.lvc_project.task_aborted", "LVC Delete Version")
+                )
+        );
+        LvcOperationCoordinator.scheduleStarted(restoreWorld, task, "LVC Delete Version");
+        LvcDiagnostics.debug("GuiLvcProjectManager: remote delete latest version scheduled repo='{}' branch='{}' commit='{}' parent='{}'",
+                this.gui.repositoryDirectory, targetBranch, target.commitId(), target.parentCommitId());
+    }
+
+    private void showLossyRemoteApplyWarning(LvcRemoteServerApplyTask.Result result)
+    {
+        if (result.lossy())
+        {
+            LvcGuiMessages.show(MessageType.WARNING, "litematica.message.lvc_project.lossy_command_apply");
         }
     }
 

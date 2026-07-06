@@ -13,6 +13,7 @@ import fi.dy.masa.litematica.data.EntityDataManager;
 import me.zly2006.lvc.LvcDiagnostics;
 import me.zly2006.lvc.capture.LvcCaptureSession;
 import me.zly2006.lvc.capture.LvcSiteWorkPlan;
+import me.zly2006.lvc.capture.LvcServuxBulkEntityCache;
 import me.zly2006.lvc.model.LvcChunk;
 import me.zly2006.lvc.model.LvcChunkCoordinate;
 import me.zly2006.lvc.model.LvcIntPosition;
@@ -127,6 +128,7 @@ final class LvcServuxBulkRequestPlanner
             }
 
             YRange range = Objects.requireNonNull(this.rangesByColumn.get(column), "Servux Y range missing for " + column);
+            LvcServuxBulkEntityCache.beginRequest(column, range.minY(), range.maxY());
             entityDataManager.requestServuxBulkEntityData(column, range.minY(), range.maxY());
             this.requestedColumns.add(column);
             this.inFlightColumns.add(column);

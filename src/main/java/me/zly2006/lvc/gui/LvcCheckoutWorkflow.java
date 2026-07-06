@@ -1,8 +1,10 @@
 package me.zly2006.lvc.gui;
 
+import java.util.List;
 import java.util.Optional;
 import javax.annotation.Nullable;
 import net.minecraft.client.Minecraft;
+import net.minecraft.core.BlockPos;
 import net.minecraft.world.level.Level;
 import me.zly2006.lvc.LvcDiagnostics;
 import me.zly2006.lvc.LvcFriendlyErrors.Operation;
@@ -226,12 +228,14 @@ final class LvcCheckoutWorkflow
     private static void scheduleRemoteCheckoutPreflight(GuiLvcProjectController controller, LvcOperationHandle handle,
                                                         Level world, CheckoutTarget target)
     {
+        LvcSemanticScanTask[] taskRef = new LvcSemanticScanTask[1];
         LvcSemanticScanTask task = new LvcSemanticScanTask(
                 handle,
                 controller.gui.repositoryDirectory,
                 world,
                 LvcTaskCallbacks.of(
-                        result -> handleRemoteCheckoutPreflight(controller, handle, world, target, result),
+                        result -> handleRemoteCheckoutPreflight(controller, handle, world, target, result,
+                                taskRef[0].furnaceXpCleanupCandidates()),
                         e ->
                         {
                             target.syncBranchDropdownIfNeeded(controller);
@@ -243,14 +247,17 @@ final class LvcCheckoutWorkflow
                             LvcGuiMessages.show(MessageType.INFO, "litematica.message.lvc_project.task_aborted", target.taskName());
                         }
                 ),
-                false
+                false,
+                true
         );
+        taskRef[0] = task;
         LvcTaskScheduling.scheduleClient(task);
     }
 
     private static void handleRemoteCheckoutPreflight(GuiLvcProjectController controller, LvcOperationHandle handle,
                                                       Level world, CheckoutTarget target,
-                                                      LvcProjectService.SemanticScanResult scan)
+                                                      LvcProjectService.SemanticScanResult scan,
+                                                      List<BlockPos> furnaceXpCleanupCandidates)
     {
         try
         {
@@ -276,7 +283,7 @@ final class LvcCheckoutWorkflow
                 return;
             }
 
-            openRemoteCheckoutConfirm(controller, handle, world, target);
+            openRemoteCheckoutConfirm(controller, handle, world, target, furnaceXpCleanupCandidates);
         }
         catch (Exception e)
         {
@@ -335,13 +342,14 @@ final class LvcCheckoutWorkflow
     }
 
     private static void openRemoteCheckoutConfirm(GuiLvcProjectController controller, LvcOperationHandle handle,
-                                                  Level world, CheckoutTarget target)
+                                                  Level world, CheckoutTarget target,
+                                                  List<BlockPos> furnaceXpCleanupCandidates)
     {
         if (!Configs.Generic.LVC_SHOW_CHECKOUT_WARNING.getBooleanValue())
         {
             LvcDiagnostics.debug("LVC remote Checkout confirmation skipped by global config repo='{}' target='{}'",
                     controller.gui.repositoryDirectory, target.displayName());
-            scheduleRemoteCheckout(controller, handle, world, target);
+            scheduleRemoteCheckout(controller, handle, world, target, furnaceXpCleanupCandidates);
             return;
         }
 
@@ -351,7 +359,7 @@ final class LvcCheckoutWorkflow
                 "litematica.gui.message.lvc_project.confirm_checkout",
                 Configs.Generic.LVC_SHOW_CHECKOUT_WARNING,
                 target.taskName(),
-                () -> scheduleRemoteCheckout(controller, handle, world, target),
+                () -> scheduleRemoteCheckout(controller, handle, world, target, furnaceXpCleanupCandidates),
                 () ->
                 {
                     LvcTaskRegistry.release(handle);
@@ -415,7 +423,8 @@ final class LvcCheckoutWorkflow
     }
 
     private static void scheduleRemoteCheckout(GuiLvcProjectController controller, LvcOperationHandle handle,
-                                               Level world, CheckoutTarget target)
+                                               Level world, CheckoutTarget target,
+                                               List<BlockPos> furnaceXpCleanupCandidates)
     {
         try
         {
@@ -426,6 +435,7 @@ final class LvcCheckoutWorkflow
                     world,
                     target.commitId(),
                     target.branchName(),
+                    furnaceXpCleanupCandidates,
                     LvcTaskCallbacks.of(
                             result ->
                             {

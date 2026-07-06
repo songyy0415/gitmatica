@@ -22,6 +22,7 @@ import net.minecraft.nbt.NbtAccounter;
 import net.minecraft.nbt.NbtIo;
 import net.minecraft.nbt.Tag;
 import net.minecraft.server.level.ServerLevel;
+import net.minecraft.world.level.block.Blocks;
 import net.minecraft.world.level.block.state.BlockState;
 import net.minecraft.world.phys.Vec3;
 
@@ -93,6 +94,14 @@ public final class LvcSemanticSchematicBuilder
                                                    ChunkObjectReader objectReader,
                                                    @javax.annotation.Nullable ServerLevel lootPreviewWorld) throws IOException
     {
+        return beginSchematicBuild(manifest, localState, siteId, objectReader, lootPreviewWorld, null);
+    }
+
+    public static BuildSession beginSchematicBuild(LvcManifest manifest, LvcLocalState localState, String siteId,
+                                                   ChunkObjectReader objectReader,
+                                                   @javax.annotation.Nullable ServerLevel lootPreviewWorld,
+                                                   @javax.annotation.Nullable BlockInclusionPredicate blockInclusionPredicate) throws IOException
+    {
         Objects.requireNonNull(manifest, "manifest");
         Objects.requireNonNull(localState, "localState");
         Objects.requireNonNull(siteId, "siteId");
@@ -121,7 +130,8 @@ public final class LvcSemanticSchematicBuilder
             throw new IOException("Failed to create semantic LVC schematic");
         }
 
-        return new BuildSession(manifest.name(), site, objectReader, schematic, regions, worldOrigin, lootPreviewWorld);
+        return new BuildSession(manifest.name(), site, objectReader, schematic, regions, worldOrigin, lootPreviewWorld,
+                blockInclusionPredicate);
     }
 
     public static LitematicaSchematic buildAirSchematic(LvcManifest manifest, LvcLocalState localState,
@@ -178,10 +188,14 @@ public final class LvcSemanticSchematicBuilder
         private int promotedContainerComponents;
         private int materializedContainerLootTables;
         private int failedContainerLootTables;
+        private int includedBlocks;
+        private int structureVoidBlocks;
+        @javax.annotation.Nullable private final BlockInclusionPredicate blockInclusionPredicate;
 
         private BuildSession(String projectName, LvcManifest.Site site, ChunkObjectReader objectReader,
                              LitematicaSchematic schematic, List<RegionView> regions, BlockPos worldOrigin,
-                             @javax.annotation.Nullable ServerLevel lootPreviewWorld) throws IOException
+                             @javax.annotation.Nullable ServerLevel lootPreviewWorld,
+                             @javax.annotation.Nullable BlockInclusionPredicate blockInclusionPredicate) throws IOException
         {
             this.projectName = Objects.requireNonNull(projectName, "projectName");
             this.objectReader = Objects.requireNonNull(objectReader, "objectReader");
@@ -194,6 +208,7 @@ public final class LvcSemanticSchematicBuilder
             this.regionsByChunk = createRegionsByChunk(this.regions);
             this.worldOrigin = Objects.requireNonNull(worldOrigin, "worldOrigin");
             this.lootPreviewWorld = lootPreviewWorld;
+            this.blockInclusionPredicate = blockInclusionPredicate;
         }
 
         public boolean isComplete()
@@ -211,6 +226,16 @@ public final class LvcSemanticSchematicBuilder
             return this.chunkRefs.size();
         }
 
+        public int includedBlocks()
+        {
+            return this.includedBlocks;
+        }
+
+        public int structureVoidBlocks()
+        {
+            return this.structureVoidBlocks;
+        }
+
         public void processNextChunk() throws IOException
         {
             if (this.isComplete())
@@ -223,12 +248,15 @@ public final class LvcSemanticSchematicBuilder
             LvcChunk chunk = LvcChunkCodec.decode(this.objectReader.readObject(entry.getValue()));
             List<RegionView> chunkRegions = this.regionsByChunk.getOrDefault(coordinate, List.of());
             BuildStats stats = populateSchematicChunk(chunkRegions, this.containers, this.blockEntityMaps, this.entityLists,
-                    this.blockStateCache, this.worldOrigin, this.lootPreviewWorld, coordinate, ChunkView.from(chunk));
+                    this.blockStateCache, this.worldOrigin, this.lootPreviewWorld, coordinate, ChunkView.from(chunk),
+                    this.blockInclusionPredicate);
             this.blockEntityCount += stats.blockEntities();
             this.entityCount += stats.entities();
             this.promotedContainerComponents += stats.promotedContainerComponents();
             this.materializedContainerLootTables += stats.materializedContainerLootTables();
             this.failedContainerLootTables += stats.failedContainerLootTables();
+            this.includedBlocks += stats.includedBlocks();
+            this.structureVoidBlocks += stats.structureVoidBlocks();
             this.nextChunkIndex++;
         }
 
@@ -242,10 +270,12 @@ public final class LvcSemanticSchematicBuilder
             this.schematic.getMetadata().setName(this.projectName);
             this.schematic.getMetadata().setTimeCreated(System.currentTimeMillis());
             this.schematic.getMetadata().setTimeModifiedToNow();
-            LvcDiagnostics.debug("LvcSemanticSchematicBuilder: built schematic project='{}' regions={} chunks={} cachedBlockStates={} blockEntities={} entities={} promotedContainerComponents={} materializedContainerLootTables={} failedContainerLootTables={} lootPreviewWorld={}",
+            LvcDiagnostics.debug("LvcSemanticSchematicBuilder: built schematic project='{}' regions={} chunks={} cachedBlockStates={} includedBlocks={} structureVoidBlocks={} blockEntities={} entities={} promotedContainerComponents={} materializedContainerLootTables={} failedContainerLootTables={} lootPreviewWorld={} sparse={}",
                     this.projectName, this.regions.size(), this.chunkRefs.size(), this.blockStateCache.size(),
-                    this.blockEntityCount, this.entityCount, this.promotedContainerComponents,
-                    this.materializedContainerLootTables, this.failedContainerLootTables, this.lootPreviewWorld != null);
+                    this.includedBlocks, this.structureVoidBlocks, this.blockEntityCount, this.entityCount,
+                    this.promotedContainerComponents, this.materializedContainerLootTables,
+                    this.failedContainerLootTables, this.lootPreviewWorld != null,
+                    this.blockInclusionPredicate != null);
             return this.schematic;
         }
     }
@@ -371,6 +401,23 @@ public final class LvcSemanticSchematicBuilder
         byte[] readObject(String objectId) throws IOException;
     }
 
+    @FunctionalInterface
+    public interface BlockInclusionPredicate
+    {
+        boolean include(TargetBlock block, BlockState parsedState) throws IOException;
+    }
+
+    public record TargetBlock(LvcChunkCoordinate coordinate, int maskIndex, LvcIntPosition projectPos,
+                              LvcIntPosition worldPos, BlockPos blockPos, String blockState,
+                              @javax.annotation.Nullable byte[] blockEntityBytes)
+    {
+        @Override
+        public byte[] blockEntityBytes()
+        {
+            return this.blockEntityBytes == null ? null : this.blockEntityBytes.clone();
+        }
+    }
+
     private static Map<String, LitematicaBlockStateContainer> createContainerMap(LitematicaSchematic schematic,
                                                                                  List<RegionView> regions) throws IOException
     {
@@ -437,18 +484,26 @@ public final class LvcSemanticSchematicBuilder
                                                Map<String, List<EntityInfo>> entityLists,
                                                Map<String, BlockState> blockStateCache,
                                                BlockPos worldOrigin, @javax.annotation.Nullable ServerLevel lootPreviewWorld,
-                                               LvcChunkCoordinate coordinate, ChunkView chunk) throws IOException
+                                               LvcChunkCoordinate coordinate, ChunkView chunk,
+                                               @javax.annotation.Nullable BlockInclusionPredicate blockInclusionPredicate) throws IOException
     {
         int blockEntityCount = 0;
         int entityCount = 0;
         int promotedContainerComponents = 0;
         int materializedContainerLootTables = 0;
         int failedContainerLootTables = 0;
+        int includedBlocks = 0;
+        int structureVoidBlocks = 0;
 
         for (Map.Entry<Integer, String> entry : chunk.blockStatesByIndex().entrySet())
         {
             LvcIntPosition projectPos = LvcCapturePlanner.projectPosition(coordinate, entry.getKey(),
                     chunk.sizeX(), chunk.sizeY(), chunk.sizeZ());
+            LvcIntPosition worldPos = new LvcIntPosition(
+                    worldOrigin.getX() + projectPos.x(),
+                    worldOrigin.getY() + projectPos.y(),
+                    worldOrigin.getZ() + projectPos.z());
+            BlockPos blockPos = new BlockPos(worldPos.x(), worldPos.y(), worldPos.z());
             BlockState state = blockStateCache.computeIfAbsent(entry.getValue(), value ->
             {
                 try
@@ -461,6 +516,10 @@ public final class LvcSemanticSchematicBuilder
                 }
             });
             byte[] blockEntityNbt = chunk.blockEntitiesByIndex().get(entry.getKey());
+            TargetBlock targetBlock = new TargetBlock(coordinate, entry.getKey(), projectPos, worldPos, blockPos,
+                    entry.getValue(), blockEntityNbt);
+            boolean includeBlock = blockInclusionPredicate == null || blockInclusionPredicate.include(targetBlock, state);
+            boolean matchedRegion = false;
 
             for (RegionView region : regions)
             {
@@ -472,6 +531,13 @@ public final class LvcSemanticSchematicBuilder
                 int x = projectPos.x() - region.min().x();
                 int y = projectPos.y() - region.min().y();
                 int z = projectPos.z() - region.min().z();
+                matchedRegion = true;
+
+                if (!includeBlock)
+                {
+                    containers.get(region.schematicName()).set(x, y, z, Blocks.STRUCTURE_VOID.defaultBlockState());
+                    continue;
+                }
 
                 containers.get(region.schematicName()).set(x, y, z, state);
 
@@ -502,6 +568,18 @@ public final class LvcSemanticSchematicBuilder
                     blockEntityCount++;
                 }
             }
+
+            if (matchedRegion)
+            {
+                if (includeBlock)
+                {
+                    includedBlocks++;
+                }
+                else
+                {
+                    structureVoidBlocks++;
+                }
+            }
         }
 
         for (LvcChunk.EntityRecord entity : chunk.entities())
@@ -523,7 +601,8 @@ public final class LvcSemanticSchematicBuilder
             }
         }
 
-        return new BuildStats(blockEntityCount, entityCount, promotedContainerComponents, materializedContainerLootTables, failedContainerLootTables);
+        return new BuildStats(blockEntityCount, entityCount, promotedContainerComponents, materializedContainerLootTables,
+                failedContainerLootTables, includedBlocks, structureVoidBlocks);
     }
 
     private static void populateSchematic(LitematicaSchematic schematic, List<RegionView> regions,
@@ -732,7 +811,8 @@ public final class LvcSemanticSchematicBuilder
     }
 
     private record BuildStats(int blockEntities, int entities, int promotedContainerComponents,
-                              int materializedContainerLootTables, int failedContainerLootTables)
+                              int materializedContainerLootTables, int failedContainerLootTables,
+                              int includedBlocks, int structureVoidBlocks)
     {
     }
 

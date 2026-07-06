@@ -9,6 +9,7 @@ import java.util.Objects;
 import java.util.Set;
 import java.util.TreeMap;
 import java.util.TreeSet;
+import net.minecraft.core.BlockPos;
 import me.zly2006.lvc.LvcUserActionException;
 import me.zly2006.lvc.model.LvcChunk;
 import me.zly2006.lvc.model.LvcIntPosition;
@@ -23,9 +24,11 @@ public final class LvcCaptureSession
     private final ObjectIdResolver objectIdResolver;
     private final boolean allowUnknownChunks;
     private final boolean computeFullHashes;
+    private final boolean collectFurnaceXpCleanupCandidates;
     private final Map<String, String> fullHashes = new TreeMap<>();
     private final Map<String, String> trackedHashes = new TreeMap<>();
     private final Set<String> unknownChunks = new TreeSet<>();
+    private final List<BlockPos> furnaceXpCleanupCandidates = new ArrayList<>();
     private int nextChunkIndex;
     private long fullHashContentBytes;
     private long storedObjectBytes;
@@ -35,11 +38,19 @@ public final class LvcCaptureSession
     public LvcCaptureSession(LvcSiteWorkPlan plan, LvcWorldReader worldReader, ObjectIdResolver objectIdResolver,
                              boolean allowUnknownChunks, boolean computeFullHashes)
     {
+        this(plan, worldReader, objectIdResolver, allowUnknownChunks, computeFullHashes, false);
+    }
+
+    public LvcCaptureSession(LvcSiteWorkPlan plan, LvcWorldReader worldReader, ObjectIdResolver objectIdResolver,
+                             boolean allowUnknownChunks, boolean computeFullHashes,
+                             boolean collectFurnaceXpCleanupCandidates)
+    {
         this.plan = Objects.requireNonNull(plan, "plan");
         this.worldReader = Objects.requireNonNull(worldReader, "worldReader");
         this.objectIdResolver = objectIdResolver;
         this.allowUnknownChunks = allowUnknownChunks;
         this.computeFullHashes = computeFullHashes;
+        this.collectFurnaceXpCleanupCandidates = collectFurnaceXpCleanupCandidates;
 
         if (computeFullHashes && objectIdResolver == null)
         {
@@ -80,6 +91,11 @@ public final class LvcCaptureSession
     public long blockEntityRecords()
     {
         return this.blockEntityRecords;
+    }
+
+    public List<BlockPos> furnaceXpCleanupCandidates()
+    {
+        return List.copyOf(this.furnaceXpCleanupCandidates);
     }
 
     public LvcIntPosition origin()
@@ -154,6 +170,11 @@ public final class LvcCaptureSession
 
             blockStates.add(blockState);
 
+            if (this.collectFurnaceXpCleanupCandidates && isFurnaceLikeBlockState(blockState))
+            {
+                this.furnaceXpCleanupCandidates.add(tracked.blockPos());
+            }
+
             this.blockEntityReadAttempts++;
             byte[] blockEntityNbt = this.worldReader.blockEntityNbtAt(worldPos);
 
@@ -204,6 +225,13 @@ public final class LvcCaptureSession
 
             this.fullHashes.put(chunkKey, objectId);
         }
+    }
+
+    private static boolean isFurnaceLikeBlockState(String blockState)
+    {
+        return blockState.equals("minecraft:furnace") || blockState.startsWith("minecraft:furnace[") ||
+                blockState.equals("minecraft:blast_furnace") || blockState.startsWith("minecraft:blast_furnace[") ||
+                blockState.equals("minecraft:smoker") || blockState.startsWith("minecraft:smoker[");
     }
 
     @FunctionalInterface

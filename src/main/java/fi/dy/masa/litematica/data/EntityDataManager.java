@@ -62,6 +62,7 @@ import fi.dy.masa.litematica.util.EntityUtils;
 import fi.dy.masa.litematica.util.PositionUtils;
 import fi.dy.masa.litematica.util.WorldUtils;
 import fi.dy.masa.litematica.world.WorldSchematic;
+import me.zly2006.lvc.capture.LvcServuxBulkEntityCache;
 
 public class EntityDataManager implements IClientTickHandler, IDataSyncer
 {
@@ -264,6 +265,7 @@ public class EntityDataManager implements IClientTickHandler, IDataSyncer
         this.pendingChunkTimeout.clear();
         this.pendingBackupChunk_BlockEntities.clear();
         this.pendingBackupChunk_Entities.clear();
+        LvcServuxBulkEntityCache.clear();
     }
 
     private boolean shouldUseQuery()

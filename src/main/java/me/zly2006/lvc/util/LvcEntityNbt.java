@@ -10,6 +10,7 @@ import net.minecraft.world.entity.Entity;
 import net.minecraft.world.entity.EntityType;
 import net.minecraft.world.entity.decoration.BlockAttachedEntity;
 import net.minecraft.world.entity.decoration.HangingEntity;
+import net.minecraft.world.level.ChunkPos;
 import net.minecraft.world.level.Level;
 import net.minecraft.world.phys.Vec3;
 import fi.dy.masa.malilib.util.nbt.NbtUtils;
@@ -144,6 +145,40 @@ public final class LvcEntityNbt
         return LvcCanonicalNbt.encodeUnnamed(tag);
     }
 
+    @Nullable
+    public static byte[] captureServuxBulkProjectRelative(CompoundTag sourceTag, ChunkPos chunkPos, int minY,
+                                                          LvcIntPosition origin) throws IOException
+    {
+        if (!sourceTag.contains("id") || !sourceTag.contains("Pos"))
+        {
+            return null;
+        }
+
+        CompoundTag tag = sourceTag.copy();
+        stripRuntimeEntityFields(tag);
+
+        Vec3 requestRelativePos = NbtUtils.getVec3dCodec(tag, "Pos");
+        Vec3 projectPos = new Vec3(
+                requestRelativePos.x + chunkPos.getMinBlockX() - origin.x(),
+                requestRelativePos.y + minY - origin.y(),
+                requestRelativePos.z + chunkPos.getMinBlockZ() - origin.z()
+        );
+        NbtUtils.putVec3dCodec(tag, projectPos, "Pos");
+        offsetEntityNonPositionCoordinates(tag, -origin.x(), -origin.y(), -origin.z());
+
+        if (tag.contains("Passengers"))
+        {
+            ListTag passengers = tag.getListOrEmpty("Passengers");
+
+            for (int i = 0; i < passengers.size(); i++)
+            {
+                offsetEntityTree(passengers.getCompoundOrEmpty(i), -origin.x(), -origin.y(), -origin.z());
+            }
+        }
+
+        return LvcCanonicalNbt.encodeUnnamed(tag);
+    }
+
     public static CompoundTag materializeForWorld(byte[] canonicalNbt, LvcIntPosition origin) throws IOException
     {
         CompoundTag tag = LvcCanonicalNbt.decodeUnnamedCompound(canonicalNbt);
@@ -195,6 +230,7 @@ public final class LvcEntityNbt
     private static void stripRuntimeEntityFields(CompoundTag tag)
     {
         tag.remove("LastEntityID");
+        tag.remove("entityId");
 
         if (tag.contains("Passengers"))
         {
@@ -216,6 +252,11 @@ public final class LvcEntityNbt
             NbtUtils.putVec3dCodec(tag, new Vec3(pos.x + x, pos.y + y, pos.z + z), "Pos");
         }
 
+        offsetEntityNonPositionCoordinates(tag, x, y, z);
+    }
+
+    private static void offsetEntityNonPositionCoordinates(CompoundTag tag, int x, int y, int z)
+    {
         if (tag.contains("TileX"))
         {
             tag.putInt("TileX", tag.getIntOr("TileX", 0) + x);

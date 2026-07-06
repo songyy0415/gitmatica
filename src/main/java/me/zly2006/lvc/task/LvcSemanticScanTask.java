@@ -1,9 +1,11 @@
 package me.zly2006.lvc.task;
 
 import java.nio.file.Path;
+import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import javax.annotation.Nullable;
+import net.minecraft.core.BlockPos;
 import net.minecraft.world.level.Level;
 import me.zly2006.lvc.LvcDiagnostics;
 import me.zly2006.lvc.LvcProjectService;
@@ -21,6 +23,7 @@ public final class LvcSemanticScanTask extends LvcChunkedTaskBase<LvcProjectServ
 
     private final Path repositoryDirectory;
     private final Level world;
+    private final boolean collectFurnaceXpCleanupCandidates;
     @Nullable private LvcSemanticTaskContext.ActiveProject project;
     @Nullable private LvcCaptureSession session;
     @Nullable private LvcCaptureEngine.Result scanResult;
@@ -33,9 +36,18 @@ public final class LvcSemanticScanTask extends LvcChunkedTaskBase<LvcProjectServ
                                LvcTaskCallbacks<LvcProjectService.SemanticScanResult> callbacks,
                                boolean releaseLockOnSuccess)
     {
+        this(handle, repositoryDirectory, world, callbacks, releaseLockOnSuccess, false);
+    }
+
+    public LvcSemanticScanTask(LvcOperationHandle handle, Path repositoryDirectory, Level world,
+                               LvcTaskCallbacks<LvcProjectService.SemanticScanResult> callbacks,
+                               boolean releaseLockOnSuccess,
+                               boolean collectFurnaceXpCleanupCandidates)
+    {
         super(handle, "LVC Scan Changes", callbacks, releaseLockOnSuccess, LITEMATICA_VERIFIER_BUDGET_NANOS);
         this.repositoryDirectory = Objects.requireNonNull(repositoryDirectory, "repositoryDirectory");
         this.world = Objects.requireNonNull(world, "world");
+        this.collectFurnaceXpCleanupCandidates = collectFurnaceXpCleanupCandidates;
     }
 
     @Override
@@ -52,7 +64,8 @@ public final class LvcSemanticScanTask extends LvcChunkedTaskBase<LvcProjectServ
                     this.backend.createReader(this.world),
                     null,
                     true,
-                    false
+                    false,
+                    this.collectFurnaceXpCleanupCandidates
             );
             this.servuxRequests = this.backend == LvcWorldBackend.SERVUX ? LvcServuxBulkRequestPlanner.create(plan) : null;
             LvcDiagnostics.debug(this.handle(), "semantic scan initialized site={} dimension={} origin={} chunks={} backend={} lossy={} blockEntities={} entities={} servuxColumns={} budgetNanos={}",
@@ -114,10 +127,11 @@ public final class LvcSemanticScanTask extends LvcChunkedTaskBase<LvcProjectServ
         }
 
         LvcDiagnostics.debug(this.handle(),
-                "semantic scan complete site={} knownChunks={} dirtyChunks={} changedChunks={} addedChunks={} removedChunks={} unknownChunks={} blockEntityReadAttempts={} blockEntityRecords={} samples={}",
+                "semantic scan complete site={} knownChunks={} dirtyChunks={} changedChunks={} addedChunks={} removedChunks={} unknownChunks={} blockEntityReadAttempts={} blockEntityRecords={} furnaceXpCandidates={} samples={}",
                 this.result.siteId(), this.result.knownChunks(), this.result.dirtyChunks(),
                 this.result.changedChunks(), this.result.addedChunks(), this.result.removedChunks(),
-                this.result.unknownChunks(), currentSession.blockEntityReadAttempts(), currentSession.blockEntityRecords(), this.result.samples().size());
+                this.result.unknownChunks(), currentSession.blockEntityReadAttempts(), currentSession.blockEntityRecords(),
+                currentSession.furnaceXpCleanupCandidates().size(), this.result.samples().size());
         this.logMismatchSamples();
         return true;
     }
@@ -142,6 +156,11 @@ public final class LvcSemanticScanTask extends LvcChunkedTaskBase<LvcProjectServ
     LvcCaptureEngine.Result scanResult()
     {
         return Objects.requireNonNull(this.scanResult, "scanResult");
+    }
+
+    public List<BlockPos> furnaceXpCleanupCandidates()
+    {
+        return this.requireSession().furnaceXpCleanupCandidates();
     }
 
     @Override

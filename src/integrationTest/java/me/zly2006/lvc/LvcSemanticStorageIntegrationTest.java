@@ -28,6 +28,7 @@ import net.minecraft.core.BlockPos;
 import net.minecraft.core.Direction;
 import net.minecraft.nbt.CompoundTag;
 import net.minecraft.nbt.ListTag;
+import net.minecraft.world.level.ChunkPos;
 import net.minecraft.world.level.block.Blocks;
 import net.minecraft.world.level.block.RepeaterBlock;
 import net.minecraft.world.level.block.state.BlockState;
@@ -80,6 +81,7 @@ final class LvcSemanticStorageIntegrationTest
         IntegrationTestSupport.run("minecraft block state strings are canonical", LvcSemanticStorageIntegrationTest::minecraftBlockStateStringsAreCanonical);
         IntegrationTestSupport.run("canonical block entity nbt sorts keys and ignores position", LvcSemanticStorageIntegrationTest::canonicalBlockEntityNbtSortsKeysAndIgnoresPosition);
         IntegrationTestSupport.run("semantic entity nbt strips runtime entity ids", LvcSemanticStorageIntegrationTest::semanticEntityNbtStripsRuntimeEntityIds);
+        IntegrationTestSupport.run("servux bulk entity nbt becomes project relative", LvcSemanticStorageIntegrationTest::servuxBulkEntityNbtBecomesProjectRelative);
         IntegrationTestSupport.run("tracked chunk hash includes block entity NBT", LvcSemanticStorageIntegrationTest::trackedChunkHashIncludesBlockEntityNbt);
         IntegrationTestSupport.run("tracked chunk hash normalizes stored air variants", LvcSemanticStorageIntegrationTest::trackedChunkHashNormalizesStoredAirVariants);
         IntegrationTestSupport.run("project service maps selection to semantic site", LvcSemanticStorageIntegrationTest::projectServiceMapsSelectionToSemanticSite);
@@ -100,6 +102,7 @@ final class LvcSemanticStorageIntegrationTest
         IntegrationTestSupport.run("tracking overlay display name includes short head commit", LvcSemanticStorageIntegrationTest::trackingOverlayDisplayNameIncludesShortHeadCommit);
         IntegrationTestSupport.run("semantic tracking overlay cache is file backed", LvcSemanticStorageIntegrationTest::semanticTrackingOverlayCacheIsFileBacked);
         IntegrationTestSupport.run("semantic working tree schematic loads full hashes", LvcSemanticStorageIntegrationTest::semanticWorkingTreeSchematicLoadsFullHashes);
+        IntegrationTestSupport.run("semantic sparse schematic uses structure void for skipped blocks", LvcSemanticStorageIntegrationTest::semanticSparseSchematicUsesStructureVoidForSkippedBlocks);
         IntegrationTestSupport.run("semantic working tree schematic loads block entity NBT", LvcSemanticStorageIntegrationTest::semanticWorkingTreeSchematicLoadsBlockEntityNbt);
         IntegrationTestSupport.run("semantic working tree schematic promotes container components", LvcSemanticStorageIntegrationTest::semanticWorkingTreeSchematicPromotesContainerComponents);
         IntegrationTestSupport.run("semantic commit export uses selected commit", LvcSemanticStorageIntegrationTest::semanticCommitExportUsesSelectedCommit);
@@ -421,6 +424,7 @@ final class LvcSemanticStorageIntegrationTest
         CompoundTag entity = new CompoundTag();
         entity.putString("id", "minecraft:boat");
         entity.putInt("LastEntityID", 42);
+        entity.putInt("entityId", 43);
         NbtUtils.putVec3dCodec(entity, new Vec3(0.5, 0.0, 0.5), "Pos");
         entity.put("Passengers", passengers);
 
@@ -429,9 +433,43 @@ final class LvcSemanticStorageIntegrationTest
         CompoundTag region = LvcEntityNbt.materializeForRegion(bytes, new LvcIntPosition(1, 2, 3));
 
         IntegrationTestSupport.assertTrue(!world.contains("LastEntityID"), "world entity restore must not preserve stale runtime entity id");
+        IntegrationTestSupport.assertTrue(!world.contains("entityId"), "world entity restore must not preserve Servux runtime entity id");
         IntegrationTestSupport.assertTrue(!world.getListOrEmpty("Passengers").getCompoundOrEmpty(0).contains("LastEntityID"), "world passenger restore must not preserve stale runtime entity id");
         IntegrationTestSupport.assertTrue(!region.contains("LastEntityID"), "schematic entity materialization must not preserve stale runtime entity id");
+        IntegrationTestSupport.assertTrue(!region.contains("entityId"), "schematic entity materialization must not preserve Servux runtime entity id");
         IntegrationTestSupport.assertTrue(!region.getListOrEmpty("Passengers").getCompoundOrEmpty(0).contains("LastEntityID"), "schematic passenger materialization must not preserve stale runtime entity id");
+    }
+
+    private static void servuxBulkEntityNbtBecomesProjectRelative() throws Exception
+    {
+        CompoundTag passenger = new CompoundTag();
+        passenger.putString("id", "minecraft:armor_stand");
+        passenger.putInt("LastEntityID", 99);
+        passenger.putInt("entityId", 100);
+        NbtUtils.putVec3dCodec(passenger, new Vec3(34.5, 70.0, 54.5), "Pos");
+
+        ListTag passengers = new ListTag();
+        passengers.add(passenger);
+
+        CompoundTag entity = new CompoundTag();
+        entity.putString("id", "minecraft:boat");
+        entity.putInt("LastEntityID", 42);
+        entity.putInt("entityId", 43);
+        NbtUtils.putVec3dCodec(entity, new Vec3(2.5, 4.0, 6.5), "Pos");
+        entity.put("Passengers", passengers);
+
+        byte[] bytes = LvcEntityNbt.captureServuxBulkProjectRelative(entity, new ChunkPos(2, 3), 64, new LvcIntPosition(30, 60, 45));
+        CompoundTag stored = LvcCanonicalNbt.decodeUnnamedCompound(bytes);
+        Vec3 rootPos = NbtUtils.getVec3dCodec(stored, "Pos");
+        CompoundTag storedPassenger = stored.getListOrEmpty("Passengers").getCompoundOrEmpty(0);
+        Vec3 passengerPos = NbtUtils.getVec3dCodec(storedPassenger, "Pos");
+
+        IntegrationTestSupport.assertEquals(new Vec3(4.5, 8.0, 9.5), rootPos, "Servux chunk-relative root position should become project-relative");
+        IntegrationTestSupport.assertEquals(new Vec3(4.5, 10.0, 9.5), passengerPos, "Servux passenger absolute position should become project-relative");
+        IntegrationTestSupport.assertTrue(!stored.contains("LastEntityID"), "Servux root LastEntityID should be stripped");
+        IntegrationTestSupport.assertTrue(!stored.contains("entityId"), "Servux root entityId should be stripped");
+        IntegrationTestSupport.assertTrue(!storedPassenger.contains("LastEntityID"), "Servux passenger LastEntityID should be stripped");
+        IntegrationTestSupport.assertTrue(!storedPassenger.contains("entityId"), "Servux passenger entityId should be stripped");
     }
 
     private static void trackedChunkHashIncludesBlockEntityNbt() throws Exception
@@ -933,6 +971,40 @@ final class LvcSemanticStorageIntegrationTest
         IntegrationTestSupport.assertEquals(List.of(0, 0, 0), blockPosToList(schematic.getSubRegionPosition("Line")), "semantic schematic region offset");
         IntegrationTestSupport.assertEquals(Blocks.STONE.defaultBlockState(), container.get(0, 0, 0), "first semantic block state");
         IntegrationTestSupport.assertEquals(Blocks.DIRT.defaultBlockState(), container.get(1, 0, 0), "second semantic block state");
+    }
+
+    private static void semanticSparseSchematicUsesStructureVoidForSkippedBlocks() throws Exception
+    {
+        bootstrapMinecraft();
+
+        Path repoDir = Files.createTempDirectory("lvc-semantic-sparse-schematic-");
+        FakeWorldReader reader = new FakeWorldReader("minecraft:stone");
+        reader.setBlock(new LvcIntPosition(1, 0, 0), "minecraft:dirt");
+        LvcSemanticRepository.CommitResult init = LvcSemanticRepository.initProject(repoDir, "Semantic Sparse Schematic",
+                singleLineSite(2), placementAt(0, 0, 0), reader, player("SemanticSparseSchematic"));
+
+        LvcSemanticSchematicBuilder.BuildSession session = LvcSemanticSchematicBuilder.beginSchematicBuild(
+                init.manifest(),
+                init.localState(),
+                "main",
+                objectId -> LvcChunkStore.readObject(repoDir, objectId),
+                null,
+                (block, parsedState) -> block.projectPos().x() == 1
+        );
+
+        while (!session.isComplete())
+        {
+            session.processNextChunk();
+        }
+
+        fi.dy.masa.litematica.schematic.LitematicaSchematic schematic = session.result();
+        fi.dy.masa.litematica.schematic.container.LitematicaBlockStateContainer container = schematic.getSubRegionContainer("Line");
+
+        IntegrationTestSupport.assertNotNull(container, "semantic sparse schematic should create a region container");
+        IntegrationTestSupport.assertEquals(Blocks.STRUCTURE_VOID.defaultBlockState(), container.get(0, 0, 0), "skipped semantic block should become structure void");
+        IntegrationTestSupport.assertEquals(Blocks.DIRT.defaultBlockState(), container.get(1, 0, 0), "included semantic block should keep target state");
+        IntegrationTestSupport.assertEquals(1, session.includedBlocks(), "sparse schematic included block count");
+        IntegrationTestSupport.assertEquals(1, session.structureVoidBlocks(), "sparse schematic structure void block count");
     }
 
     private static void semanticWorkingTreeSchematicLoadsBlockEntityNbt() throws Exception

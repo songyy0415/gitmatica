@@ -11,12 +11,14 @@ import org.eclipse.jgit.lib.ObjectId;
 import me.zly2006.lvc.LvcProjectService;
 import me.zly2006.lvc.task.LvcOperationHandle;
 import me.zly2006.lvc.task.LvcOperationJournal;
+import me.zly2006.lvc.task.LvcRemoteServerApplyTask;
 import me.zly2006.lvc.task.LvcSemanticCheckoutTask;
 import me.zly2006.lvc.task.LvcSemanticDiscardTask;
 import me.zly2006.lvc.task.LvcTaskCallbacks;
 import me.zly2006.lvc.task.LvcTaskRegistry;
 import me.zly2006.lvc.task.LvcTaskScheduling;
 import me.zly2006.lvc.world.LvcWorldAccess;
+import me.zly2006.lvc.world.LvcWorldBackend;
 import me.zly2006.lvc.storage.LvcChunkStagingStore;
 import me.zly2006.lvc.storage.LvcRepository;
 
@@ -149,7 +151,7 @@ final class GuiLvcProjectTaskActions
 
         try
         {
-            Level restoreWorld = LvcWorldAccess.resolveSemanticRestoreWorld(minecraft.level);
+            Level restoreWorld = recoveryRestoreWorld(minecraft.level, operation);
             String mergeRestoreCommit = operation == LvcOperationJournal.Operation.MERGE ?
                     mergeRecoveryRestoreCommit(controller, entry) : entry.targetCommit();
             cleanupInterruptedOperationData(controller.gui.repositoryDirectory);
@@ -288,7 +290,7 @@ final class GuiLvcProjectTaskActions
 
         try
         {
-            Level restoreWorld = LvcWorldAccess.resolveSemanticRestoreWorld(minecraft.level);
+            Level restoreWorld = recoveryRestoreWorld(minecraft.level, operation);
             String rollbackCommit = entry.previousHead();
             String rollbackBranch = recoveryBranchForCommit(controller.gui.repositoryDirectory, rollbackCommit, entry.previousBranch());
             cleanupInterruptedOperationData(controller.gui.repositoryDirectory);
@@ -346,7 +348,7 @@ final class GuiLvcProjectTaskActions
 
         try
         {
-            Level restoreWorld = LvcWorldAccess.resolveSemanticRestoreWorld(minecraft.level);
+            Level restoreWorld = recoveryRestoreWorld(minecraft.level, operation);
             String rollbackCommit = entry.previousHead().trim();
             String rollbackBranch = entry.previousBranch().trim();
             cleanupInterruptedOperationData(controller.gui.repositoryDirectory);
@@ -517,6 +519,18 @@ final class GuiLvcProjectTaskActions
         }
 
         return head.name();
+    }
+
+    private static Level recoveryRestoreWorld(Level currentWorld, LvcOperationJournal.Operation operation) throws Exception
+    {
+        if ((operation == LvcOperationJournal.Operation.CHECKOUT ||
+                operation == LvcOperationJournal.Operation.DELETE_VERSION) &&
+                LvcWorldBackend.resolve(currentWorld) != LvcWorldBackend.DIRECT)
+        {
+            return currentWorld;
+        }
+
+        return LvcWorldAccess.resolveSemanticRestoreWorld(currentWorld);
     }
 
     @Nullable
@@ -712,6 +726,13 @@ final class GuiLvcProjectTaskActions
             return;
         }
 
+        if (LvcWorldBackend.resolve(restoreWorld) != LvcWorldBackend.DIRECT)
+        {
+            scheduleRemoteRecoveryCheckout(controller, handle, restoreWorld, targetCommit, targetBranch,
+                    journalOperation, displayName, successMessageKey, successMessageArgs);
+            return;
+        }
+
         LvcSemanticCheckoutTask.Preflight task = new LvcSemanticCheckoutTask.Preflight(
                 handle,
                 controller.gui.repositoryDirectory,
@@ -726,6 +747,70 @@ final class GuiLvcProjectTaskActions
                 )
         );
         LvcTaskScheduling.scheduleForWorld(restoreWorld, task);
+    }
+
+    private static void scheduleRemoteRecoveryCheckout(GuiLvcProjectController controller, LvcOperationHandle handle,
+                                                       Level restoreWorld, String targetCommit,
+                                                       @Nullable String targetBranch,
+                                                       LvcOperationJournal.Operation journalOperation,
+                                                       String displayName, String successMessageKey,
+                                                       Object... successMessageArgs)
+    {
+        try
+        {
+            controller.removeTrackingOverlay();
+            LvcRemoteServerApplyTask task = journalOperation == LvcOperationJournal.Operation.DELETE_VERSION ?
+                    LvcRemoteServerApplyTask.deleteVersion(
+                            handle,
+                            controller.gui.repositoryDirectory,
+                            restoreWorld,
+                            targetCommit,
+                            requireRecoveryTargetBranch(targetBranch),
+                            remoteRecoveryCallbacks(controller, displayName, successMessageKey, successMessageArgs)
+                    ) :
+                    LvcRemoteServerApplyTask.checkout(
+                            handle,
+                            controller.gui.repositoryDirectory,
+                            restoreWorld,
+                            targetCommit,
+                            targetBranch,
+                            remoteRecoveryCallbacks(controller, displayName, successMessageKey, successMessageArgs)
+                    );
+            LvcTaskScheduling.scheduleForWorld(restoreWorld, task);
+        }
+        catch (Exception e)
+        {
+            LvcTaskRegistry.release(handle);
+            LvcGuiMessages.showTaskError(Operation.RECOVERY, "litematica.error.lvc_project.recovery_failed", e);
+        }
+    }
+
+    private static String requireRecoveryTargetBranch(@Nullable String targetBranch)
+    {
+        if (targetBranch == null || targetBranch.isBlank())
+        {
+            throw new IllegalStateException("Missing delete-version target branch");
+        }
+
+        return targetBranch;
+    }
+
+    private static LvcTaskCallbacks<LvcRemoteServerApplyTask.Result> remoteRecoveryCallbacks(GuiLvcProjectController controller,
+                                                                                            String displayName,
+                                                                                            String successMessageKey,
+                                                                                            Object... successMessageArgs)
+    {
+        return LvcTaskCallbacks.of(
+                result ->
+                {
+                    controller.loadTrackingOverlay();
+                    controller.gui.initGui();
+                    LvcGuiMessages.show(MessageType.SUCCESS, successMessageKey, successMessageArgs);
+                    showLossyRemoteWarning(result);
+                },
+                e -> LvcGuiMessages.showTaskError(Operation.RECOVERY, "litematica.error.lvc_project.recovery_failed", e, true),
+                () -> LvcGuiMessages.show(MessageType.INFO, "litematica.message.lvc_project.task_aborted", displayName)
+        );
     }
 
     private static void schedulePreparedRecoveryCheckout(GuiLvcProjectController controller, LvcOperationHandle handle,
@@ -815,6 +900,14 @@ final class GuiLvcProjectTaskActions
                 )
         );
         LvcTaskScheduling.scheduleForWorld(restoreWorld, task);
+    }
+
+    private static void showLossyRemoteWarning(LvcRemoteServerApplyTask.Result result)
+    {
+        if (result.lossy())
+        {
+            LvcGuiMessages.show(MessageType.WARNING, "litematica.message.lvc_project.lossy_command_apply");
+        }
     }
 
     private static void scheduleRecoveryMergeRestore(GuiLvcProjectController controller, LvcOperationHandle handle,
