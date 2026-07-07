@@ -136,6 +136,14 @@ public class LvcRepositoryIntegrationTest
         createInitialCommit(validRepo, "Delete Me", new FakeWorldReader("minecraft:stone"), "DeleteMe");
         Files.createDirectories(validRepo.resolve("scratch/nested"));
         Files.writeString(validRepo.resolve("scratch/nested/untracked.txt"), "delete this", StandardCharsets.UTF_8);
+        Files.writeString(validRepo.resolve("scratch/nested/read-only.txt"), "delete this too", StandardCharsets.UTF_8);
+        validRepo.resolve("scratch/nested/read-only.txt").toFile().setReadOnly();
+        try (var objectFiles = Files.walk(validRepo.resolve(".git/objects")))
+        {
+            objectFiles.filter(Files::isRegularFile)
+                    .findFirst()
+                    .ifPresent(path -> path.toFile().setReadOnly());
+        }
         Files.createDirectories(invalidRepo.resolve("scratch"));
         Files.writeString(invalidRepo.resolve("scratch/keep.txt"), "keep this", StandardCharsets.UTF_8);
 

@@ -106,6 +106,7 @@ final class LvcBranchMergeOps
                         targetBranch,
                         normalizedSourceBranch,
                         currentCommit.getName(),
+                        currentCommit.getName(),
                         manifest.sites().stream().mapToInt(site -> site.regions().size()).sum(),
                         0
                 );
@@ -125,6 +126,7 @@ final class LvcBranchMergeOps
                         targetBranch,
                         normalizedSourceBranch,
                         sourceCommit.getName(),
+                        currentCommit.getName(),
                         manifest.sites().stream().mapToInt(site -> site.regions().size()).sum(),
                         0
                 );
@@ -167,6 +169,7 @@ final class LvcBranchMergeOps
                     targetBranch,
                     normalizedSourceBranch,
                     mergeCommit.getName(),
+                    currentCommit.getName(),
                     semanticMerge.manifest().sites().stream().mapToInt(site -> site.regions().size()).sum(),
                     semanticMerge.mergedChunks()
             );

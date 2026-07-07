@@ -1,11 +1,14 @@
 package me.zly2006.lvc;
 
 import java.io.IOException;
+import java.nio.file.AccessDeniedException;
+import java.nio.file.DirectoryNotEmptyException;
 import java.nio.file.FileVisitResult;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.SimpleFileVisitor;
 import java.nio.file.attribute.BasicFileAttributes;
+import java.nio.file.attribute.DosFileAttributeView;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.HashSet;
@@ -19,6 +22,7 @@ import javax.annotation.Nullable;
 import org.eclipse.jgit.api.Git;
 import org.eclipse.jgit.api.errors.GitAPIException;
 import org.eclipse.jgit.revwalk.RevCommit;
+import org.eclipse.jgit.storage.file.WindowCacheConfig;
 import net.minecraft.client.multiplayer.ClientLevel;
 import net.minecraft.core.BlockPos;
 import net.minecraft.world.level.Level;
@@ -49,6 +53,8 @@ public final class LvcProjectService
     public static final String REPOS_DIRECTORY = "gitmatica-projects";
     public static final String LOCAL_JSON = "local.json";
     public static final String DEFAULT_BRANCH = "main";
+    private static final int DELETE_RETRY_ATTEMPTS = 6;
+    private static final long DELETE_RETRY_DELAY_MILLIS = 25L;
     private static final ConcurrentMap<Path, CachedProjectSummary> PROJECT_SUMMARY_CACHE = new ConcurrentHashMap<>();
 
     private LvcProjectService()
@@ -151,8 +157,12 @@ public final class LvcProjectService
             throw new IOException("Not a valid LVC project repository: " + target);
         }
 
+        LvcDiagnostics.info("LvcProjectService: deleting LVC project repository '{}'", target);
+        PROJECT_SUMMARY_CACHE.remove(target);
+        removeTrackingOverlayForDelete(target);
+        flushJGitFileCacheForDelete(target);
         deleteRecursively(target);
-        LvcDiagnostics.debug("LvcProjectService: deleted LVC project repository '{}'", target);
+        LvcDiagnostics.info("LvcProjectService: deleted LVC project repository '{}'", target);
     }
 
     public static ProjectSummary projectSummary(Project project) throws IOException, GitAPIException
@@ -486,7 +496,7 @@ public final class LvcProjectService
             @Override
             public FileVisitResult visitFile(Path file, BasicFileAttributes attrs) throws IOException
             {
-                Files.delete(file);
+                deletePathWithRetries(file);
                 return FileVisitResult.CONTINUE;
             }
 
@@ -498,10 +508,107 @@ public final class LvcProjectService
                     throw exc;
                 }
 
-                Files.delete(dir);
+                deletePathWithRetries(dir);
                 return FileVisitResult.CONTINUE;
             }
         });
+    }
+
+    private static void removeTrackingOverlayForDelete(Path target)
+    {
+        try
+        {
+            LvcTrackingOverlayService.removeTrackingOverlay(target);
+        }
+        catch (RuntimeException | LinkageError e)
+        {
+            LvcDiagnostics.warn("LvcProjectService: could not detach LVC tracking overlay before deleting '{}': {}",
+                    target, e.toString());
+        }
+    }
+
+    private static void deletePathWithRetries(Path path) throws IOException
+    {
+        IOException failure = null;
+
+        for (int attempt = 1; attempt <= DELETE_RETRY_ATTEMPTS; attempt++)
+        {
+            makePathDeletable(path);
+
+            try
+            {
+                Files.delete(path);
+
+                if (attempt > 1)
+                {
+                    LvcDiagnostics.debug("LvcProjectService: delete retry succeeded attempt={} path='{}'", attempt, path);
+                }
+
+                return;
+            }
+            catch (AccessDeniedException | DirectoryNotEmptyException e)
+            {
+                failure = e;
+                LvcDiagnostics.debug("LvcProjectService: delete retry needed attempt={} max={} path='{}' reason='{}'",
+                        attempt, DELETE_RETRY_ATTEMPTS, path, e.toString());
+                flushJGitFileCacheForDelete(path);
+
+                if (attempt < DELETE_RETRY_ATTEMPTS)
+                {
+                    sleepBeforeDeleteRetry(path);
+                }
+            }
+        }
+
+        throw failure != null ? failure : new IOException("Failed to delete " + path);
+    }
+
+    private static void makePathDeletable(Path path)
+    {
+        try
+        {
+            DosFileAttributeView dos = Files.getFileAttributeView(path, DosFileAttributeView.class);
+
+            if (dos != null)
+            {
+                dos.setReadOnly(false);
+            }
+        }
+        catch (IOException | UnsupportedOperationException e)
+        {
+            LvcDiagnostics.debug("LvcProjectService: failed to clear DOS readonly attr path='{}' reason='{}'", path, e.toString());
+        }
+
+        if (!path.toFile().setWritable(true, false))
+        {
+            LvcDiagnostics.debug("LvcProjectService: failed to set writable attr path='{}'", path);
+        }
+    }
+
+    private static void flushJGitFileCacheForDelete(Path path)
+    {
+        try
+        {
+            new WindowCacheConfig().install();
+            LvcDiagnostics.debug("LvcProjectService: flushed JGit file cache before deleting '{}'", path);
+        }
+        catch (RuntimeException e)
+        {
+            LvcDiagnostics.debug("LvcProjectService: failed to flush JGit file cache before deleting '{}': {}", path, e.toString());
+        }
+    }
+
+    private static void sleepBeforeDeleteRetry(Path path) throws IOException
+    {
+        try
+        {
+            Thread.sleep(DELETE_RETRY_DELAY_MILLIS);
+        }
+        catch (InterruptedException e)
+        {
+            Thread.currentThread().interrupt();
+            throw new IOException("Interrupted while retrying LVC project delete: " + path, e);
+        }
     }
 
     private static String shortCommit(String commitId)
@@ -695,7 +802,7 @@ public final class LvcProjectService
     }
 
     public record BranchMergeResult(BranchMergeStatus status, String targetBranch, String sourceBranch,
-                                    String commitId, int regionCount, int mergedChunks)
+                                    String commitId, @Nullable String previousHead, int regionCount, int mergedChunks)
     {
     }
 

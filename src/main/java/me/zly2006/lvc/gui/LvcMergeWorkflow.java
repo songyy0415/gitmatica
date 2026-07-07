@@ -11,12 +11,14 @@ import me.zly2006.lvc.LvcProjectService;
 import me.zly2006.lvc.git.LvcMergeConflictException;
 import me.zly2006.lvc.task.LvcOperationHandle;
 import me.zly2006.lvc.task.LvcOperationJournal;
+import me.zly2006.lvc.task.LvcRemoteServerApplyTask;
 import me.zly2006.lvc.task.LvcSemanticDiscardTask;
 import me.zly2006.lvc.task.LvcSemanticScanTask;
 import me.zly2006.lvc.task.LvcTaskCallbacks;
 import me.zly2006.lvc.task.LvcTaskRegistry;
 import me.zly2006.lvc.task.LvcTaskScheduling;
 import me.zly2006.lvc.world.LvcWorldAccess;
+import me.zly2006.lvc.world.LvcWorldBackend;
 import fi.dy.masa.malilib.gui.GuiBase;
 import fi.dy.masa.malilib.gui.Message.MessageType;
 
@@ -73,7 +75,8 @@ final class LvcMergeWorkflow
         try
         {
             Level scanWorld = LvcWorldAccess.resolveSemanticCaptureWorld(world);
-            Level restoreWorld = LvcWorldAccess.resolveSemanticRestoreWorld(world);
+            Level restoreWorld = LvcWorldBackend.resolve(world) == LvcWorldBackend.DIRECT ?
+                    LvcWorldAccess.resolveSemanticRestoreWorld(world) : world;
             LvcSemanticScanTask task = new LvcSemanticScanTask(
                     handle.get(),
                     controller.gui.repositoryDirectory,
@@ -124,6 +127,7 @@ final class LvcMergeWorkflow
             }
 
             LvcPlayerIdentity identity = new LvcPlayerIdentity(player.getName().getString(), player.getUUID());
+            validateRemoteMergeApplyReady(restoreWorld);
             LvcProjectService.BranchMergeResult result = LvcProjectService.mergeBranch(
                     controller.gui.repositoryDirectory, sourceBranch, identity);
 
@@ -187,6 +191,7 @@ final class LvcMergeWorkflow
             }
 
             LvcPlayerIdentity identity = new LvcPlayerIdentity(player.getName().getString(), player.getUUID());
+            validateRemoteMergeApplyReady(restoreWorld);
             LvcProjectService.BranchMergeResult result = LvcProjectService.mergeBranch(
                     controller.gui.repositoryDirectory, sourceBranch, identity, resolution);
 
@@ -225,6 +230,12 @@ final class LvcMergeWorkflow
     private static void scheduleMergeRestore(GuiLvcProjectController controller, LvcOperationHandle handle,
                                              Level restoreWorld, LvcProjectService.BranchMergeResult merge)
     {
+        if (LvcWorldBackend.resolve(restoreWorld) != LvcWorldBackend.DIRECT)
+        {
+            scheduleRemoteMergeRestore(controller, handle, restoreWorld, merge);
+            return;
+        }
+
         controller.removeTrackingOverlay();
         LvcSemanticDiscardTask task = new LvcSemanticDiscardTask(
                 handle,
@@ -263,6 +274,70 @@ final class LvcMergeWorkflow
                 LvcOperationJournal.Operation.MERGE
         );
         LvcTaskScheduling.scheduleForWorld(restoreWorld, task);
+    }
+
+    private static void scheduleRemoteMergeRestore(GuiLvcProjectController controller, LvcOperationHandle handle,
+                                                   Level restoreWorld, LvcProjectService.BranchMergeResult merge)
+    {
+        try
+        {
+            controller.removeTrackingOverlay();
+            LvcRemoteServerApplyTask task = LvcRemoteServerApplyTask.merge(
+                    handle,
+                    controller.gui.repositoryDirectory,
+                    restoreWorld,
+                    merge.commitId(),
+                    merge.targetBranch(),
+                    merge.sourceBranch(),
+                    merge.previousHead(),
+                    LvcTaskCallbacks.of(
+                            result ->
+                            {
+                                controller.loadTrackingOverlay();
+                                controller.refreshRepositoryState();
+                                controller.gui.focusHistoryCommitAfterNextRefresh(merge.commitId());
+                                controller.gui.refreshHistory();
+                                controller.gui.initGui();
+                                LvcGuiMessages.show(MessageType.SUCCESS,
+                                        merge.status() == LvcProjectService.BranchMergeStatus.FAST_FORWARD ?
+                                                "litematica.message.lvc_project.merge_branch_fast_forward" :
+                                                "litematica.message.lvc_project.merge_branch_merged",
+                                        merge.sourceBranch(), merge.targetBranch(),
+                                        LvcOperationCoordinator.regionCountText(result.regionCount()));
+                                showLossyRemoteWarning(result);
+                            },
+                            e -> LvcGuiMessages.showTaskError(Operation.MERGE_BRANCH,
+                                    "litematica.error.lvc_project.merge_branch_failed", e, true),
+                            () -> LvcGuiMessages.show(MessageType.INFO,
+                                    "litematica.message.lvc_project.task_aborted", "LVC Merge Branch")
+                    )
+            );
+            LvcTaskScheduling.scheduleClient(task);
+            LvcDiagnostics.debug("LVC remote merge restore scheduled repo='{}' source='{}' target='{}' commit='{}' previousHead='{}'",
+                    controller.gui.repositoryDirectory, merge.sourceBranch(), merge.targetBranch(), merge.commitId(),
+                    merge.previousHead());
+        }
+        catch (Exception e)
+        {
+            LvcTaskRegistry.release(handle);
+            LvcGuiMessages.showTaskError(Operation.MERGE_BRANCH, "litematica.error.lvc_project.merge_branch_failed", e);
+        }
+    }
+
+    private static void validateRemoteMergeApplyReady(Level restoreWorld) throws Exception
+    {
+        if (LvcWorldBackend.resolve(restoreWorld) != LvcWorldBackend.DIRECT)
+        {
+            LvcRemoteServerApplyTask.validateRemoteApplyReady(restoreWorld);
+        }
+    }
+
+    private static void showLossyRemoteWarning(LvcRemoteServerApplyTask.Result result)
+    {
+        if (result.lossy())
+        {
+            LvcGuiMessages.show(MessageType.WARNING, "litematica.message.lvc_project.lossy_command_apply");
+        }
     }
 
 }

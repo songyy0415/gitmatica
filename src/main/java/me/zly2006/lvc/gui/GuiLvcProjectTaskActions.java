@@ -426,7 +426,7 @@ final class GuiLvcProjectTaskActions
 
         try
         {
-            Level restoreWorld = LvcWorldAccess.resolveSemanticRestoreWorld(minecraft.level);
+            Level restoreWorld = recoveryRestoreWorld(minecraft.level, operation);
             String rollbackCommit = entry.previousHead().trim();
             String targetBranch = entry.targetBranch().trim();
             String sourceBranch = entry.sourceBranch() == null || entry.sourceBranch().isBlank() ? null : entry.sourceBranch().trim();
@@ -524,7 +524,8 @@ final class GuiLvcProjectTaskActions
     private static Level recoveryRestoreWorld(Level currentWorld, LvcOperationJournal.Operation operation) throws Exception
     {
         if ((operation == LvcOperationJournal.Operation.CHECKOUT ||
-                operation == LvcOperationJournal.Operation.DELETE_VERSION) &&
+                operation == LvcOperationJournal.Operation.DELETE_VERSION ||
+                operation == LvcOperationJournal.Operation.MERGE) &&
                 LvcWorldBackend.resolve(currentWorld) != LvcWorldBackend.DIRECT)
         {
             return currentWorld;
@@ -916,6 +917,13 @@ final class GuiLvcProjectTaskActions
                                                      @Nullable String previousHead, String successMessageKey,
                                                      Object... successMessageArgs)
     {
+        if (LvcWorldBackend.resolve(restoreWorld) != LvcWorldBackend.DIRECT)
+        {
+            scheduleRemoteRecoveryMergeRestore(controller, handle, restoreWorld, targetCommit, targetBranch,
+                    sourceBranch, previousHead, successMessageKey, successMessageArgs);
+            return;
+        }
+
         controller.removeTrackingOverlay();
         LvcSemanticDiscardTask task = new LvcSemanticDiscardTask(
                 handle,
@@ -947,6 +955,34 @@ final class GuiLvcProjectTaskActions
                 previousHead
         );
         LvcTaskScheduling.scheduleForWorld(restoreWorld, task);
+    }
+
+    private static void scheduleRemoteRecoveryMergeRestore(GuiLvcProjectController controller, LvcOperationHandle handle,
+                                                           Level restoreWorld, String targetCommit,
+                                                           @Nullable String targetBranch, @Nullable String sourceBranch,
+                                                           @Nullable String previousHead, String successMessageKey,
+                                                           Object... successMessageArgs)
+    {
+        try
+        {
+            controller.removeTrackingOverlay();
+            LvcRemoteServerApplyTask task = LvcRemoteServerApplyTask.merge(
+                    handle,
+                    controller.gui.repositoryDirectory,
+                    restoreWorld,
+                    targetCommit,
+                    targetBranch,
+                    sourceBranch,
+                    previousHead,
+                    remoteRecoveryCallbacks(controller, "LVC Recovery", successMessageKey, successMessageArgs)
+            );
+            LvcTaskScheduling.scheduleForWorld(restoreWorld, task);
+        }
+        catch (Exception e)
+        {
+            LvcTaskRegistry.release(handle);
+            LvcGuiMessages.showTaskError(Operation.RECOVERY, "litematica.error.lvc_project.recovery_failed", e);
+        }
     }
 
 }

@@ -11,7 +11,12 @@ import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.Objects;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.CompletionException;
 import javax.annotation.Nullable;
+import io.netty.buffer.Unpooled;
+import it.unimi.dsi.fastutil.longs.LongIterator;
+import it.unimi.dsi.fastutil.longs.LongOpenHashSet;
 import org.eclipse.jgit.api.Git;
 import org.eclipse.jgit.lib.Constants;
 import org.eclipse.jgit.lib.ObjectId;
@@ -19,14 +24,18 @@ import org.eclipse.jgit.lib.Repository;
 import org.eclipse.jgit.revwalk.RevCommit;
 import org.eclipse.jgit.revwalk.RevWalk;
 import net.minecraft.client.Minecraft;
+import net.minecraft.client.multiplayer.ClientLevel;
+import net.minecraft.client.multiplayer.ClientPacketListener;
 import net.minecraft.client.player.LocalPlayer;
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.SectionPos;
+import net.minecraft.core.Vec3i;
 import net.minecraft.nbt.CompoundTag;
+import net.minecraft.network.FriendlyByteBuf;
 import net.minecraft.server.permissions.Permissions;
-import net.minecraft.util.RandomSource;
 import net.minecraft.util.Util;
 import net.minecraft.world.level.Level;
+import net.minecraft.world.level.block.Block;
 import net.minecraft.world.level.block.Blocks;
 import net.minecraft.world.level.block.state.BlockState;
 import fi.dy.masa.malilib.config.IConfigOptionListEntry;
@@ -39,15 +48,16 @@ import fi.dy.masa.litematica.data.DataManager;
 import fi.dy.masa.litematica.data.EntityDataManager;
 import fi.dy.masa.litematica.data.SchematicHolder;
 import fi.dy.masa.litematica.network.ServuxLitematicaHandler;
-import fi.dy.masa.litematica.network.ServuxLitematicaPacket;
 import fi.dy.masa.litematica.scheduler.TaskScheduler;
 import fi.dy.masa.litematica.scheduler.tasks.TaskPasteSchematicPerChunkCommand;
 import fi.dy.masa.litematica.schematic.LitematicaSchematic;
 import fi.dy.masa.litematica.schematic.LitematicaSchematic.EntityInfo;
+import fi.dy.masa.litematica.schematic.container.LitematicaBlockStateContainer;
 import fi.dy.masa.litematica.schematic.placement.SchematicPlacement;
 import fi.dy.masa.litematica.util.PasteLayerBehavior;
 import fi.dy.masa.litematica.util.PasteNbtBehavior;
 import fi.dy.masa.litematica.util.ReplaceBehavior;
+import fi.dy.masa.litematica.util.SchematicWorldRefresher;
 import me.zly2006.lvc.LvcDiagnostics;
 import me.zly2006.lvc.capture.LvcSiteWorkPlan;
 import me.zly2006.lvc.capture.LvcWorldReader;
@@ -65,14 +75,22 @@ import me.zly2006.lvc.world.LvcWorldBackend;
 
 public final class LvcRemoteServerApplyTask extends LvcChunkedTaskBase<LvcRemoteServerApplyTask.Result>
 {
-    private static final long DROP_CLEANUP_DELAY_MS = 1_000L;
     private static final int CLEANUP_COMMANDS_PER_TICK = 4;
+    private static final int VOID_ENTITY_CLEANUP_Y = -9999;
+    private static final int VOID_ENTITY_CLEANUP_HORIZONTAL_RADIUS = 8;
+    private static final int VOID_ENTITY_CLEANUP_VERTICAL_RADIUS = 16;
+    private static final int SERVUX_PACKET_SLICES_PER_TICK = 32;
+    private static final long SERVUX_PACKET_SEND_BUDGET_NANOS = 2_000_000L;
+    private static final long SERVUX_CLIENT_SYNC_BUDGET_NANOS = 4_000_000L;
+    private static final int CLIENT_SHADOW_SET_FLAGS = Block.UPDATE_CLIENTS | Block.UPDATE_KNOWN_SHAPE;
 
     private final Path repositoryDirectory;
     private final Level world;
     private final Mode mode;
     @Nullable private final String targetCommitId;
     @Nullable private final String targetBranchName;
+    @Nullable private final String sourceBranchName;
+    @Nullable private final String mergePreviousHead;
     @Nullable private final List<BlockPos> furnaceXpCleanupCandidates;
 
     @Nullable private LvcWorldBackend backend;
@@ -92,6 +110,9 @@ public final class LvcRemoteServerApplyTask extends LvcChunkedTaskBase<LvcRemote
     @Nullable private SchematicPlacement commandPlacement;
     @Nullable private LitematicaSchematic commandSchematic;
     @Nullable private LvcWorldReader sparseTargetReader;
+    @Nullable private CompletableFuture<ServuxPastePayload> servuxPastePayloadFuture;
+    @Nullable private ServuxPastePayload servuxPastePayload;
+    @Nullable private ClientSchematicShadowSync clientShadowSync;
     private final List<BlockPos> sparseFurnaceXpCleanupCandidates = new ArrayList<>();
     @Nullable private String previousHead;
     @Nullable private String previousBranch;
@@ -103,8 +124,6 @@ public final class LvcRemoteServerApplyTask extends LvcChunkedTaskBase<LvcRemote
     private boolean journalWritten;
     private boolean gitMoved;
     private boolean entityCleanupPrepared;
-    private boolean dropCleanupPrepared;
-    private long dropCleanupReadyAtMillis;
     private int furnaceXpCleanupChunkIndex;
     private int furnaceXpCleanupCommandsPrepared;
     private int sparseTargetScannedBlocks;
@@ -126,7 +145,7 @@ public final class LvcRemoteServerApplyTask extends LvcChunkedTaskBase<LvcRemote
     {
         Mode mode = targetBranchName == null || targetBranchName.isBlank() ? Mode.CHECKOUT : Mode.CHECKOUT_BRANCH;
         return new LvcRemoteServerApplyTask(handle, repositoryDirectory, world, mode, targetCommitId,
-                targetBranchName, furnaceXpCleanupCandidates, callbacks);
+                targetBranchName, null, null, furnaceXpCleanupCandidates, callbacks);
     }
 
     public static LvcRemoteServerApplyTask discard(LvcOperationHandle handle, Path repositoryDirectory, Level world,
@@ -134,13 +153,13 @@ public final class LvcRemoteServerApplyTask extends LvcChunkedTaskBase<LvcRemote
                                                    LvcTaskCallbacks<Result> callbacks)
     {
         return new LvcRemoteServerApplyTask(handle, repositoryDirectory, world, Mode.DISCARD, targetCommitId,
-                null, null, callbacks);
+                null, null, null, null, callbacks);
     }
 
     public static LvcRemoteServerApplyTask clear(LvcOperationHandle handle, Path repositoryDirectory, Level world,
                                                  LvcTaskCallbacks<Result> callbacks)
     {
-        return new LvcRemoteServerApplyTask(handle, repositoryDirectory, world, Mode.CLEAR, null, null, null, callbacks);
+        return new LvcRemoteServerApplyTask(handle, repositoryDirectory, world, Mode.CLEAR, null, null, null, null, null, callbacks);
     }
 
     public static LvcRemoteServerApplyTask deleteVersion(LvcOperationHandle handle, Path repositoryDirectory, Level world,
@@ -148,12 +167,35 @@ public final class LvcRemoteServerApplyTask extends LvcChunkedTaskBase<LvcRemote
                                                          LvcTaskCallbacks<Result> callbacks)
     {
         return new LvcRemoteServerApplyTask(handle, repositoryDirectory, world, Mode.DELETE_VERSION, targetCommitId,
-                targetBranchName, null, callbacks);
+                targetBranchName, null, null, null, callbacks);
+    }
+
+    public static LvcRemoteServerApplyTask merge(LvcOperationHandle handle, Path repositoryDirectory, Level world,
+                                                 String targetCommitId, @Nullable String targetBranchName,
+                                                 @Nullable String sourceBranchName,
+                                                 @Nullable String previousHead,
+                                                 LvcTaskCallbacks<Result> callbacks)
+    {
+        return new LvcRemoteServerApplyTask(handle, repositoryDirectory, world, Mode.MERGE, targetCommitId,
+                targetBranchName, sourceBranchName, previousHead, null, callbacks);
+    }
+
+    public static void validateRemoteApplyReady(Level world) throws IOException
+    {
+        Objects.requireNonNull(world, "world");
+        LvcWorldBackend backend = LvcWorldBackend.resolve(world);
+
+        if (backend != LvcWorldBackend.DIRECT)
+        {
+            validateRemoteBackendReady(backend);
+        }
     }
 
     private LvcRemoteServerApplyTask(LvcOperationHandle handle, Path repositoryDirectory, Level world,
                                      Mode mode, @Nullable String targetCommitId,
                                      @Nullable String targetBranchName,
+                                     @Nullable String sourceBranchName,
+                                     @Nullable String mergePreviousHead,
                                      @Nullable List<BlockPos> furnaceXpCleanupCandidates,
                                      LvcTaskCallbacks<Result> callbacks)
     {
@@ -163,6 +205,8 @@ public final class LvcRemoteServerApplyTask extends LvcChunkedTaskBase<LvcRemote
         this.mode = Objects.requireNonNull(mode, "mode");
         this.targetCommitId = normalize(targetCommitId);
         this.targetBranchName = normalize(targetBranchName);
+        this.sourceBranchName = normalize(sourceBranchName);
+        this.mergePreviousHead = normalize(mergePreviousHead);
         this.furnaceXpCleanupCandidates = furnaceXpCleanupCandidates == null ? null : List.copyOf(furnaceXpCleanupCandidates);
     }
 
@@ -178,7 +222,7 @@ public final class LvcRemoteServerApplyTask extends LvcChunkedTaskBase<LvcRemote
                 throw new IOException("Remote server apply task was scheduled for a direct singleplayer world");
             }
 
-            this.validateRemoteBackendReady();
+            validateRemoteBackendReady(this.requireBackend());
             this.localState = LvcSemanticRepository.readLocalState(this.repositoryDirectory);
             this.siteId = this.localState.activeSite();
 
@@ -187,7 +231,8 @@ public final class LvcRemoteServerApplyTask extends LvcChunkedTaskBase<LvcRemote
                 this.manifest = LvcSemanticRepository.readManifest(this.repositoryDirectory);
                 this.preparePlacementState();
                 this.schematic = LvcSemanticSchematicBuilder.buildAirSchematic(this.manifest, this.localState, this.siteId);
-                this.phase = Phase.WRITE_JOURNAL;
+                this.prepareServuxPastePayloadIfNeeded(this.schematic);
+                this.phase = Phase.PREPARE_SERVUX_PAYLOAD;
             }
             else
             {
@@ -240,11 +285,23 @@ public final class LvcRemoteServerApplyTask extends LvcChunkedTaskBase<LvcRemote
             }
 
             this.schematic = session.result();
+            this.prepareServuxPastePayloadIfNeeded(this.schematic);
             LvcDiagnostics.debug(this.handle(),
                     "remote server apply target schematic built sparse={} chunks={} includedBlocks={} structureVoidBlocks={} scannedBlocks={} stateMismatches={} blockEntityMismatches={}",
                     this.sparseTargetReader != null, session.totalChunks(), session.includedBlocks(),
                     session.structureVoidBlocks(), this.sparseTargetScannedBlocks,
                     this.sparseTargetStateMismatches, this.sparseTargetBlockEntityMismatches);
+            this.phase = Phase.PREPARE_SERVUX_PAYLOAD;
+            return false;
+        }
+
+        if (this.phase == Phase.PREPARE_SERVUX_PAYLOAD)
+        {
+            if (!this.completeServuxPastePayloadIfReady())
+            {
+                return false;
+            }
+
             this.phase = Phase.WRITE_JOURNAL;
             return false;
         }
@@ -264,30 +321,10 @@ public final class LvcRemoteServerApplyTask extends LvcChunkedTaskBase<LvcRemote
 
             if (this.sendQueuedCleanupCommands())
             {
-                this.dropCleanupReadyAtMillis = Util.getMillis() + DROP_CLEANUP_DELAY_MS;
-                this.phase = Phase.WAIT_ENTITY_DROPS;
-            }
-
-            return false;
-        }
-
-        if (this.phase == Phase.WAIT_ENTITY_DROPS)
-        {
-            if (Util.getMillis() < this.dropCleanupReadyAtMillis)
-            {
-                return false;
-            }
-
-            this.phase = Phase.CLEAR_DROPS;
-            return false;
-        }
-
-        if (this.phase == Phase.CLEAR_DROPS)
-        {
-            this.prepareEntityDropCleanupCommands();
-
-            if (this.sendQueuedCleanupCommands())
-            {
+                LvcDiagnostics.debug(this.handle(),
+                        "remote server apply void entity cleanup dispatched regions={} holdY={} horizontalRadius={} verticalRadius={}",
+                        this.regionCount, VOID_ENTITY_CLEANUP_Y, VOID_ENTITY_CLEANUP_HORIZONTAL_RADIUS,
+                        VOID_ENTITY_CLEANUP_VERTICAL_RADIUS);
                 this.phase = Phase.CLEAR_FURNACE_XP;
             }
 
@@ -311,8 +348,13 @@ public final class LvcRemoteServerApplyTask extends LvcChunkedTaskBase<LvcRemote
 
         if (this.phase == Phase.SEND_PASTE)
         {
-            this.sendRemotePaste();
-            this.phase = this.commandPasteScheduled ? Phase.WAIT_COMMANDS : Phase.FINISH;
+            if (!this.processRemotePaste())
+            {
+                return false;
+            }
+
+            this.phase = this.commandPasteScheduled ? Phase.WAIT_COMMANDS :
+                    (this.requireBackend() == LvcWorldBackend.SERVUX ? Phase.SYNC_CLIENT : Phase.FINISH);
             return false;
         }
 
@@ -326,6 +368,17 @@ public final class LvcRemoteServerApplyTask extends LvcChunkedTaskBase<LvcRemote
             if (!this.commandPasteSucceeded)
             {
                 throw new IOException("Litematica command paste was aborted");
+            }
+
+            this.phase = Phase.FINISH;
+            return false;
+        }
+
+        if (this.phase == Phase.SYNC_CLIENT)
+        {
+            if (!this.syncServuxClientShadow())
+            {
+                return false;
             }
 
             this.phase = Phase.FINISH;
@@ -366,6 +419,37 @@ public final class LvcRemoteServerApplyTask extends LvcChunkedTaskBase<LvcRemote
         {
             this.restoreCommandConfig();
 
+            if (this.servuxPastePayload != null)
+            {
+                this.servuxPastePayload.release();
+                this.servuxPastePayload = null;
+            }
+
+            if (this.servuxPastePayloadFuture != null)
+            {
+                CompletableFuture<ServuxPastePayload> future = this.servuxPastePayloadFuture;
+                this.servuxPastePayloadFuture = null;
+
+                if (future.isDone() &&
+                        !future.isCancelled() &&
+                        !future.isCompletedExceptionally())
+                {
+                    future.join().release();
+                }
+                else
+                {
+                    future.whenComplete((payload, throwable) ->
+                    {
+                        if (payload != null)
+                        {
+                            payload.release();
+                        }
+                    });
+                }
+
+                future.cancel(true);
+            }
+
             if (this.revWalk != null)
             {
                 this.revWalk.close();
@@ -391,14 +475,12 @@ public final class LvcRemoteServerApplyTask extends LvcChunkedTaskBase<LvcRemote
             this.infoHudLines.add(String.format(Locale.ROOT, "Chunks: %d / %d",
                     this.buildSession.processedChunks(), this.buildSession.totalChunks()));
         }
-        else if (this.phase == Phase.WAIT_ENTITY_DROPS)
+        else if (this.phase == Phase.PREPARE_SERVUX_PAYLOAD && this.servuxPastePayloadFuture != null)
         {
-            long remainingMs = Math.max(0L, this.dropCleanupReadyAtMillis - Util.getMillis());
-            this.infoHudLines.add(String.format(Locale.ROOT, "Drop cleanup: %.1fs",
-                    remainingMs / 1000.0D));
+            this.infoHudLines.add(this.servuxPastePayloadFuture.isDone() ? "Servux payload: ready" :
+                    "Servux payload: preparing");
         }
-        else if ((this.phase == Phase.CLEAR_ENTITIES || this.phase == Phase.CLEAR_DROPS ||
-                this.phase == Phase.CLEAR_FURNACE_XP) &&
+        else if ((this.phase == Phase.CLEAR_ENTITIES || this.phase == Phase.CLEAR_FURNACE_XP) &&
                 this.cleanupCommandQueue.isEmpty() == false)
         {
             this.infoHudLines.add(String.format(Locale.ROOT, "Cleanup commands: %d",
@@ -416,6 +498,16 @@ public final class LvcRemoteServerApplyTask extends LvcChunkedTaskBase<LvcRemote
             this.infoHudLines.add(String.format(Locale.ROOT, "Furnace XP cleanup: %d / %d",
                     Math.min(this.furnaceXpCleanupChunkIndex, candidates.size()),
                     candidates.size()));
+        }
+        else if (this.phase == Phase.SEND_PASTE && this.servuxPastePayload != null)
+        {
+            this.infoHudLines.add(String.format(Locale.ROOT, "Servux send: %d / %d slices",
+                    this.servuxPastePayload.sentSlices(), this.servuxPastePayload.totalSlices()));
+        }
+        else if (this.phase == Phase.SYNC_CLIENT && this.clientShadowSync != null)
+        {
+            this.infoHudLines.add(String.format(Locale.ROOT, "Client sync: %d / %d blocks",
+                    this.clientShadowSync.processedVolume(), this.clientShadowSync.totalVolume()));
         }
     }
 
@@ -496,29 +588,38 @@ public final class LvcRemoteServerApplyTask extends LvcChunkedTaskBase<LvcRemote
         }
     }
 
-    private void sendRemotePaste() throws Exception
+    private boolean processRemotePaste() throws Exception
     {
         LitematicaSchematic currentSchematic = Objects.requireNonNull(this.schematic, "schematic");
         LvcWorldBackend currentBackend = this.requireBackend();
 
         if (currentBackend == LvcWorldBackend.SERVUX)
         {
-            this.sendServuxPaste(currentSchematic);
-            LvcDiagnostics.info(this.handle(), "remote server apply sent Servux paste mode={} regions={} target={}",
-                    this.mode.name(), this.regionCount, this.targetCommitName());
+            boolean complete = this.sendServuxPaste();
+
+            if (complete)
+            {
+                LvcDiagnostics.info(this.handle(), "remote server apply sent Servux paste mode={} regions={} target={}",
+                        this.mode.name(), this.regionCount, this.targetCommitName());
+            }
+
+            return complete;
         }
-        else
+
+        if (!this.commandPasteScheduled)
         {
             this.stripUnsupportedCommandPayloads(currentSchematic);
             this.scheduleCommandPaste(currentSchematic);
             LvcDiagnostics.info(this.handle(), "remote server apply scheduled command paste mode={} regions={} target={}",
                     this.mode.name(), this.regionCount, this.targetCommitName());
         }
+
+        return true;
     }
 
-    private void validateRemoteBackendReady() throws IOException
+    private static void validateRemoteBackendReady(LvcWorldBackend backend) throws IOException
     {
-        if (this.hasGamemasterCommandPermission())
+        if (hasGamemasterCommandPermission())
         {
             return;
         }
@@ -537,7 +638,7 @@ public final class LvcRemoteServerApplyTask extends LvcChunkedTaskBase<LvcRemote
             }
         }
 
-        if (this.requireBackend() == LvcWorldBackend.SERVUX)
+        if (backend == LvcWorldBackend.SERVUX)
         {
             throw new IOException("Remote Servux apply requires gamemaster command permission to clear entities before paste.");
         }
@@ -545,7 +646,7 @@ public final class LvcRemoteServerApplyTask extends LvcChunkedTaskBase<LvcRemote
         throw new IOException("Remote command fallback requires gamemaster command permission on the server." + hint);
     }
 
-    private boolean hasGamemasterCommandPermission()
+    private static boolean hasGamemasterCommandPermission()
     {
         LocalPlayer player = Minecraft.getInstance().player;
         return player != null && player.permissions().hasPermission(Permissions.COMMANDS_GAMEMASTER);
@@ -585,6 +686,10 @@ public final class LvcRemoteServerApplyTask extends LvcChunkedTaskBase<LvcRemote
             LvcProjectGitOps.checkoutBranchAndResetToCommit(this.repositoryDirectory, this.targetBranchName,
                     this.requireTargetCommit().getName());
         }
+        else if (this.mode == Mode.MERGE)
+        {
+            // Merge Git mutation already happened before remote paste so conflict UI can run synchronously.
+        }
 
         this.gitMoved = true;
     }
@@ -606,6 +711,12 @@ public final class LvcRemoteServerApplyTask extends LvcChunkedTaskBase<LvcRemote
             LvcOperationJournal.writeDeleteVersion(this.repositoryDirectory, this.requireTargetCommit().getName(),
                     this.targetBranchName, this.previousHead, this.previousBranch, phase);
         }
+        else if (this.mode == Mode.MERGE)
+        {
+            LvcOperationJournal.write(this.repositoryDirectory, LvcOperationJournal.Operation.MERGE,
+                    this.requireTargetCommit().getName(), this.targetBranchName, this.sourceBranchName,
+                    this.mergePreviousHead, phase);
+        }
         else
         {
             LvcOperationJournal.write(this.repositoryDirectory, this.mode.journalOperation,
@@ -626,32 +737,195 @@ public final class LvcRemoteServerApplyTask extends LvcChunkedTaskBase<LvcRemote
                 this.commandPasteScheduled, this.regionCount, this.targetCommitName());
     }
 
-    private void sendServuxPaste(LitematicaSchematic currentSchematic) throws IOException
+    private boolean sendServuxPaste() throws IOException
     {
-        SchematicPlacement pastePlacement = SchematicPlacement.createFor(currentSchematic, this.requireOrigin(),
-                this.remotePlacementName(), true, false);
+        ServuxPastePayload payload = Objects.requireNonNull(this.servuxPastePayload, "servuxPastePayload");
+        ClientPacketListener connection = Minecraft.getInstance().getConnection();
+
+        if (connection == null)
+        {
+            throw new IOException("Cannot send remote Servux paste: client connection is unavailable");
+        }
+
+        int sent = payload.sendNextBatch(connection);
+
+        if (sent > 0)
+        {
+            LvcDiagnostics.debug(this.handle(),
+                    "remote Servux paste sent packet slices sent={} sentSlices={}/{} sentBytes={}/{}",
+                    sent, payload.sentSlices(), payload.totalSlices(), payload.sentBytes(), payload.encodedBytes());
+        }
+
+        if (!payload.isComplete())
+        {
+            return false;
+        }
+
+        payload.release();
+        this.servuxPastePayload = null;
+        return true;
+    }
+
+    private void prepareServuxPastePayloadIfNeeded(LitematicaSchematic currentSchematic) throws IOException
+    {
+        if (this.requireBackend() != LvcWorldBackend.SERVUX ||
+                this.servuxPastePayload != null || this.servuxPastePayloadFuture != null)
+        {
+            return;
+        }
+
+        SchematicPlacement pastePlacement = this.createServuxPastePlacement(currentSchematic);
+        this.servuxPastePayloadFuture = CompletableFuture.supplyAsync(() ->
+        {
+            try
+            {
+                return this.createServuxPastePayload(pastePlacement);
+            }
+            catch (IOException e)
+            {
+                throw new CompletionException(e);
+            }
+        });
+        LvcDiagnostics.debug(this.handle(), "remote Servux paste payload preparation started mode={} regions={} target={}",
+                this.mode.name(), this.regionCount, this.targetCommitName());
+    }
+
+    private boolean completeServuxPastePayloadIfReady() throws IOException
+    {
+        if (this.requireBackend() != LvcWorldBackend.SERVUX)
+        {
+            return true;
+        }
+
+        if (this.servuxPastePayload != null)
+        {
+            return true;
+        }
+
+        CompletableFuture<ServuxPastePayload> future = Objects.requireNonNull(this.servuxPastePayloadFuture,
+                "servuxPastePayloadFuture");
+
+        if (!future.isDone())
+        {
+            return false;
+        }
+
+        try
+        {
+            this.servuxPastePayload = future.join();
+            this.servuxPastePayloadFuture = null;
+        }
+        catch (CompletionException e)
+        {
+            throw unwrapServuxPayloadException(e);
+        }
+
+        ServuxPastePayload payload = Objects.requireNonNull(this.servuxPastePayload, "servuxPastePayload");
+        LvcDiagnostics.debug(this.handle(),
+                "remote Servux paste payload prepared nbtBytes={} encodedBytes={} maxInlineBytes={} slices={}",
+                payload.nbtBytes(), payload.encodedBytes(), payload.maxInlineBytes(), payload.totalSlices());
+        return true;
+    }
+
+    private ServuxPastePayload createServuxPastePayload(SchematicPlacement pastePlacement) throws IOException
+    {
         CompoundTag nbt = pastePlacement.toNbt(true);
         nbt.putString("Task", "LitematicaPaste");
         nbt.putString("ReplaceMode", ReplaceBehavior.ALL.getStringValue());
         nbt.putString("PasteLayerBehavior", PasteLayerBehavior.ALL.getStringValue());
-
-        int maxSize = PacketSplitter.DEFAULT_MAX_RECEIVE_SIZE_S2C - 4096;
+        int maxSize = servuxPasteMaxInlineBytes();
         int nbtBytes = nbt.sizeInBytes();
-        boolean useFileBackedTransfer = nbtBytes > maxSize;
 
-        LvcDiagnostics.debug(this.handle(), "remote Servux paste prepared nbtBytes={} maxInlineBytes={} fileBacked={}",
-                nbtBytes, maxSize, useFileBackedTransfer);
-
-        if (useFileBackedTransfer)
+        if (nbtBytes > maxSize)
         {
-            LitematicaSchematic fileBacked = this.writeAndReloadTempSchematic(currentSchematic);
-            nbt.remove("Schematics");
-            fileBacked.sendTransmitFile(nbt, RandomSource.create(Util.getMillis()).nextLong(), false);
-            return;
+            LvcDiagnostics.warn("{} remote Servux paste refused oversized payload nbtBytes={} maxInlineBytes={} mode={} regions={} target={}",
+                    LvcDiagnostics.operationTag(this.handle()), nbtBytes, maxSize,
+                    this.mode.name(), this.regionCount, this.targetCommitName());
+            throw new IOException(String.format(Locale.ROOT,
+                    "Remote Servux paste is too large to transmit safely (%d bytes, max %d). Split the tracked area or reduce changed positions before retrying.",
+                    nbtBytes, maxSize));
         }
 
-        ServuxLitematicaHandler.getInstance().encodeClientData(
-                ServuxLitematicaPacket.ResponseC2SStart(nbt));
+        FriendlyByteBuf buffer = new FriendlyByteBuf(Unpooled.buffer());
+
+        try
+        {
+            buffer.writeVarInt(-1);
+            buffer.writeNbt(nbt);
+            return new ServuxPastePayload(buffer, nbtBytes, maxSize);
+        }
+        catch (RuntimeException e)
+        {
+            buffer.release();
+            throw e;
+        }
+    }
+
+    private SchematicPlacement createServuxPastePlacement(LitematicaSchematic currentSchematic)
+    {
+        return SchematicPlacement.createFor(currentSchematic, this.requireOrigin(),
+                this.remotePlacementName(), true, false);
+    }
+
+    private static int servuxPasteMaxInlineBytes()
+    {
+        return PacketSplitter.DEFAULT_MAX_RECEIVE_SIZE_S2C - 4096;
+    }
+
+    private static IOException unwrapServuxPayloadException(CompletionException e)
+    {
+        Throwable cause = e.getCause();
+
+        if (cause instanceof IOException ioException)
+        {
+            return ioException;
+        }
+
+        return new IOException("Failed to prepare remote Servux paste payload", cause == null ? e : cause);
+    }
+
+    private boolean syncServuxClientShadow() throws IOException
+    {
+        if (this.requireBackend() != LvcWorldBackend.SERVUX)
+        {
+            return true;
+        }
+
+        ClientLevel clientLevel = Minecraft.getInstance().level;
+
+        if (clientLevel == null || !this.world.dimension().equals(clientLevel.dimension()))
+        {
+            LvcDiagnostics.debug(this.handle(),
+                    "remote Servux client shadow sync skipped reason='client level unavailable or different dimension' mode={} regions={} target={}",
+                    this.mode.name(), this.regionCount, this.targetCommitName());
+            return true;
+        }
+
+        if (this.clientShadowSync == null)
+        {
+            this.clientShadowSync = new ClientSchematicShadowSync(clientLevel,
+                    Objects.requireNonNull(this.schematic, "schematic"), this.requireOrigin());
+            LvcDiagnostics.debug(this.handle(),
+                    "remote Servux client shadow sync started mode={} regions={} target={} regionsInSchematic={} volume={}",
+                    this.mode.name(), this.regionCount, this.targetCommitName(),
+                    this.clientShadowSync.regionCount(), this.clientShadowSync.totalVolume());
+        }
+
+        ClientSchematicShadowSync sync = Objects.requireNonNull(this.clientShadowSync, "clientShadowSync");
+
+        if (!sync.processNextBatch())
+        {
+            return false;
+        }
+
+        sync.refreshRenderState();
+        LvcDiagnostics.debug(this.handle(),
+                "remote Servux client shadow sync complete mode={} regions={} target={} processedVolume={} pastedBlocks={} changedBlocks={} skippedStructureVoid={} skippedUnloaded={} renderSections={} renderChunks={}",
+                this.mode.name(), this.regionCount, this.targetCommitName(), sync.processedVolume(),
+                sync.pastedBlocks(), sync.changedBlocks(), sync.skippedStructureVoid(), sync.skippedUnloaded(),
+                sync.renderSectionCount(), sync.renderChunkCount());
+        this.clientShadowSync = null;
+        return true;
     }
 
     private void scheduleCommandPaste(LitematicaSchematic currentSchematic)
@@ -728,26 +1002,13 @@ public final class LvcRemoteServerApplyTask extends LvcChunkedTaskBase<LvcRemote
             return;
         }
 
-        int commands = this.enqueueBoundedEntityKillCommands("type=!player");
+        int commands = this.enqueueVoidEntityCleanupCommands();
         this.entityCleanupPrepared = true;
 
-        LvcDiagnostics.debug(this.handle(), "remote server apply prepared bounded entity cleanup commands regions={} commands={} batchSize={}",
-                this.regionCount, commands, CLEANUP_COMMANDS_PER_TICK);
-    }
-
-    private void prepareEntityDropCleanupCommands()
-    {
-        if (this.dropCleanupPrepared)
-        {
-            return;
-        }
-
-        int commands = this.enqueueBoundedEntityKillCommands("type=minecraft:item");
-        commands += this.enqueueBoundedEntityKillCommands("type=minecraft:experience_orb");
-        this.dropCleanupPrepared = true;
-
-        LvcDiagnostics.debug(this.handle(), "remote server apply prepared bounded drop cleanup commands regions={} commands={} delayMs={} batchSize={}",
-                this.regionCount, commands, DROP_CLEANUP_DELAY_MS, CLEANUP_COMMANDS_PER_TICK);
+        LvcDiagnostics.debug(this.handle(),
+                "remote server apply prepared void entity cleanup commands regions={} commands={} holdY={} horizontalRadius={} verticalRadius={} batchSize={}",
+                this.regionCount, commands, VOID_ENTITY_CLEANUP_Y, VOID_ENTITY_CLEANUP_HORIZONTAL_RADIUS,
+                VOID_ENTITY_CLEANUP_VERTICAL_RADIUS, CLEANUP_COMMANDS_PER_TICK);
     }
 
     private void prepareFurnaceXpCleanupCommands()
@@ -864,7 +1125,7 @@ public final class LvcRemoteServerApplyTask extends LvcChunkedTaskBase<LvcRemote
                 blockState.equals("minecraft:smoker") || blockState.startsWith("minecraft:smoker[");
     }
 
-    private int enqueueBoundedEntityKillCommands(String selectorFilter)
+    private int enqueueVoidEntityCleanupCommands()
     {
         BlockPos siteOrigin = this.requireOrigin();
         int commands = 0;
@@ -873,13 +1134,25 @@ public final class LvcRemoteServerApplyTask extends LvcChunkedTaskBase<LvcRemote
         {
             BlockPos min = siteOrigin.offset(LvcProjectPositions.blockPosFromList(region.min()));
             BlockPos size = LvcProjectPositions.blockPosFromList(region.size());
-            String command = String.format(Locale.ROOT,
-                    "kill @e[%s,x=%d,y=%d,z=%d,dx=%d,dy=%d,dz=%d]",
-                    selectorFilter,
+            int holdX = min.getX() + Math.max(0, size.getX() - 1) / 2;
+            int holdZ = min.getZ() + Math.max(0, size.getZ() - 1) / 2;
+            int holdMinX = holdX - VOID_ENTITY_CLEANUP_HORIZONTAL_RADIUS;
+            int holdMinY = VOID_ENTITY_CLEANUP_Y - VOID_ENTITY_CLEANUP_VERTICAL_RADIUS;
+            int holdMinZ = holdZ - VOID_ENTITY_CLEANUP_HORIZONTAL_RADIUS;
+            int holdDx = VOID_ENTITY_CLEANUP_HORIZONTAL_RADIUS * 2;
+            int holdDy = VOID_ENTITY_CLEANUP_VERTICAL_RADIUS * 2;
+            int holdDz = VOID_ENTITY_CLEANUP_HORIZONTAL_RADIUS * 2;
+            String teleportCommand = String.format(Locale.ROOT,
+                    "tp @e[type=!player,x=%d,y=%d,z=%d,dx=%d,dy=%d,dz=%d] %d %d %d",
                     min.getX(), min.getY(), min.getZ(),
-                    Math.max(0, size.getX() - 1), Math.max(0, size.getY() - 1), Math.max(0, size.getZ() - 1));
-            this.cleanupCommandQueue.addLast(command);
-            commands++;
+                    Math.max(0, size.getX() - 1), Math.max(0, size.getY() - 1), Math.max(0, size.getZ() - 1),
+                    holdX, VOID_ENTITY_CLEANUP_Y, holdZ);
+            String killCommand = String.format(Locale.ROOT,
+                    "kill @e[type=!player,x=%d,y=%d,z=%d,dx=%d,dy=%d,dz=%d]",
+                    holdMinX, holdMinY, holdMinZ, holdDx, holdDy, holdDz);
+            this.cleanupCommandQueue.addLast(teleportCommand);
+            this.cleanupCommandQueue.addLast(killCommand);
+            commands += 2;
         }
 
         return commands;
@@ -1088,13 +1361,326 @@ public final class LvcRemoteServerApplyTask extends LvcChunkedTaskBase<LvcRemote
         return value == null || value.isBlank() ? null : value.trim();
     }
 
+    private static final class ServuxPastePayload
+    {
+        private final FriendlyByteBuf buffer;
+        private final int nbtBytes;
+        private final int maxInlineBytes;
+        private final int encodedBytes;
+        private final int totalSlices;
+        private int sentBytes;
+        private int sentSlices;
+        private boolean released;
+
+        private ServuxPastePayload(FriendlyByteBuf buffer, int nbtBytes, int maxInlineBytes)
+        {
+            this.buffer = Objects.requireNonNull(buffer, "buffer");
+            this.nbtBytes = nbtBytes;
+            this.maxInlineBytes = maxInlineBytes;
+            this.encodedBytes = buffer.writerIndex();
+            this.totalSlices = Math.max(1, (this.encodedBytes + PacketSplitter.MAX_PAYLOAD_PER_PACKET_C2S - 1) /
+                    PacketSplitter.MAX_PAYLOAD_PER_PACKET_C2S);
+            this.buffer.resetReaderIndex();
+        }
+
+        private int sendNextBatch(ClientPacketListener connection)
+        {
+            int sentThisBatch = 0;
+            long deadline = Util.getNanos() + SERVUX_PACKET_SEND_BUDGET_NANOS;
+
+            while (!this.isComplete() &&
+                    sentThisBatch < SERVUX_PACKET_SLICES_PER_TICK &&
+                    Util.getNanos() < deadline)
+            {
+                int length = Math.min(PacketSplitter.MAX_PAYLOAD_PER_PACKET_C2S, this.encodedBytes - this.sentBytes);
+                FriendlyByteBuf slice = new FriendlyByteBuf(Unpooled.buffer(length + (this.sentBytes == 0 ? 5 : 0)));
+
+                if (this.sentBytes == 0)
+                {
+                    slice.writeVarInt(this.encodedBytes);
+                }
+
+                slice.writeBytes(this.buffer, length);
+
+                try
+                {
+                    ServuxLitematicaHandler.getInstance().encodeWithSplitter(slice, connection);
+                }
+                finally
+                {
+                    slice.release();
+                }
+
+                this.sentBytes += length;
+                this.sentSlices++;
+                sentThisBatch++;
+            }
+
+            return sentThisBatch;
+        }
+
+        private boolean isComplete()
+        {
+            return this.sentBytes >= this.encodedBytes;
+        }
+
+        private void release()
+        {
+            if (!this.released)
+            {
+                this.buffer.release();
+                this.released = true;
+            }
+        }
+
+        private int nbtBytes()
+        {
+            return this.nbtBytes;
+        }
+
+        private int maxInlineBytes()
+        {
+            return this.maxInlineBytes;
+        }
+
+        private int encodedBytes()
+        {
+            return this.encodedBytes;
+        }
+
+        private int sentBytes()
+        {
+            return this.sentBytes;
+        }
+
+        private int totalSlices()
+        {
+            return this.totalSlices;
+        }
+
+        private int sentSlices()
+        {
+            return this.sentSlices;
+        }
+    }
+
+    private static final class ClientSchematicShadowSync
+    {
+        private final ClientLevel clientLevel;
+        private final LitematicaSchematic schematic;
+        private final BlockPos origin;
+        private final List<String> regionNames;
+        private final LongOpenHashSet renderSections = new LongOpenHashSet();
+        private final LongOpenHashSet renderChunks = new LongOpenHashSet();
+        private int regionIndex;
+        private int x;
+        private int y;
+        private int z;
+        private long processedVolume;
+        private long totalVolume;
+        private int pastedBlocks;
+        private int changedBlocks;
+        private int skippedStructureVoid;
+        private int skippedUnloaded;
+
+        private ClientSchematicShadowSync(ClientLevel clientLevel, LitematicaSchematic schematic, BlockPos origin)
+        {
+            this.clientLevel = Objects.requireNonNull(clientLevel, "clientLevel");
+            this.schematic = Objects.requireNonNull(schematic, "schematic");
+            this.origin = Objects.requireNonNull(origin, "origin");
+            this.regionNames = List.copyOf(schematic.getAreas().keySet());
+
+            for (String regionName : this.regionNames)
+            {
+                LitematicaBlockStateContainer container = Objects.requireNonNull(
+                        schematic.getSubRegionContainer(regionName), "subRegionContainer");
+                Vec3i size = container.getSize();
+                this.totalVolume += (long) size.getX() * (long) size.getY() * (long) size.getZ();
+            }
+        }
+
+        private boolean processNextBatch()
+        {
+            long deadline = Util.getNanos() + SERVUX_CLIENT_SYNC_BUDGET_NANOS;
+            BlockPos.MutableBlockPos mutable = new BlockPos.MutableBlockPos();
+
+            while (this.regionIndex < this.regionNames.size() && Util.getNanos() < deadline)
+            {
+                String regionName = this.regionNames.get(this.regionIndex);
+                LitematicaBlockStateContainer container = Objects.requireNonNull(
+                        this.schematic.getSubRegionContainer(regionName), "subRegionContainer");
+                BlockPos regionPos = Objects.requireNonNull(this.schematic.getSubRegionPosition(regionName),
+                        "subRegionPosition");
+                Vec3i size = container.getSize();
+
+                while (this.y < size.getY() && Util.getNanos() < deadline)
+                {
+                    BlockState targetState = container.get(this.x, this.y, this.z);
+                    this.processedVolume++;
+
+                    if (targetState.is(Blocks.STRUCTURE_VOID))
+                    {
+                        this.skippedStructureVoid++;
+                    }
+                    else
+                    {
+                        this.applyTargetBlock(regionPos, targetState, mutable);
+                    }
+
+                    this.advance(size);
+                }
+
+                if (this.y >= size.getY())
+                {
+                    this.regionIndex++;
+                    this.x = 0;
+                    this.y = 0;
+                    this.z = 0;
+                }
+            }
+
+            return this.regionIndex >= this.regionNames.size();
+        }
+
+        private void applyTargetBlock(BlockPos regionPos, BlockState targetState, BlockPos.MutableBlockPos mutable)
+        {
+            int worldX = this.origin.getX() + regionPos.getX() + this.x;
+            int worldY = this.origin.getY() + regionPos.getY() + this.y;
+            int worldZ = this.origin.getZ() + regionPos.getZ() + this.z;
+            int sectionX = SectionPos.blockToSectionCoord(worldX);
+            int sectionY = SectionPos.blockToSectionCoord(worldY);
+            int sectionZ = SectionPos.blockToSectionCoord(worldZ);
+
+            if (!this.clientLevel.hasChunk(sectionX, sectionZ))
+            {
+                this.skippedUnloaded++;
+                return;
+            }
+
+            mutable.set(worldX, worldY, worldZ);
+            this.pastedBlocks++;
+            this.renderSections.add(SectionPos.asLong(sectionX, sectionY, sectionZ));
+            this.renderChunks.add(chunkKey(sectionX, sectionZ));
+
+            BlockState currentState = this.clientLevel.getBlockState(mutable);
+
+            if (!statesEquivalent(currentState, targetState))
+            {
+                this.clientLevel.setBlock(mutable, targetState, CLIENT_SHADOW_SET_FLAGS);
+                this.changedBlocks++;
+            }
+        }
+
+        private void advance(Vec3i size)
+        {
+            this.x++;
+
+            if (this.x >= size.getX())
+            {
+                this.x = 0;
+                this.z++;
+            }
+
+            if (this.z >= size.getZ())
+            {
+                this.z = 0;
+                this.y++;
+            }
+        }
+
+        private void refreshRenderState()
+        {
+            LongIterator sectionIterator = this.renderSections.iterator();
+
+            while (sectionIterator.hasNext())
+            {
+                long section = sectionIterator.nextLong();
+                this.clientLevel.setSectionDirtyWithNeighbors(SectionPos.x(section), SectionPos.y(section), SectionPos.z(section));
+            }
+
+            LongIterator chunkIterator = this.renderChunks.iterator();
+
+            while (chunkIterator.hasNext())
+            {
+                long chunk = chunkIterator.nextLong();
+                SchematicWorldRefresher.INSTANCE.markSchematicChunksForRenderUpdate(chunkKeyX(chunk), chunkKeyZ(chunk));
+            }
+        }
+
+        private static long chunkKey(int x, int z)
+        {
+            return ((long) x & 0xFFFFFFFFL) | (((long) z & 0xFFFFFFFFL) << 32);
+        }
+
+        private static int chunkKeyX(long key)
+        {
+            return (int) (key & 0xFFFFFFFFL);
+        }
+
+        private static int chunkKeyZ(long key)
+        {
+            return (int) (key >>> 32);
+        }
+
+        private static boolean statesEquivalent(BlockState currentState, BlockState targetState)
+        {
+            return currentState.equals(targetState) || (currentState.isAir() && targetState.isAir());
+        }
+
+        private int regionCount()
+        {
+            return this.regionNames.size();
+        }
+
+        private long processedVolume()
+        {
+            return this.processedVolume;
+        }
+
+        private long totalVolume()
+        {
+            return this.totalVolume;
+        }
+
+        private int pastedBlocks()
+        {
+            return this.pastedBlocks;
+        }
+
+        private int changedBlocks()
+        {
+            return this.changedBlocks;
+        }
+
+        private int skippedStructureVoid()
+        {
+            return this.skippedStructureVoid;
+        }
+
+        private int skippedUnloaded()
+        {
+            return this.skippedUnloaded;
+        }
+
+        private int renderSectionCount()
+        {
+            return this.renderSections.size();
+        }
+
+        private int renderChunkCount()
+        {
+            return this.renderChunks.size();
+        }
+    }
+
     public enum Mode
     {
         CHECKOUT("LVC Checkout", LvcOperationJournal.Operation.CHECKOUT, "checkout"),
         CHECKOUT_BRANCH("LVC Checkout Branch", LvcOperationJournal.Operation.CHECKOUT, "checkout"),
         DISCARD("LVC Discard Changes", LvcOperationJournal.Operation.DISCARD, "discard"),
         CLEAR("LVC Clear Area", LvcOperationJournal.Operation.CLEAR, "clear"),
-        DELETE_VERSION("LVC Delete Version", LvcOperationJournal.Operation.DELETE_VERSION, "restore");
+        DELETE_VERSION("LVC Delete Version", LvcOperationJournal.Operation.DELETE_VERSION, "restore"),
+        MERGE("LVC Merge Branch", LvcOperationJournal.Operation.MERGE, "restore");
 
         private final String displayName;
         private final LvcOperationJournal.Operation journalOperation;
@@ -1111,13 +1697,13 @@ public final class LvcRemoteServerApplyTask extends LvcChunkedTaskBase<LvcRemote
     private enum Phase
     {
         BUILD("build target"),
+        PREPARE_SERVUX_PAYLOAD("prepare servux payload"),
         WRITE_JOURNAL("prepare Git"),
-        CLEAR_ENTITIES("clear entities"),
-        WAIT_ENTITY_DROPS("wait drops"),
-        CLEAR_DROPS("clear drops"),
+        CLEAR_ENTITIES("void entity cleanup"),
         CLEAR_FURNACE_XP("clear furnace xp"),
         SEND_PASTE("send paste"),
         WAIT_COMMANDS("wait commands"),
+        SYNC_CLIENT("sync client"),
         FINISH("finish"),
         DONE("done");
 

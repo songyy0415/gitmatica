@@ -41,7 +41,7 @@ dependencies {
 //	compileOnly fabricApi.module("fabric-api-base", project.fabric_api_version)
 //	compileOnly fabricApi.module("fabric-networking-api-v1", project.fabric_api_version)
 //	compileOnly fabricApi.module("fabric-resource-loader-v1", project.fabric_api_version)
-	shadow(implementation("me.fallenbreath:conditional-mixin-fabric:${project.conditionalmixin_version}"))
+	include(implementation("me.fallenbreath:conditional-mixin-fabric:${project.conditionalmixin_version}"))
 
 	compileOnly "com.terraformersmc:modmenu:${project.mod_menu_version}"
 //	compileOnly "maven.modrinth:iris:${project.iris_version}+${project.iris_mc_version}-fabric"
@@ -132,6 +132,7 @@ java {
 }
 
 jar {
+	archiveClassifier.set('dev')
 	from("LICENSE.txt") {
 		rename { "${it}_${base.archivesName.get()}"}
 	}
@@ -141,6 +142,7 @@ jar {
 }
 
 tasks.named('shadowJar') {
+	enabled = false
 	archiveClassifier.set('shadow')
 	configurations = project.configurations.named('shadow').map { [it] }
 	mergeServiceFiles()
@@ -152,8 +154,19 @@ tasks.named('shadowJar') {
 	}
 }
 
+tasks.register('releaseJar', com.github.jengelman.gradle.plugins.shadow.tasks.ShadowJar) {
+	group = 'build'
+	description = 'Creates the installable mod jar with Loom includes and shaded libraries.'
+	archiveClassifier.set('')
+	dependsOn tasks.named('jar')
+	from({ zipTree(tasks.named('jar').get().archiveFile.get().asFile) })
+	configurations = project.configurations.named('shadow').map { [it] }
+	exclude 'META-INF/*.SF', 'META-INF/*.DSA', 'META-INF/*.RSA', 'META-INF/*.EC', 'META-INF/INDEX.LIST'
+	mergeServiceFiles()
+}
+
 tasks.named('assemble') {
-	dependsOn tasks.named('shadowJar')
+	dependsOn tasks.named('releaseJar')
 }
 
 tasks.publish.dependsOn build
