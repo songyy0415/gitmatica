@@ -1148,5 +1148,5 @@
     "litematica.tool_mode.name.replace_block": "블록 교체",
     "litematica.tool_mode.name.schematic_placement": "스키매틱 배치",
     "litematica.warning.area_editor.area_rendering_disabled": "참고: 영역 선택 박스 렌더링이 현재 비활성화되었습니다.\n표시 -> %s, 또는 단축키 -> %s ['%s']",
-    "modmenu.descriptionTranslation.litematica": "Gitmatica adds Git-backed version control for Minecraft builds."
+    "modmenu.descriptionTranslation.litematica": "Gitmatica는 Minecraft 건축물에 Git 기반 버전 관리를 추가합니다."
 }

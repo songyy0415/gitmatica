@@ -1148,5 +1148,5 @@
     "litematica.tool_mode.name.replace_block": "Reemplazar bloque",
     "litematica.tool_mode.name.schematic_placement": "Colocación de Esquema",
     "litematica.warning.area_editor.area_rendering_disabled": "Nota: El renderizado de cajas de Selección de Área está actualmente deshabilatado\nVer Visuales -> %s, o Teclas Rápidas -> %s ['%s']",
-    "modmenu.descriptionTranslation.litematica": "Gitmatica adds Git-backed version control for Minecraft builds."
+    "modmenu.descriptionTranslation.litematica": "Gitmatica añade control de versiones respaldado por Git para construcciones de Minecraft."
 }

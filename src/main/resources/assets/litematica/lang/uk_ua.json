@@ -1148,5 +1148,5 @@
     "litematica.tool_mode.name.replace_block": "Заміна блока",
     "litematica.tool_mode.name.schematic_placement": "Розміщення схематики",
     "litematica.warning.area_editor.area_rendering_disabled": "Примітка: промальовування полів вибору области наразі вимкнено\nДив. Вигляд —> %s або гарячі клавіші —> %s [«%s»]",
-    "modmenu.descriptionTranslation.litematica": "Gitmatica adds Git-backed version control for Minecraft builds."
+    "modmenu.descriptionTranslation.litematica": "Gitmatica додає керування версіями на основі Git для будівель Minecraft."
 }

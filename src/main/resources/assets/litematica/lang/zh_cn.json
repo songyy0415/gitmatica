@@ -1474,5 +1474,5 @@
     "litematica.gui.message.lvc_project_manager.confirm_delete_project": "是否从磁盘删除项目「%s」？\n这会删除本地Git仓库，无法从 Gitmatica 撤销。",
     "litematica.gui.message.lvc_project_editor.confirm_delete_region": "是否从 LVC 项目中删除子区域「%s」？\n这会修改版本化项目元数据，并在保存版本时提交。",
     "litematica.gui.message.lvc_project.detached_head_commit": "检出提交后 HEAD 处于 detached 状态，LVC 无法安全提交。是否检出 %s 并在该分支上继续提交？",
-    "modmenu.descriptionTranslation.litematica": "Gitmatica adds Git-backed version control for Minecraft builds."
+    "modmenu.descriptionTranslation.litematica": "Gitmatica 为 Minecraft 建筑添加基于 Git 的版本控制。"
 }

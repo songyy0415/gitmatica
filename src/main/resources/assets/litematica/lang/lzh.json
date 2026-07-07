@@ -1148,5 +1148,5 @@
     "litematica.tool_mode.name.replace_block": "替塊",
     "litematica.tool_mode.name.schematic_placement": "置蜃圖",
     "litematica.warning.area_editor.area_rendering_disabled": "註：選區之繪既祛\n見 觀→%s 抑或 捷鍵→%s [「%s」]",
-    "modmenu.descriptionTranslation.litematica": "Gitmatica adds Git-backed version control for Minecraft builds."
+    "modmenu.descriptionTranslation.litematica": "Gitmatica 爲礦藝構築添 Git 版本管控。"
 }
