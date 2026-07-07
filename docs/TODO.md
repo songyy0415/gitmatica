@@ -97,17 +97,17 @@ Required behavior:
 
 Relevant files:
 
-- `src/main/java/me/zly2006/lvc/gui/GuiLvcProjectController.java`
-- `src/main/java/me/zly2006/lvc/gui/GuiLvcProjectTaskActions.java`
-- `src/main/java/me/zly2006/lvc/task/LvcOperationJournal.java`
-- `src/main/java/me/zly2006/lvc/task/LvcRefreshMarker.java`
-- `src/main/java/me/zly2006/lvc/task/LvcSemanticCheckoutTask.java`
-- `src/main/java/me/zly2006/lvc/task/LvcSemanticDiscardTask.java`
-- `src/main/java/me/zly2006/lvc/task/LvcSemanticClearTask.java`
-- `src/main/java/me/zly2006/lvc/git/LvcBranchMergeOps.java`
-- `src/main/java/me/zly2006/lvc/git/LvcSemanticMergeEngine.java`
-- `src/main/java/me/zly2006/lvc/git/LvcMergeObjectResolver.java`
-- `src/integrationTest/java/me/zly2006/lvc/LvcOperationRecoveryIntegrationTest.java`
+- `src/main/java/me/niicide/lvc/gui/GuiLvcProjectController.java`
+- `src/main/java/me/niicide/lvc/gui/GuiLvcProjectTaskActions.java`
+- `src/main/java/me/niicide/lvc/task/LvcOperationJournal.java`
+- `src/main/java/me/niicide/lvc/task/LvcRefreshMarker.java`
+- `src/main/java/me/niicide/lvc/task/LvcSemanticCheckoutTask.java`
+- `src/main/java/me/niicide/lvc/task/LvcSemanticDiscardTask.java`
+- `src/main/java/me/niicide/lvc/task/LvcSemanticClearTask.java`
+- `src/main/java/me/niicide/lvc/git/LvcBranchMergeOps.java`
+- `src/main/java/me/niicide/lvc/git/LvcSemanticMergeEngine.java`
+- `src/main/java/me/niicide/lvc/git/LvcMergeObjectResolver.java`
+- `src/integrationTest/java/me/niicide/lvc/LvcOperationRecoveryIntegrationTest.java`
 
 ### Restore/Checkout Must Match Litematica Paste Semantics
 
@@ -128,11 +128,11 @@ Required behavior:
 
 Relevant files:
 
-- `src/main/java/me/zly2006/lvc/semantic/LvcSemanticWorldApplier.java`
-- `src/main/java/me/zly2006/lvc/task/LvcSemanticRestoreEngine.java`
-- `src/main/java/me/zly2006/lvc/task/LvcSemanticCheckoutTask.java`
-- `src/main/java/me/zly2006/lvc/task/LvcSemanticDiscardTask.java`
-- `src/main/java/me/zly2006/lvc/task/LvcSemanticClearTask.java`
+- `src/main/java/me/niicide/lvc/semantic/LvcSemanticWorldApplier.java`
+- `src/main/java/me/niicide/lvc/task/LvcSemanticRestoreEngine.java`
+- `src/main/java/me/niicide/lvc/task/LvcSemanticCheckoutTask.java`
+- `src/main/java/me/niicide/lvc/task/LvcSemanticDiscardTask.java`
+- `src/main/java/me/niicide/lvc/task/LvcSemanticClearTask.java`
 - `src/main/java/fi/dy/masa/litematica/scheduler/tasks/TaskPasteSchematicPerChunkBase.java`
 - `src/main/java/fi/dy/masa/litematica/scheduler/tasks/TaskPasteSchematicPerChunkDirect.java`
 - `src/main/java/fi/dy/masa/litematica/util/WorldUtils.java`
@@ -154,8 +154,8 @@ Required behavior:
 
 Relevant files:
 
-- `src/main/java/me/zly2006/lvc/gui/GuiLvcProjectManager.java`
-- `src/main/java/me/zly2006/lvc/LvcProjectService.java`
+- `src/main/java/me/niicide/lvc/gui/GuiLvcProjectManager.java`
+- `src/main/java/me/niicide/lvc/LvcProjectService.java`
 
 ### Extend Manual `Scan Changes` Into Preflight
 
@@ -177,9 +177,9 @@ Required behavior:
 
 Relevant files:
 
-- `src/main/java/me/zly2006/lvc/LvcCaptureEngine.java`
-- `src/main/java/me/zly2006/lvc/LvcProjectService.java`
-- `src/main/java/me/zly2006/lvc/gui/GuiLvcProjectManager.java`
+- `src/main/java/me/niicide/lvc/LvcCaptureEngine.java`
+- `src/main/java/me/niicide/lvc/LvcProjectService.java`
+- `src/main/java/me/niicide/lvc/gui/GuiLvcProjectManager.java`
 
 ### Implement Semantic Export And Restore
 
@@ -200,10 +200,10 @@ Required behavior:
 
 Relevant files:
 
-- `src/main/java/me/zly2006/lvc/LvcSemanticRepository.java`
-- `src/main/java/me/zly2006/lvc/LvcChunkCodec.java`
-- `src/main/java/me/zly2006/lvc/LvcProjectService.java`
-- `src/main/java/me/zly2006/lvc/gui/GuiLvcProjectManager.java`
+- `src/main/java/me/niicide/lvc/LvcSemanticRepository.java`
+- `src/main/java/me/niicide/lvc/LvcChunkCodec.java`
+- `src/main/java/me/niicide/lvc/LvcProjectService.java`
+- `src/main/java/me/niicide/lvc/gui/GuiLvcProjectManager.java`
 
 ### Implement `Update areas`
 
@@ -224,8 +224,8 @@ Required behavior:
 
 Relevant files:
 
-- `src/main/java/me/zly2006/lvc/gui/GuiLvcProjectManager.java`
-- `src/main/java/me/zly2006/lvc/LvcProjectService.java`
+- `src/main/java/me/niicide/lvc/gui/GuiLvcProjectManager.java`
+- `src/main/java/me/niicide/lvc/LvcProjectService.java`
 - `src/main/resources/assets/litematica/lang/en_us.json`
 - `src/main/resources/assets/litematica/lang/zh_cn.json`
 
@@ -247,9 +247,9 @@ Required behavior:
 
 Relevant files:
 
-- `src/main/java/me/zly2006/lvc/gui/GuiLvcProjectManager.java`
-- `src/main/java/me/zly2006/lvc/LvcProjectService.java`
-- `src/main/java/me/zly2006/lvc/semantic/LvcSemanticWorldApplier.java`
+- `src/main/java/me/niicide/lvc/gui/GuiLvcProjectManager.java`
+- `src/main/java/me/niicide/lvc/LvcProjectService.java`
+- `src/main/java/me/niicide/lvc/semantic/LvcSemanticWorldApplier.java`
 
 ### Handle Git Dirty State, Merge Conflicts, And Failed Pulls
 
@@ -269,8 +269,8 @@ Required behavior:
 
 Relevant files:
 
-- `src/main/java/me/zly2006/lvc/LvcProjectService.java`
-- `src/main/java/me/zly2006/lvc/gui/GuiLvcProjectManager.java`
+- `src/main/java/me/niicide/lvc/LvcProjectService.java`
+- `src/main/java/me/niicide/lvc/gui/GuiLvcProjectManager.java`
 
 ### Make In-Game Restore Server-Authoritative
 
@@ -278,9 +278,9 @@ Current state:
 
 - Singleplayer restore uses integrated-server direct world writes through the scan/rewrite/one-verify restore engine.
 - Dedicated-server support is partial. `LvcWorldBackend` follows Litematica's Servux config/handshake and otherwise falls back to command mode.
-- Servux capture requests Litematica Servux BE/entity cache data per chunk and Servux apply sends generated Litematica placements to the server. Remote apply for checkout/discard/clear/delete-version currently uses an experimental void-holding entity cleanup: non-player entities in each tracked box are teleported to Y=-9999 at the region center, then killed inside a small holding box there before paste. It then clears `RecipesUsed` from selected existing furnace-like block entities before paste so server replacement does not spawn unwanted furnace XP. Servux checkout/discard/delete-version now build sparse target schematics where unchanged tracked targets become `minecraft:structure_void`; those sparse flows only defuse touched current furnaces, while full clear/command-fallback flows still use preflight candidates or chunk-paced discovery. Servux paste payloads are prepared asynchronously and size-checked before journal/Git/entity cleanup, oversized inline payloads abort instead of using Servux's deprecated file-transfer fallback, packet slices are sent over multiple client ticks, and Servux applies run a local client shadow sync afterward to clear ghost blocks caused by suppressed/lagged server updates.
+- Servux capture requests Litematica Servux BE/entity cache data per chunk and Servux apply sends generated Litematica placements to the server. Remote apply for checkout/discard/clear/delete-version currently uses an experimental void-holding entity cleanup: non-player entities in affected tracked boxes are teleported to Y=-9999 at the region center, then killed inside a small holding box there before paste. It then clears `RecipesUsed` from selected existing furnace-like block entities before paste so server replacement does not spawn unwanted furnace XP. Servux checkout/discard/delete-version build sparse target schematics where unchanged tracked targets become `minecraft:structure_void`; command fallback uses the same sparse block-state target but skips `structure_void` locally before generating fill/setblock commands. Sparse flows only defuse touched current furnaces, while clear still uses an air target and chunk-paced furnace discovery. Servux paste payloads are prepared asynchronously and size-checked before journal/Git/entity cleanup, oversized inline payloads abort instead of using Servux's deprecated file-transfer fallback, packet slices are sent over multiple client ticks, and Servux applies run a local client shadow sync afterward to clear ghost blocks caused by suppressed/lagged server updates.
 - If remote entity cleanup still leaves side effects, replace the command cleanup with a Servux/server-side clear request that calls entity discard/remove directly inside tracked boxes. When doing that work, also recheck selector/bounds semantics against Litematica's command delete paths.
-- Command mode is intentionally lossy: capture/apply block states only and omit inventories, block entity NBT, and stored entities.
+- Command mode is intentionally lossy: capture/apply block states only and omit inventories, block entity NBT, and stored entities. If a previous Servux/full-fidelity commit had inventory payloads, a later no-Servux Save Version records those containers as empty/no-payload instead of preserving stale NBT.
 - Permission/error feedback, Servux completion confirmation, and manual server smoke coverage are still incomplete.
 
 Required behavior:
@@ -293,8 +293,8 @@ Required behavior:
 
 Relevant files:
 
-- `src/main/java/me/zly2006/lvc/LvcProjectService.java`
-- `src/main/java/me/zly2006/lvc/gui/GuiLvcProjectManager.java`
+- `src/main/java/me/niicide/lvc/LvcProjectService.java`
+- `src/main/java/me/niicide/lvc/gui/GuiLvcProjectManager.java`
 
 ### Entity Restore Needs Cleanup Semantics
 
@@ -318,10 +318,10 @@ Required behavior:
 
 Relevant files:
 
-- `src/main/java/me/zly2006/lvc/util/LvcEntityNbt.java`
-- `src/main/java/me/zly2006/lvc/semantic/LvcSemanticWorldApplier.java`
-- `src/main/java/me/zly2006/lvc/task/LvcSemanticRestoreEngine.java`
-- `src/main/java/me/zly2006/lvc/git/LvcSemanticMergeEngine.java`
+- `src/main/java/me/niicide/lvc/util/LvcEntityNbt.java`
+- `src/main/java/me/niicide/lvc/semantic/LvcSemanticWorldApplier.java`
+- `src/main/java/me/niicide/lvc/task/LvcSemanticRestoreEngine.java`
+- `src/main/java/me/niicide/lvc/git/LvcSemanticMergeEngine.java`
 
 ## P1 - User Workflows
 
@@ -351,7 +351,7 @@ Design notes:
 
 Relevant file:
 
-- `src/main/java/me/zly2006/lvc/gui/GuiLvcProjectManager.java`
+- `src/main/java/me/niicide/lvc/gui/GuiLvcProjectManager.java`
 
 ### Add Diff Workflow
 
@@ -414,8 +414,8 @@ Required behavior:
 
 Relevant files:
 
-- `src/main/java/me/zly2006/lvc/LvcProjectService.java`
-- `src/main/java/me/zly2006/lvc/gui/GuiLvcProjectManager.java`
+- `src/main/java/me/niicide/lvc/LvcProjectService.java`
+- `src/main/java/me/niicide/lvc/gui/GuiLvcProjectManager.java`
 
 ### Improve Push/Pull UX
 
@@ -437,8 +437,8 @@ Required behavior:
 
 Relevant file:
 
-- `src/main/java/me/zly2006/lvc/LvcProjectService.java`
-- `src/main/java/me/zly2006/lvc/gui/GuiLvcProjectManager.java`
+- `src/main/java/me/niicide/lvc/LvcProjectService.java`
+- `src/main/java/me/niicide/lvc/gui/GuiLvcProjectManager.java`
 
 ### Replace Current SSH Key Handling And Remove EdDSA Crypto Dependency
 
@@ -457,8 +457,8 @@ Required behavior:
 Relevant files:
 
 - `build.gradle`
-- `src/main/java/me/zly2006/lvc/git/LvcGitRemoteOps.java`
-- `src/main/java/me/zly2006/lvc/git/LvcSshTransportFactory.java`
+- `src/main/java/me/niicide/lvc/git/LvcGitRemoteOps.java`
+- `src/main/java/me/niicide/lvc/git/LvcSshTransportFactory.java`
 
 ### Open Newly Created Project Directly With Tracking State
 
@@ -498,8 +498,8 @@ Required behavior:
 
 Relevant files:
 
-- `src/main/java/me/zly2006/lvc/LvcSemanticRepository.java`
-- `src/main/java/me/zly2006/lvc/LvcChunkStore.java`
+- `src/main/java/me/niicide/lvc/LvcSemanticRepository.java`
+- `src/main/java/me/niicide/lvc/LvcChunkStore.java`
 - `docs/tech/lvc-semantic-storage.md`
 
 ### Add Real-Chunk World I/O Planning
@@ -526,11 +526,11 @@ Priority note:
 
 Relevant files:
 
-- `src/main/java/me/zly2006/lvc/capture/LvcCapturePlanner.java`
-- `src/main/java/me/zly2006/lvc/capture/LvcCaptureSession.java`
-- `src/main/java/me/zly2006/lvc/semantic/LvcSemanticWorldApplier.java`
-- `src/main/java/me/zly2006/lvc/task/LvcSemanticCaptureTask.java`
-- `src/main/java/me/zly2006/lvc/task/LvcSemanticRestoreEngine.java`
+- `src/main/java/me/niicide/lvc/capture/LvcCapturePlanner.java`
+- `src/main/java/me/niicide/lvc/capture/LvcCaptureSession.java`
+- `src/main/java/me/niicide/lvc/semantic/LvcSemanticWorldApplier.java`
+- `src/main/java/me/niicide/lvc/task/LvcSemanticCaptureTask.java`
+- `src/main/java/me/niicide/lvc/task/LvcSemanticRestoreEngine.java`
 
 ## P2 - UI Polish
 
@@ -548,7 +548,7 @@ Required behavior:
 - Move reusable list/browser rendering into `WidgetLvc*` classes.
 - Extract commit history into `WidgetLvcCommitList` and `WidgetLvcCommitEntry` when real history/diff/inspect work starts.
 - Avoid broad UI refactors until they directly support MVP workflows.
-- Consider package split later, for example `me.zly2006.lvc.gui` and `me.zly2006.lvc.gui.widget`, once the UI surface grows past a few screens.
+- Consider package split later, for example `me.niicide.lvc.gui` and `me.niicide.lvc.gui.widget`, once the UI surface grows past a few screens.
 
 Priority note:
 
@@ -557,9 +557,9 @@ Priority note:
 
 Relevant files:
 
-- `src/main/java/me/zly2006/lvc/gui/GuiLvcProjectManager.java`
-- `src/main/java/me/zly2006/lvc/gui/GuiLvcProjectBrowser.java`
-- `src/main/java/me/zly2006/lvc/gui/widgets/WidgetLvcProjectBrowser.java`
+- `src/main/java/me/niicide/lvc/gui/GuiLvcProjectManager.java`
+- `src/main/java/me/niicide/lvc/gui/GuiLvcProjectBrowser.java`
+- `src/main/java/me/niicide/lvc/gui/widgets/WidgetLvcProjectBrowser.java`
 
 ### Add Mod-Level GitMatica Config Page
 
@@ -578,9 +578,9 @@ Required behavior:
 
 Relevant files:
 
-- `src/main/java/me/zly2006/lvc/LvcDiagnostics.java`
-- `src/main/java/me/zly2006/lvc/gui/GuiLvcProjectBrowser.java`
-- `src/main/java/me/zly2006/lvc/gui/GuiLvcProjectManager.java`
+- `src/main/java/me/niicide/lvc/LvcDiagnostics.java`
+- `src/main/java/me/niicide/lvc/gui/GuiLvcProjectBrowser.java`
+- `src/main/java/me/niicide/lvc/gui/GuiLvcProjectManager.java`
 - `src/main/java/fi/dy/masa/litematica/config/Configs.java`
 
 ### Replace Raw Text History With A Proper List Widget
@@ -598,7 +598,7 @@ Required behavior:
 
 Relevant file:
 
-- `src/main/java/me/zly2006/lvc/gui/GuiLvcProjectManager.java`
+- `src/main/java/me/niicide/lvc/gui/GuiLvcProjectManager.java`
 
 ### Add LVC Translations For All Supported Languages
 
@@ -636,7 +636,7 @@ Required behavior:
 
 Relevant tests:
 
-- `src/integrationTest/java/me/zly2006/lvc/LvcRepositoryIntegrationTest.java`
+- `src/integrationTest/java/me/niicide/lvc/LvcRepositoryIntegrationTest.java`
 
 ### Add GUI Interaction Tests
 

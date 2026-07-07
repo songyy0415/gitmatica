@@ -4,7 +4,7 @@ Note: this document describes the older/current `index.nbt` implementation path.
 
 LVC 是把 Minecraft 结构版本接入 Git 的重大尝试。
 
-所有新的类必须写在me.zly2006.lvc包下。
+所有新的类必须写在me.niicide.lvc包下。
 
 一个 LVC project 是一个 Git repo，它可以在 GitHub 上被同步。作为 MVP，首先要实现 commit。
 

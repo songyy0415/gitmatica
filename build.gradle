@@ -61,7 +61,7 @@ tasks.register('integrationTest', JavaExec) {
 	group = 'verification'
 	description = 'Runs integration tests without mocks.'
 	classpath = sourceSets.integrationTest.runtimeClasspath
-	mainClass = 'me.zly2006.lvc.LvcRepositoryIntegrationTest'
+	mainClass = 'me.niicide.lvc.LvcRepositoryIntegrationTest'
 }
 
 check.dependsOn integrationTest

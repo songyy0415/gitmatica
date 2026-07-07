@@ -26,7 +26,7 @@ import fi.dy.masa.litematica.data.DataManager;
 import fi.dy.masa.litematica.data.EntityDataManager;
 import fi.dy.masa.litematica.schematic.LitematicaSchematic;
 import fi.dy.masa.litematica.schematic.placement.SchematicPlacement;
-import me.zly2006.lvc.capture.LvcServuxBulkEntityCache;
+import me.niicide.lvc.capture.LvcServuxBulkEntityCache;
 
 @Environment(EnvType.CLIENT)
 public abstract class ServuxLitematicaHandler<T extends CustomPacketPayload> implements IPluginClientPlayHandler<T>

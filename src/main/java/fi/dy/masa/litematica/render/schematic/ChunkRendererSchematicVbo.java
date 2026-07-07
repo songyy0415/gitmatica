@@ -44,7 +44,7 @@ import net.minecraft.world.phys.AABB;
 import net.minecraft.world.phys.Vec3;
 import net.minecraft.world.phys.shapes.VoxelShape;
 
-import me.zly2006.lvc.overlay.LvcTrackingOverlayService;
+import me.niicide.lvc.overlay.LvcTrackingOverlayService;
 import fi.dy.masa.malilib.util.EntityUtils;
 import fi.dy.masa.malilib.util.data.Color4f;
 import fi.dy.masa.malilib.util.game.BlockUtils;

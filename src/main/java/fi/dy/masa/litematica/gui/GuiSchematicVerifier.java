@@ -1,7 +1,7 @@
 package fi.dy.masa.litematica.gui;
 
 import javax.annotation.Nullable;
-import me.zly2006.lvc.gui.LvcVerifierStartWorkflow;
+import me.niicide.lvc.gui.LvcVerifierStartWorkflow;
 import fi.dy.masa.litematica.config.Configs;
 import fi.dy.masa.litematica.config.Hotkeys;
 import fi.dy.masa.litematica.gui.GuiMainMenu.ButtonListenerChangeMenu;

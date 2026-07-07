@@ -18,7 +18,7 @@ import fi.dy.masa.malilib.util.FileNameUtils;
 import fi.dy.masa.malilib.util.KeyCodes;
 import fi.dy.masa.malilib.util.StringUtils;
 import fi.dy.masa.litematica.schematic.LitematicaSchematic;
-import me.zly2006.lvc.gui.LvcCreateProjectAction;
+import me.niicide.lvc.gui.LvcCreateProjectAction;
 
 public abstract class GuiSchematicSaveBase extends GuiSchematicBrowserBase implements ISelectionListener<DirectoryEntry>
 {

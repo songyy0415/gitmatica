@@ -26,7 +26,7 @@ import fi.dy.masa.litematica.render.OverlayRenderer;
 import fi.dy.masa.litematica.render.infohud.InfoHud;
 import fi.dy.masa.litematica.render.infohud.ToolHud;
 import fi.dy.masa.litematica.tool.ToolMode;
-import me.zly2006.lvc.gui.LvcGuiMessages;
+import me.niicide.lvc.gui.LvcGuiMessages;
 
 public class RenderHandler implements IRenderer
 {

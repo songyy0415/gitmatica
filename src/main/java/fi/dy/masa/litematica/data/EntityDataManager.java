@@ -62,7 +62,7 @@ import fi.dy.masa.litematica.util.EntityUtils;
 import fi.dy.masa.litematica.util.PositionUtils;
 import fi.dy.masa.litematica.util.WorldUtils;
 import fi.dy.masa.litematica.world.WorldSchematic;
-import me.zly2006.lvc.capture.LvcServuxBulkEntityCache;
+import me.niicide.lvc.capture.LvcServuxBulkEntityCache;
 
 public class EntityDataManager implements IClientTickHandler, IDataSyncer
 {
