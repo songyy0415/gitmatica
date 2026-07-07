@@ -96,13 +96,24 @@ processResources {
 	exclude '**/*.xcf'
 	exclude '**/xcf'
 
-	// this will ensure that this task is redone when the versions change.
-	//inputs.property "minecraft_version", project.project.minecraft_version
-
-	inputs.property "mod_version", project.mod_version
+	inputs.properties([
+			"mod_id": project.mod_id,
+			"mod_name": project.mod_name,
+			"mod_version": project.mod_version,
+			"author": project.author,
+			"minecraft_version": project.minecraft_version,
+			"malilib_version": project.malilib_version
+	])
 
 	filesMatching("fabric.mod.json") {
-		expand "mod_version": project.mod_version
+		expand([
+				"mod_id": project.mod_id,
+				"mod_name": project.mod_name,
+				"mod_version": project.mod_version,
+				"author": project.author,
+				"minecraft_version": project.minecraft_version,
+				"malilib_version": project.malilib_version
+		])
 	}
 }
 

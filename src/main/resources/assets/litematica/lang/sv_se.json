@@ -1148,5 +1148,5 @@
     "litematica.tool_mode.name.replace_block": "Ersätt block",
     "litematica.tool_mode.name.schematic_placement": "Schematic Placement",
     "litematica.warning.area_editor.area_rendering_disabled": "Obs: Rendering av Area Selection-boxarna är för närvarande inaktiverad\nSe Visuals -> %s, eller Hotkeys -> %s ['%s']",
-    "modmenu.descriptionTranslation.litematica": "En modern schemamodd för LiteLoader, Rift, Fabric osv."
+    "modmenu.descriptionTranslation.litematica": "Gitmatica adds Git-backed version control for Minecraft builds."
 }

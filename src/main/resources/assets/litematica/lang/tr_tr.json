@@ -1148,5 +1148,5 @@
     "litematica.tool_mode.name.replace_block": "Bloğu Değiştir",
     "litematica.tool_mode.name.schematic_placement": "Şematik Yerleştirme",
     "litematica.warning.area_editor.area_rendering_disabled": "Not: Alan Seçimi kutularının görünümü şu an devre dışı\nŞuraya bakın: Görsel Ayarlar -> %s, veya Kısayollar -> %s ['%s']",
-    "modmenu.descriptionTranslation.litematica": "LiteLoader, Rift, Fabric vb. için modern bir şematik modu."
+    "modmenu.descriptionTranslation.litematica": "Gitmatica adds Git-backed version control for Minecraft builds."
 }
