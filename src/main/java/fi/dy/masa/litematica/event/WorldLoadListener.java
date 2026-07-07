@@ -19,6 +19,8 @@ import fi.dy.masa.litematica.render.LitematicaRenderer;
 import fi.dy.masa.litematica.schematic.conversion.SchematicConversionMaps;
 import fi.dy.masa.litematica.schematic.placement.TemporaryWorldManager;
 import fi.dy.masa.litematica.world.SchematicWorldHandler;
+import me.zly2006.lvc.gui.LvcInterruptedOperationPrompts;
+import me.zly2006.lvc.task.LvcTaskRegistry;
 
 public class WorldLoadListener implements IWorldLoadListener
 {
@@ -35,6 +37,7 @@ public class WorldLoadListener implements IWorldLoadListener
         // Save the settings before the integrated server gets shut down
         if (worldBefore != null)
         {
+            LvcTaskRegistry.abortActiveOperationForWorldUnload();
             DataManager.save();
         }
         if (worldAfter != null)
@@ -63,6 +66,7 @@ public class WorldLoadListener implements IWorldLoadListener
             CachedTagManager.startCache();
 	        LitematicaDebugHud.INSTANCE.checkConfig();
             DataManager.getSchematicPlacementManager().onWorldJoin();
+            LvcInterruptedOperationPrompts.cancelInterruptedNonWorldOperationsOnWorldJoin(mc);
             LitematicaRenderer.getInstance().updateConfigState();
         }
         else

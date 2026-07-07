@@ -44,6 +44,7 @@ import net.minecraft.world.phys.AABB;
 import net.minecraft.world.phys.Vec3;
 import net.minecraft.world.phys.shapes.VoxelShape;
 
+import me.zly2006.lvc.overlay.LvcTrackingOverlayService;
 import fi.dy.masa.malilib.util.EntityUtils;
 import fi.dy.masa.malilib.util.data.Color4f;
 import fi.dy.masa.malilib.util.game.BlockUtils;
@@ -55,6 +56,7 @@ import fi.dy.masa.litematica.data.DataManager;
 import fi.dy.masa.litematica.render.IWorldSchematicRenderer;
 import fi.dy.masa.litematica.render.RenderUtils;
 import fi.dy.masa.litematica.schematic.placement.SchematicPlacementManager.PlacementPart;
+import fi.dy.masa.litematica.schematic.verifier.SchematicVerifier;
 import fi.dy.masa.litematica.util.IgnoreBlockRegistry;
 import fi.dy.masa.litematica.util.OverlayType;
 import fi.dy.masa.litematica.util.PositionUtils;
@@ -76,8 +78,8 @@ public class ChunkRendererSchematicVbo implements AutoCloseable
 	protected final BlockPos.MutableBlockPos chunkRelativePos;
 	protected ChunkPos chunkPosition;
 
-	protected final List<IntBoundingBox> boxes;
-	protected final EnumSet<OverlayRenderType> existingOverlays;
+    protected final List<PlacementRenderBox> boxes;
+    protected final EnumSet<OverlayRenderType> existingOverlays;
 
 	private AABB boundingBox;
 	protected Color4f overlayColor;
@@ -438,9 +440,9 @@ public class ChunkRendererSchematicVbo implements AutoCloseable
 				blockRenderer.reload();
 				blockRenderer.enableCache();
 
-				for (IntBoundingBox box : this.boxes)
-				{
-					box = range.getClampedRenderBoundingBox(box);
+                for (PlacementRenderBox renderBox : this.boxes)
+                {
+                    IntBoundingBox box = range.getClampedRenderBoundingBox(renderBox.box);
 
 					// The rendered layer(s) don't intersect this sub-volume
 					if (box == null)
@@ -457,9 +459,10 @@ public class ChunkRendererSchematicVbo implements AutoCloseable
 						// Fluid rendering and the overlay do not use the MatrixStack.
 						// Block models use the VertexConsumer#quad() method, and they use the MatrixStack.
 						Vec3 offset = new Vec3(posMutable.getX() & 0xF, posMutable.getY() - bottomY, posMutable.getZ() & 0xF);
-						this.renderBlocksAndOverlay(blockRenderer, fluidRenderer, posMutable, data, chunkMeshData, pack, blockOutput, offset, visGraph);
-					}
-				}
+                        this.renderBlocksAndOverlay(blockRenderer, fluidRenderer, posMutable, data, chunkMeshData, pack, blockOutput, offset, visGraph,
+                                renderBox.lvcTrackingOverlay, renderBox.verifier);
+                    }
+                }
 
 				blockRenderer.disableCache();
 				Set<ChunkSectionLayer> usedBlockLayers = new HashSet<>();
@@ -548,7 +551,9 @@ public class ChunkRendererSchematicVbo implements AutoCloseable
 	                                      @Nonnull ChunkMeshDataSchematic chunkMeshData,
 	                                      ChunkRenderDispatcherBuffers pack,
 	                                      IBlockOutputSchematic blockOutput,
-	                                      Vec3 offset, VisGraph visGraph)
+	                                      Vec3 offset, VisGraph visGraph,
+	                                      boolean lvcTrackingOverlay,
+	                                      @Nullable SchematicVerifier verifier)
 	{
 		BlockState stateSchematic = this.schematicWorldView.getBlockState(pos);
 		BlockState stateClient = this.clientWorldView.getBlockState(pos);
@@ -613,12 +618,12 @@ public class ChunkRendererSchematicVbo implements AutoCloseable
 			}
 		}
 
-		if (Configs.Visuals.ENABLE_SCHEMATIC_OVERLAY.getBooleanValue())
-		{
-			this.getProfiler().popPush("render_build_overlays");
-			OverlayType type = this.getOverlayType(stateSchematic, stateClient);
+        if (Configs.Visuals.ENABLE_SCHEMATIC_OVERLAY.getBooleanValue())
+        {
+            this.getProfiler().popPush("render_build_overlays");
+            OverlayType type = this.getOverlayType(stateSchematic, stateClient, pos, verifier);
 
-			this.overlayColor = getOverlayColor(type);
+            this.overlayColor = getOverlayColor(type, lvcTrackingOverlay);
 
 			if (this.overlayColor != null)
 			{
@@ -1101,48 +1106,89 @@ public class ChunkRendererSchematicVbo implements AutoCloseable
 		}
 	}
 
-	@Nullable
-	protected static Color4f getOverlayColor(OverlayType overlayType)
-	{
-		Color4f overlayColor = null;
+    private OverlayType getOverlayType(BlockState stateSchematic, BlockState stateClient, BlockPos pos,
+                                       @Nullable SchematicVerifier verifier)
+    {
+        if (verifier != null &&
+            verifier.hasInventoryMismatchForOverlay(pos))
+        {
+            return OverlayType.WRONG_STATE;
+        }
 
-		switch (overlayType)
-		{
-			case MISSING:
-				if (Configs.Visuals.SCHEMATIC_OVERLAY_TYPE_MISSING.getBooleanValue())
-				{
-					overlayColor = Configs.Colors.SCHEMATIC_OVERLAY_COLOR_MISSING.getColor();
-				}
-				break;
-			case EXTRA:
-				if (Configs.Visuals.SCHEMATIC_OVERLAY_TYPE_EXTRA.getBooleanValue())
-				{
-					overlayColor = Configs.Colors.SCHEMATIC_OVERLAY_COLOR_EXTRA.getColor();
-				}
-				break;
-			case WRONG_BLOCK:
-				if (Configs.Visuals.SCHEMATIC_OVERLAY_TYPE_WRONG_BLOCK.getBooleanValue())
-				{
-					overlayColor = Configs.Colors.SCHEMATIC_OVERLAY_COLOR_WRONG_BLOCK.getColor();
-				}
-				break;
-			case WRONG_STATE:
-				if (Configs.Visuals.SCHEMATIC_OVERLAY_TYPE_WRONG_STATE.getBooleanValue())
-				{
-					overlayColor = Configs.Colors.SCHEMATIC_OVERLAY_COLOR_WRONG_STATE.getColor();
-				}
-				break;
-			case DIFF_BLOCK:
-				if (Configs.Visuals.SCHEMATIC_OVERLAY_TYPE_DIFF_BLOCK.getBooleanValue())
-				{
-					overlayColor = Configs.Colors.SCHEMATIC_OVERLAY_COLOR_DIFF_BLOCK.getColor();
-				}
-				break;
-			default:
-		}
+        return this.getOverlayType(stateSchematic, stateClient);
+    }
+
+    @Nullable
+    protected static Color4f getOverlayColor(OverlayType overlayType)
+    {
+        return getOverlayColor(overlayType, false);
+    }
+
+    @Nullable
+    protected static Color4f getOverlayColor(OverlayType overlayType, boolean lvcTrackingOverlay)
+    {
+        Color4f overlayColor = null;
+
+        if (lvcTrackingOverlay && isOverlayTypeEnabled(overlayType))
+        {
+            overlayColor = LvcTrackingOverlayService.semanticTrackingOverlayColor(overlayType);
+
+            if (overlayColor != null)
+            {
+                return overlayColor;
+            }
+        }
+
+        switch (overlayType)
+        {
+            case MISSING:
+                if (Configs.Visuals.SCHEMATIC_OVERLAY_TYPE_MISSING.getBooleanValue())
+                {
+                    overlayColor = Configs.Colors.SCHEMATIC_OVERLAY_COLOR_MISSING.getColor();
+                }
+                break;
+            case EXTRA:
+                if (Configs.Visuals.SCHEMATIC_OVERLAY_TYPE_EXTRA.getBooleanValue())
+                {
+                    overlayColor = Configs.Colors.SCHEMATIC_OVERLAY_COLOR_EXTRA.getColor();
+                }
+                break;
+            case WRONG_BLOCK:
+                if (Configs.Visuals.SCHEMATIC_OVERLAY_TYPE_WRONG_BLOCK.getBooleanValue())
+                {
+                    overlayColor = Configs.Colors.SCHEMATIC_OVERLAY_COLOR_WRONG_BLOCK.getColor();
+                }
+                break;
+            case WRONG_STATE:
+                if (Configs.Visuals.SCHEMATIC_OVERLAY_TYPE_WRONG_STATE.getBooleanValue())
+                {
+                    overlayColor = Configs.Colors.SCHEMATIC_OVERLAY_COLOR_WRONG_STATE.getColor();
+                }
+                break;
+            case DIFF_BLOCK:
+                if (Configs.Visuals.SCHEMATIC_OVERLAY_TYPE_DIFF_BLOCK.getBooleanValue())
+                {
+                    overlayColor = Configs.Colors.SCHEMATIC_OVERLAY_COLOR_DIFF_BLOCK.getColor();
+                }
+                break;
+            default:
+        }
 
 		return overlayColor;
 	}
+
+    private static boolean isOverlayTypeEnabled(OverlayType overlayType)
+    {
+        return switch (overlayType)
+        {
+            case MISSING -> Configs.Visuals.SCHEMATIC_OVERLAY_TYPE_MISSING.getBooleanValue();
+            case EXTRA -> Configs.Visuals.SCHEMATIC_OVERLAY_TYPE_EXTRA.getBooleanValue();
+            case WRONG_BLOCK -> Configs.Visuals.SCHEMATIC_OVERLAY_TYPE_WRONG_BLOCK.getBooleanValue();
+            case WRONG_STATE -> Configs.Visuals.SCHEMATIC_OVERLAY_TYPE_WRONG_STATE.getBooleanValue();
+            case DIFF_BLOCK -> Configs.Visuals.SCHEMATIC_OVERLAY_TYPE_DIFF_BLOCK.getBooleanValue();
+            default -> false;
+        };
+    }
 
 	private <T extends BlockEntity> void addBlockEntity(BlockState state, BlockPos pos, ChunkMeshDataSchematic chunkMeshData)
 	{
@@ -1622,14 +1668,30 @@ public class ChunkRendererSchematicVbo implements AutoCloseable
 
 			for (PlacementPart part : DataManager.getSchematicPlacementManager().getPlacementPartsInChunk(chunkX, chunkZ))
 			{
-				this.boxes.add(part.bb);
+				SchematicVerifier verifier = part.placement.hasVerifier() ? part.placement.getSchematicVerifier() : null;
+				this.boxes.add(new PlacementRenderBox(part.bb,
+						LvcTrackingOverlayService.isSemanticTrackingPlacement(part.placement), verifier));
 			}
 		}
 	}
 
-	@Override
-	public void close() throws Exception
-	{
-		this.deleteGlResources();
-	}
+    private static class PlacementRenderBox
+    {
+        private final IntBoundingBox box;
+        private final boolean lvcTrackingOverlay;
+        @Nullable private final SchematicVerifier verifier;
+
+        private PlacementRenderBox(IntBoundingBox box, boolean lvcTrackingOverlay, @Nullable SchematicVerifier verifier)
+        {
+            this.box = box;
+            this.lvcTrackingOverlay = lvcTrackingOverlay;
+            this.verifier = verifier;
+        }
+    }
+
+    @Override
+    public void close() throws Exception
+    {
+        this.deleteGlResources();
+    }
 }

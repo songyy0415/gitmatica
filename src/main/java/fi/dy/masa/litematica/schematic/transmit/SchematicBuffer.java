@@ -4,7 +4,6 @@ import java.io.IOException;
 import java.io.OutputStream;
 import java.nio.file.Files;
 import java.nio.file.Path;
-import java.util.UUID;
 import java.util.concurrent.atomic.AtomicInteger;
 
 import fi.dy.masa.litematica.Litematica;
@@ -13,25 +12,30 @@ import fi.dy.masa.litematica.util.FileType;
 public class SchematicBuffer
 {
     public static final int BUFFER_SIZE = 16384;
+    private final String name;
     private final FileType type;
-    private final String fileName;
     private Slice[] buffer;
     private final int totalExpectedSlices;
     private final long totalExpectedSize;
     private final AtomicInteger receivedSlices = new AtomicInteger(0);
 
-    public SchematicBuffer(int totalExpectedSlices, long totalExpectedSize)
+    public SchematicBuffer(String name, int totalExpectedSlices, long totalExpectedSize)
     {
-        this(totalExpectedSlices, totalExpectedSize, FileType.LITEMATICA_SCHEMATIC);
+        this(name, totalExpectedSlices, totalExpectedSize, FileType.LITEMATICA_SCHEMATIC);
     }
 
-    public SchematicBuffer(int totalExpectedSlices, long totalExpectedSize, FileType type)
+    public SchematicBuffer(String name, int totalExpectedSlices, long totalExpectedSize, FileType type)
     {
+        this.name = name;
         this.type = type;
-        this.fileName = UUID.randomUUID().toString();
         this.totalExpectedSlices = totalExpectedSlices;
         this.totalExpectedSize = totalExpectedSize;
         this.buffer = new Slice[totalExpectedSlices];
+    }
+
+    public String getName()
+    {
+        return this.name;
     }
 
     public FileType getType()
@@ -39,14 +43,18 @@ public class SchematicBuffer
         return this.type;
     }
 
-    public String getFileName()
+    public Path getFileName()
     {
-        return this.fileName;
-    }
+        String ext = FileType.getFileExt(this.type);
 
-    public String getFileNameWithExt()
-    {
-        return this.fileName + "." + FileType.getFileExt(this.type);
+        if (this.name.contains(ext))
+        {
+            return Path.of(this.name);
+        }
+        else
+        {
+            return Path.of(this.name + ext);
+        }
     }
 
     public void receiveSlice(final int number, Slice slice)
