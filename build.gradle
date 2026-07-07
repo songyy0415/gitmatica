@@ -27,6 +27,8 @@ configurations {
 	implementation.extendsFrom shadow
 }
 
+ext.gitmaticaLoaderVersion = "${project.litematica_base_version}-gitmatica.${project.gitmatica_version}"
+
 dependencies {
 	minecraft "com.mojang:minecraft:${project.minecraft_version}"
 	implementation "net.fabricmc:fabric-loader:${project.fabric_loader_version}"
@@ -69,7 +71,7 @@ check.dependsOn integrationTest
 base {
 	group = project.group + "." + project.mod_id
 	archivesName = project.mod_file_name + '-' + project.minecraft_version_out
-	version = project.mod_version
+	version = project.gitmaticaLoaderVersion
 
 	if (version.endsWith('-dev')) {
 		version += "." + new Date().format('yyyyMMdd.HHmmss')
@@ -99,7 +101,7 @@ processResources {
 	inputs.properties([
 			"mod_id": project.mod_id,
 			"mod_name": project.mod_name,
-			"mod_version": project.mod_version,
+			"mod_version": project.gitmaticaLoaderVersion,
 			"author": project.author,
 			"minecraft_version": project.minecraft_version,
 			"malilib_version": project.malilib_version
@@ -109,7 +111,7 @@ processResources {
 		expand([
 				"mod_id": project.mod_id,
 				"mod_name": project.mod_name,
-				"mod_version": project.mod_version,
+				"mod_version": project.gitmaticaLoaderVersion,
 				"author": project.author,
 				"minecraft_version": project.minecraft_version,
 				"malilib_version": project.malilib_version
