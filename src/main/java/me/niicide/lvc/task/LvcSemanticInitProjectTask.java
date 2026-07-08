@@ -16,8 +16,9 @@ import me.niicide.lvc.capture.LvcCaptureEngine;
 import me.niicide.lvc.capture.LvcCaptureSession;
 import me.niicide.lvc.capture.LvcMinecraftWorldReader;
 import me.niicide.lvc.capture.LvcSiteWorkPlan;
-import me.niicide.lvc.model.LvcLocalState;
 import me.niicide.lvc.model.LvcManifest;
+import me.niicide.lvc.model.LvcSitePlacement;
+import me.niicide.lvc.overlay.LvcTrackingOverlayService;
 import me.niicide.lvc.project.LvcProjectPaths;
 import me.niicide.lvc.project.LvcProjectSelectionStorage;
 import me.niicide.lvc.storage.LvcChunkCodec;
@@ -37,7 +38,7 @@ public final class LvcSemanticInitProjectTask extends LvcChunkedTaskBase<LvcProj
     private final AreaSelection selection;
     @Nullable private Path repositoryDirectory;
     @Nullable private LvcManifest.Site site;
-    @Nullable private LvcLocalState.SitePlacement placement;
+    @Nullable private LvcSitePlacement placement;
     @Nullable private LvcChunkStagingStore stagingStore;
     @Nullable private LvcCaptureSession captureSession;
     @Nullable private LvcCaptureEngine.Result captureResult;
@@ -198,6 +199,7 @@ public final class LvcSemanticInitProjectTask extends LvcChunkedTaskBase<LvcProj
     {
         this.requireStagingStore().cleanup();
         LvcOperationJournal.delete(this.requireRepositoryDirectory());
+        LvcTrackingOverlayService.seedTrackingOverlayOrigin(this.requireRepositoryDirectory(), this.requirePlacement());
         return new LvcProjectService.Result(this.requireRepositoryDirectory(), Objects.requireNonNull(this.commit, "commit").getName());
     }
 
@@ -312,7 +314,7 @@ public final class LvcSemanticInitProjectTask extends LvcChunkedTaskBase<LvcProj
         return Objects.requireNonNull(this.site, "site");
     }
 
-    private LvcLocalState.SitePlacement requirePlacement()
+    private LvcSitePlacement requirePlacement()
     {
         return Objects.requireNonNull(this.placement, "placement");
     }

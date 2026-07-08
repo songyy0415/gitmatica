@@ -30,8 +30,8 @@ import me.niicide.lvc.LvcUserActionException;
 import me.niicide.lvc.model.LvcChunk;
 import me.niicide.lvc.model.LvcChunkCoordinate;
 import me.niicide.lvc.model.LvcIntPosition;
-import me.niicide.lvc.model.LvcLocalState;
 import me.niicide.lvc.model.LvcManifest;
+import me.niicide.lvc.model.LvcSitePlacement;
 import me.niicide.lvc.storage.LvcCanonicalNbt;
 import me.niicide.lvc.util.LvcEntityNbt;
 
@@ -119,12 +119,12 @@ public final class LvcSemanticWorldApplier
         return LvcTrackedBlockCursor.blockEntitiesByIndex(chunk);
     }
 
-    public static int clearLiveEntitiesInTrackedArea(LvcManifest.Site site, LvcLocalState.SitePlacement placement, Level world) throws IOException
+    public static int clearLiveEntitiesInTrackedArea(LvcManifest.Site site, LvcSitePlacement placement, Level world) throws IOException
     {
         return clearLiveEntitiesInTrackedArea(site, LvcIntPosition.fromList(placement.origin()), world, () -> { });
     }
 
-    public static int clearLiveEntitiesInTrackedArea(LvcManifest.Site site, LvcLocalState.SitePlacement placement,
+    public static int clearLiveEntitiesInTrackedArea(LvcManifest.Site site, LvcSitePlacement placement,
                                                      Level world, EntityMutationCallback mutationCallback) throws IOException
     {
         return clearLiveEntitiesInTrackedArea(site, LvcIntPosition.fromList(placement.origin()), world, mutationCallback);

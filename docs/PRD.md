@@ -18,7 +18,6 @@ repo/
       ab/
         abc123.lvcchunk
         def456.lvcchunk
-  local.json
   .git/
 ```
 

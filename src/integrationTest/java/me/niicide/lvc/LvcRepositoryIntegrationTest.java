@@ -481,7 +481,6 @@ public class LvcRepositoryIntegrationTest
         LvcChunk mergedChunk = readOnlyChunk(repoDir);
         IntegrationTestSupport.assertEquals("minecraft:dirt", mergedChunk.blockStateAtTrackedOrdinal(0), "merged chunk should keep main's first block edit");
         IntegrationTestSupport.assertEquals("minecraft:gold_block", mergedChunk.blockStateAtTrackedOrdinal(1), "merged chunk should include feature's second block edit");
-        IntegrationTestSupport.assertEquals(initial.localState(), LvcSemanticRepository.readLocalState(repoDir), "merge should not modify local placement state");
     }
 
     private static void mergeBranchCancelsSemanticConflictsWithoutMovingHead() throws Exception
@@ -672,7 +671,7 @@ public class LvcRepositoryIntegrationTest
 
         try
         {
-            LvcSemanticRepository.commitSite(repo.path(), repo.first().manifest(), repo.first().localState(), "main", repo.reader(), player("DetachedCommit"), "after checkout");
+            LvcSemanticRepository.commitSite(repo.path(), repo.first().manifest(), "main", placementAt(0, 0, 0), repo.reader(), player("DetachedCommit"), "after checkout");
             throw new AssertionError("commit should fail while HEAD is detached");
         }
         catch (IOException e)
@@ -749,8 +748,8 @@ public class LvcRepositoryIntegrationTest
         LvcSemanticRepository.CommitResult recommit = LvcSemanticRepository.commitSite(
                 repo.path(),
                 LvcSemanticRepository.readManifest(repo.path()),
-                LvcSemanticRepository.readLocalState(repo.path()),
                 "main",
+                placementAt(0, 0, 0),
                 repo.reader(),
                 player("UndoKeepRecommit"),
                 "recommit kept changes"
@@ -924,14 +923,14 @@ public class LvcRepositoryIntegrationTest
                                                                         String playerName, String message) throws Exception
     {
         reader.setBlock(new LvcIntPosition(0, 0, 0), blockState);
-        return LvcSemanticRepository.commitSite(repoDir, previous.manifest(), previous.localState(), "main", reader, player(playerName), message);
+        return LvcSemanticRepository.commitSite(repoDir, previous.manifest(), "main", placementAt(0, 0, 0), reader, player(playerName), message);
     }
 
     private static LvcSemanticRepository.CommitResult commitCurrent(Path repoDir, FakeWorldReader reader,
                                                                     String playerName, String message) throws Exception
     {
         return LvcSemanticRepository.commitSite(repoDir, LvcSemanticRepository.readManifest(repoDir),
-                LvcSemanticRepository.readLocalState(repoDir), "main", reader, player(playerName), message);
+                "main", placementAt(0, 0, 0), reader, player(playerName), message);
     }
 
     private static LvcChunk readOnlyChunk(Path repoDir) throws Exception

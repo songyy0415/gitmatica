@@ -4,6 +4,7 @@ import java.io.IOException;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collections;
+import java.util.Comparator;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Objects;
@@ -23,6 +24,7 @@ public final class LvcRemoteSparseTargetPlanner
     private final LvcWorldReader reader;
     private final LvcManifest.Site site;
     private final List<BlockPos> furnaceXpCleanupCandidates = new ArrayList<>();
+    private final List<CommandMutation> commandMutations = new ArrayList<>();
     private final Set<String> affectedRegionIds = new HashSet<>();
     private int scannedBlocks;
     private int stateMismatches;
@@ -52,6 +54,7 @@ public final class LvcRemoteSparseTargetPlanner
         if (!Objects.equals(currentBlockState, targetBlockState))
         {
             this.stateMismatches++;
+            this.addCommandMutationIfNeeded(block.blockPos(), targetState);
             this.addFurnaceXpCleanupCandidateIfNeeded(currentBlockState, block.blockPos());
             this.addAffectedRegions(block.projectPos());
             return true;
@@ -115,6 +118,24 @@ public final class LvcRemoteSparseTargetPlanner
         return Collections.unmodifiableSet(this.affectedRegionIds);
     }
 
+    public List<CommandMutation> commandMutations()
+    {
+        List<CommandMutation> mutations = new ArrayList<>(this.commandMutations);
+        mutations.sort(Comparator
+                .comparingInt((CommandMutation mutation) -> mutation.pos().getX())
+                .thenComparingInt(mutation -> mutation.pos().getY())
+                .thenComparingInt(mutation -> mutation.pos().getZ()));
+        return Collections.unmodifiableList(mutations);
+    }
+
+    private void addCommandMutationIfNeeded(BlockPos pos, BlockState targetState)
+    {
+        if (this.backend == LvcWorldBackend.COMMANDS)
+        {
+            this.commandMutations.add(new CommandMutation(pos.immutable(), targetState));
+        }
+    }
+
     private void addFurnaceXpCleanupCandidateIfNeeded(String currentBlockState, BlockPos pos)
     {
         if (isFurnaceLikeBlockState(currentBlockState))
@@ -144,5 +165,14 @@ public final class LvcRemoteSparseTargetPlanner
         return blockState.equals("minecraft:furnace") || blockState.startsWith("minecraft:furnace[") ||
                 blockState.equals("minecraft:blast_furnace") || blockState.startsWith("minecraft:blast_furnace[") ||
                 blockState.equals("minecraft:smoker") || blockState.startsWith("minecraft:smoker[");
+    }
+
+    public record CommandMutation(BlockPos pos, BlockState targetState)
+    {
+        public CommandMutation
+        {
+            pos = Objects.requireNonNull(pos, "pos").immutable();
+            Objects.requireNonNull(targetState, "targetState");
+        }
     }
 }

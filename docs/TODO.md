@@ -12,7 +12,7 @@ New LVC projects now use the semantic chunk storage direction described in `docs
 
 Done:
 
-- Semantic manifest/local state: `lvc.json` and local-only `local.json`.
+- Semantic manifest: `lvc.json`; placement origin is stored in Litematica placement state.
 - Raw binary hash indexes: `indexes/*.lvcidx` stores full/tracked chunk hash refs outside `lvc.json`.
 - Raw content-addressed `.lvcchunk` objects under `objects/sha256/`.
 - Semantic content commits candidate-prune current-tree `.lvcchunk` files whose old chunk refs are no longer referenced by the resulting indexes; historical commit objects remain preserved by Git.
@@ -35,9 +35,9 @@ Done:
 - Semantic repo init and commit through JGit.
 - Project listing supports semantic `lvc.json` repos only.
 - Project browser delete is implemented with confirmation and validated recursive deletion under `run/gitmatica-projects`; it detaches matching LVC tracking overlays and uses Windows-safe retry deletion for readonly Git/object files.
-- Project browser manual Create Project flow creates an empty semantic repo with `lvc.json`, ignored `local.json`, `.git`, and no initial commit. After the name popup closes, the user remains in Project Browser and can open Project Editor manually.
+- Project browser manual Create Project flow creates an empty semantic repo with `lvc.json`, `.git`, and no initial commit. After the name popup closes, the user remains in Project Browser and can open Project Editor manually.
 - Project/project-manager UI polish: project browser navigation rooted at `gitmatica-projects`, conditional scrollbar rendering, searchable/scrollable commit history, and selected commit metadata with title/author/date/version/changes.
-- Project Placement page opens from the project page for semantic repos, shows read-only project/version/tracked-box metadata, and edits only the clone-local world origin in ignored `local.json`.
+- Project Placement page opens from the project page for semantic repos, shows read-only project/version/tracked-box metadata, and edits the active Litematica placement origin directly.
 - Integration coverage for semantic storage, object reuse, fake-world capture, canonical Minecraft state encoding, and semantic commits.
 
 Not done:
@@ -46,8 +46,8 @@ Not done:
 - Semantic selected-commit checkout, branch checkout, discard, and clear now use a no-freeze scan/rewrite/one-verify/client-sync path in singleplayer. Dedicated-server support is partial via Servux capture/paste or lossy block-state-only command fallback. Semantic pull restore, dedicated-server hardening, entity identity-aware diffing, and Litematica paste-parity testing remain unresolved before treating restore paths as production-correct.
 - Bugfix/polish pass for recent semantic MVP batch before starting new feature work: tracking overlay persistence/dedup, selected-commit export, selected-commit checkout restore, branch checkout restore, Clear Area, scan/preflight messaging, and project page button flows.
 - Semantic pull restore.
-- MVP mod-level config page for GitMatica/LVC settings: logging controls, overlay/change colors, and hotkeys for opening main LVC screens.
-- World association UX: projects remain portable, but `local.json` should eventually track current-world identity/hints and warn before using a repo in a different world.
+- MVP mod-level config page for Gitmatica/LVC settings: logging controls, overlay/change colors, and hotkeys for opening main LVC screens.
+- World association UX: projects remain portable, but loaded Litematica placement/world identity should warn before using a repo in a different world when enough context is available.
 - Optional import workflow for existing `.litematic` files into semantic LVC repos, preserving sub-region definitions so users do not need to paste, reselect, and recreate sub-regions manually.
 - Rich update-area preview and explicit origin-change controls.
 - Multi-site Project Editor UX; the MVP editor intentionally exposes only the active `main` site even though the manifest supports sites internally.
@@ -113,7 +113,7 @@ Relevant files:
 
 Current concern:
 
-- Complex Litematica builds ingested into GitMatica can restore with mismatched states after Clear Area plus Checkout.
+- Complex Litematica builds ingested into Gitmatica can restore with mismatched states after Clear Area plus Checkout.
 - Observed symptoms include missing shulker boxes and pistons not extended when they should be.
 - Pull restore can still trigger redstone contraptions mid-restore because it has not moved to the discard/selected-checkout/branch-checkout scan/rewrite/one-verify restore path yet.
 - The likely root area is world write semantics: LVC currently restores chunk-by-chunk with direct block/entity writes, which may differ from Litematica's paste ordering, block update suppression, block entity placement, neighbor update handling, or server-side execution model.
@@ -212,14 +212,14 @@ Current state:
 - The LVC project page has an `Update areas` button.
 - For semantic repos, it reads the current Litematica area selection.
 - It updates versioned `lvc.json` region definitions for the active site.
-- It preserves `local.json` origin.
+- It preserves the active Litematica placement origin.
 - It recaptures the active site content and commits the updated regions/chunks.
 - It shows a basic confirmation with region count.
 
 Required behavior:
 
 - Add a richer preview of changed sub-regions, bounds, added/removed tracked chunks, and region renames.
-- Update local-only `local.json` origin only if the user explicitly requests it.
+- Move the active Litematica placement origin only if the user explicitly requests it.
 - Refresh the in-game overlay/verifier after the update.
 
 Relevant files:
@@ -278,7 +278,7 @@ Current state:
 
 - Singleplayer restore uses integrated-server direct world writes through the scan/rewrite/one-verify restore engine.
 - Dedicated-server support is partial. `LvcWorldBackend` follows Litematica's Servux config/handshake and otherwise falls back to command mode.
-- Servux capture requests Litematica Servux BE/entity cache data per chunk and Servux apply sends generated Litematica placements to the server. Remote apply for checkout/discard/clear/delete-version currently uses an experimental void-holding entity cleanup: non-player entities in affected tracked boxes are teleported to Y=-9999 at the region center, then killed inside a small holding box there before paste. It then clears `RecipesUsed` from selected existing furnace-like block entities before paste so server replacement does not spawn unwanted furnace XP. Servux checkout/discard/delete-version build sparse target schematics where unchanged tracked targets become `minecraft:structure_void`; command fallback uses the same sparse block-state target but skips `structure_void` locally before generating fill/setblock commands. Sparse flows only defuse touched current furnaces, while clear still uses an air target and chunk-paced furnace discovery. Servux paste payloads are prepared asynchronously and size-checked before journal/Git/entity cleanup, oversized inline payloads abort instead of using Servux's deprecated file-transfer fallback, packet slices are sent over multiple client ticks, and Servux applies run a local client shadow sync afterward to clear ghost blocks caused by suppressed/lagged server updates.
+- Servux capture requests Litematica Servux BE/entity cache data per chunk and Servux apply sends generated Litematica placements to the server. Remote apply for checkout/discard/clear/delete-version currently uses an experimental void-holding entity cleanup: non-player entities in affected tracked boxes are teleported to Y=-9999 at the region center, then killed inside a small holding box there before paste. It then clears `RecipesUsed` from selected existing furnace-like block entities before paste so server replacement does not spawn unwanted furnace XP. Servux checkout/discard/delete-version build sparse target schematics where unchanged tracked targets become `minecraft:structure_void`; command fallback for sparse checkout/discard/delete-version/merge queues exact changed block-state commands directly instead of pasting the sparse schematic through Litematica's chunk paste task. Sparse flows only defuse touched current furnaces, while clear still uses an air target and chunk-paced furnace discovery. Servux paste payloads are prepared asynchronously and size-checked before journal/Git/entity cleanup, oversized inline payloads abort instead of using Servux's deprecated file-transfer fallback, packet slices are sent over multiple client ticks, and Servux applies run a local client shadow sync afterward to clear ghost blocks caused by suppressed/lagged server updates.
 - If remote entity cleanup still leaves side effects, replace the command cleanup with a Servux/server-side clear request that calls entity discard/remove directly inside tracked boxes. When doing that work, also recheck selector/bounds semantics against Litematica's command delete paths.
 - Command mode is intentionally lossy: capture/apply block states only and omit inventories, block entity NBT, and stored entities. If a previous Servux/full-fidelity commit had inventory payloads, a later no-Servux Save Version records those containers as empty/no-payload instead of preserving stale NBT.
 - Permission/error feedback, Servux completion confirmation, and manual server smoke coverage are still incomplete.
@@ -370,7 +370,7 @@ Required behavior:
 Future semantic diff clustering design:
 
 - Build a shared diff pipeline that can feed uncommitted diffs, commit inspection, and merge conflict editing: `raw semantic position diffs -> change atoms -> change clusters -> UI rows/overlays`.
-- Keep this as a GitMatica semantic diff model, not a Litematica verifier-row model. Litematica verifier-style rows/overlays may consume the clusters, but the source of truth should be reusable outside the verifier screen.
+- Keep this as a Gitmatica semantic diff model, not a Litematica verifier-row model. Litematica verifier-style rows/overlays may consume the clusters, but the source of truth should be reusable outside the verifier screen.
 - A `ChangeAtom` should represent one tracked-position change with project/world position, sub-region, change kind, before/after block state, before/after block pair, block family, optional block-entity/inventory summary, and optional merge payload.
 - Uncommitted diffs should compare committed `HEAD` content against the authoritative current world. Commit inspect diffs should compare parent/selected commits or arbitrary commit pairs. Merge conflict editing should use the same clustering layer with base/yours/theirs atoms instead of forcing conflicts into a simple before/after shape.
 - Use a Minecraft-grid-native clustering algorithm instead of plain connected components or generic DBSCAN/HDBSCAN as the default. Connected components alone spam clusters in checkerboard or patterned edits; generic density clustering is harder to tune and explain for block-grid UI.
@@ -398,7 +398,7 @@ Future backend storage profiling design:
 
 Current state:
 
-- Commit history is branch-focused. `main` shows normal branch history. GitMatica-created branches show commits back to the stored branch-start commit inclusive; older/external branches fall back to merge-base with `main`.
+- Commit history is branch-focused. `main` shows normal branch history. Gitmatica-created branches show commits back to the stored branch-start commit inclusive; older/external branches fall back to merge-base with `main`.
 - The project page shows the current branch or detached HEAD short commit in the title and top branch dropdown.
 - The top branch dropdown is searchable, scrollable, right-aligned to the metadata panel, uses branch/check icons, ellipsizes long branch names, and marks the attached HEAD branch.
 - Selecting a different branch switches branches. Same-tip switches preserve uncommitted changes without restore; different-tip switches run semantic checkout preflight and block with an Unsaved Changes popup when dirty state exists.
@@ -561,20 +561,20 @@ Relevant files:
 - `src/main/java/me/niicide/lvc/gui/GuiLvcProjectBrowser.java`
 - `src/main/java/me/niicide/lvc/gui/widgets/WidgetLvcProjectBrowser.java`
 
-### Add Mod-Level GitMatica Config Page
+### Add Mod-Level Gitmatica Config Page
 
 Current state:
 
-- LVC diagnostics are controlled by JVM/env flags, not by an in-game GitMatica settings page.
+- LVC diagnostics are controlled by JVM/env flags, not by an in-game Gitmatica settings page.
 - LVC UI colors and screen-opening hotkeys are scattered across existing Litematica/malilib config surfaces or hardcoded defaults.
 
 Required behavior:
 
-- Add a GitMatica/LVC config page reachable from the mod/Litematica config flow.
+- Add a Gitmatica/LVC config page reachable from the mod/Litematica config flow.
 - Include user-facing logging controls for normal/debug LVC diagnostics without requiring JVM flags.
 - Add configurable colors for added, removed, changed, and wrong-state block overlays/diffs.
 - Add hotkeys for opening core LVC screens such as Project Browser/Project Manager and future common workflows.
-- Keep the page mod-level, not project-level; project-specific metadata must stay in `lvc.json`/`local.json`.
+- Keep the page mod-level, not project-level; project-specific metadata must stay in `lvc.json` or Litematica placement state as appropriate.
 
 Relevant files:
 

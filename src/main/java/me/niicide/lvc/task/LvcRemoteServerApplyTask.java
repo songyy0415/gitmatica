@@ -26,11 +26,15 @@ import net.minecraft.client.Minecraft;
 import net.minecraft.client.multiplayer.ClientLevel;
 import net.minecraft.client.multiplayer.ClientPacketListener;
 import net.minecraft.client.player.LocalPlayer;
+import net.minecraft.commands.arguments.blocks.BlockStateParser;
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.SectionPos;
 import net.minecraft.core.Vec3i;
 import net.minecraft.nbt.CompoundTag;
 import net.minecraft.network.FriendlyByteBuf;
+import net.minecraft.network.chat.Component;
+import net.minecraft.network.chat.MutableComponent;
+import net.minecraft.network.chat.contents.TranslatableContents;
 import net.minecraft.server.permissions.Permissions;
 import net.minecraft.util.Util;
 import net.minecraft.world.level.Level;
@@ -56,13 +60,15 @@ import fi.dy.masa.litematica.util.PasteLayerBehavior;
 import fi.dy.masa.litematica.util.PasteNbtBehavior;
 import fi.dy.masa.litematica.util.ReplaceBehavior;
 import fi.dy.masa.litematica.util.SchematicWorldRefresher;
+import fi.dy.masa.litematica.util.ToBooleanFunction;
 import me.niicide.lvc.LvcDiagnostics;
 import me.niicide.lvc.capture.LvcSiteWorkPlan;
 import me.niicide.lvc.capture.LvcWorldReader;
 import me.niicide.lvc.git.LvcProjectGitOps;
 import me.niicide.lvc.model.LvcChunk;
-import me.niicide.lvc.model.LvcLocalState;
 import me.niicide.lvc.model.LvcManifest;
+import me.niicide.lvc.model.LvcSitePlacement;
+import me.niicide.lvc.overlay.LvcTrackingOverlayService;
 import me.niicide.lvc.project.LvcProjectPositions;
 import me.niicide.lvc.semantic.LvcSemanticSchematicBuilder;
 import me.niicide.lvc.semantic.LvcTrackedBlockCursor;
@@ -79,6 +85,7 @@ public final class LvcRemoteServerApplyTask extends LvcChunkedTaskBase<LvcRemote
     private static final int SERVUX_PACKET_SLICES_PER_TICK = 32;
     private static final long SERVUX_PACKET_SEND_BUDGET_NANOS = 2_000_000L;
     private static final long SERVUX_CLIENT_SYNC_BUDGET_NANOS = 4_000_000L;
+    private static final long COMMAND_FEEDBACK_PROBE_TIMEOUT_NANOS = 2_000_000_000L;
     private static final int CLIENT_SHADOW_SET_FLAGS = Block.UPDATE_CLIENTS | Block.UPDATE_KNOWN_SHAPE;
 
     private final Path repositoryDirectory;
@@ -97,9 +104,8 @@ public final class LvcRemoteServerApplyTask extends LvcChunkedTaskBase<LvcRemote
     @Nullable private LvcSemanticSchematicBuilder.BuildSession buildSession;
     @Nullable private LitematicaSchematic schematic;
     @Nullable private LvcManifest manifest;
-    @Nullable private LvcLocalState localState;
     @Nullable private String siteId;
-    @Nullable private LvcLocalState.SitePlacement placement;
+    @Nullable private LvcSitePlacement placement;
     @Nullable private LvcSiteWorkPlan cleanupPlan;
     @Nullable private BlockPos origin;
     @Nullable private Result result;
@@ -125,6 +131,16 @@ public final class LvcRemoteServerApplyTask extends LvcChunkedTaskBase<LvcRemote
     private int furnaceXpCleanupCommandsPrepared;
     private int commandReadableValidationBlocks;
     private final Deque<String> cleanupCommandQueue = new ArrayDeque<>();
+    private final Deque<String> commandMutationQueue = new ArrayDeque<>();
+    private final ToBooleanFunction<Component> commandFeedbackListener = this::checkCommandMutationFeedbackGameRuleState;
+    private boolean commandMutationsPrepared;
+    private int commandMutationCommandsPrepared;
+    private int commandMutationTickDelay;
+    private boolean commandFeedbackProbeStarted;
+    private boolean commandFeedbackProbeComplete;
+    private boolean commandFeedbackShouldRestore;
+    private boolean commandFeedbackListenerRegistered;
+    private long commandFeedbackProbeTimeout;
 
     public static LvcRemoteServerApplyTask checkout(LvcOperationHandle handle, Path repositoryDirectory, Level world,
                                                     String targetCommitId, @Nullable String targetBranchName,
@@ -218,15 +234,13 @@ public final class LvcRemoteServerApplyTask extends LvcChunkedTaskBase<LvcRemote
             }
 
             validateRemoteBackendReady(this.requireBackend());
-            this.localState = LvcSemanticRepository.readLocalState(this.repositoryDirectory);
-            this.siteId = this.localState.activeSite();
-
             if (this.mode == Mode.CLEAR)
             {
                 this.manifest = LvcSemanticRepository.readManifest(this.repositoryDirectory);
+                this.siteId = LvcSemanticRepository.defaultSiteId(this.manifest);
                 this.preparePlacementState();
                 this.validateCommandClearReadableIfNeeded();
-                this.schematic = LvcSemanticSchematicBuilder.buildAirSchematic(this.manifest, this.localState, this.siteId);
+                this.schematic = LvcSemanticSchematicBuilder.buildAirSchematic(this.manifest, this.siteId, this.requirePlacement());
                 this.prepareServuxPastePayloadIfNeeded(this.schematic);
                 this.phase = Phase.PREPARE_SERVUX_PAYLOAD;
             }
@@ -238,6 +252,7 @@ public final class LvcRemoteServerApplyTask extends LvcChunkedTaskBase<LvcRemote
                 this.capturePreviousHead(repository);
                 this.targetCommit = this.resolveTargetCommit(repository);
                 this.manifest = LvcSemanticRepository.readCommitManifest(repository, this.targetCommit);
+                this.siteId = LvcSemanticRepository.defaultSiteId(this.manifest);
                 this.preparePlacementState();
                 this.sparseTargetReader = this.shouldBuildSparseTargetSchematic() ? this.requireBackend().createReader(this.world) : null;
                 this.sparseTargetPlanner = this.sparseTargetReader == null ? null :
@@ -245,8 +260,8 @@ public final class LvcRemoteServerApplyTask extends LvcChunkedTaskBase<LvcRemote
                                 this.requireManifest().site(this.requireSiteId()));
                 this.buildSession = LvcSemanticSchematicBuilder.beginSchematicBuild(
                         this.manifest,
-                        this.localState,
                         this.siteId,
+                        this.requirePlacement(),
                         objectId -> this.readCommitObject(this.requireTargetCommit(), objectId),
                         null,
                         this.sparseTargetPlanner == null ? null : this.sparseTargetPlanner::include
@@ -421,6 +436,7 @@ public final class LvcRemoteServerApplyTask extends LvcChunkedTaskBase<LvcRemote
         finally
         {
             this.restoreCommandConfig();
+            this.restoreCommandFeedback();
 
             if (this.servuxPastePayload != null)
             {
@@ -507,6 +523,11 @@ public final class LvcRemoteServerApplyTask extends LvcChunkedTaskBase<LvcRemote
             this.infoHudLines.add(String.format(Locale.ROOT, "Servux send: %d / %d slices",
                     this.servuxPastePayload.sentSlices(), this.servuxPastePayload.totalSlices()));
         }
+        else if (this.phase == Phase.SEND_PASTE && this.commandMutationsPrepared)
+        {
+            this.infoHudLines.add(String.format(Locale.ROOT, "Commands: %d",
+                    this.commandMutationQueue.size()));
+        }
         else if (this.phase == Phase.SYNC_CLIENT && this.clientShadowSync != null)
         {
             this.infoHudLines.add(String.format(Locale.ROOT, "Client sync: %d / %d blocks",
@@ -517,15 +538,9 @@ public final class LvcRemoteServerApplyTask extends LvcChunkedTaskBase<LvcRemote
     private void preparePlacementState() throws IOException
     {
         LvcManifest currentManifest = Objects.requireNonNull(this.manifest, "manifest");
-        LvcLocalState currentLocalState = Objects.requireNonNull(this.localState, "localState");
         String currentSiteId = Objects.requireNonNull(this.siteId, "siteId");
         LvcManifest.Site site = currentManifest.site(currentSiteId);
-        LvcLocalState.SitePlacement sitePlacement = currentLocalState.sites().get(currentSiteId);
-
-        if (sitePlacement == null)
-        {
-            throw new IOException("Missing local placement for LVC site: " + currentSiteId);
-        }
+        LvcSitePlacement sitePlacement = LvcTrackingOverlayService.requireCurrentOrCachedSitePlacement(this.repositoryDirectory, site);
 
         LvcSemanticTaskContext.validatePlacementDimension(sitePlacement, this.world);
         this.placement = sitePlacement;
@@ -600,6 +615,17 @@ public final class LvcRemoteServerApplyTask extends LvcChunkedTaskBase<LvcRemote
         if (!this.commandPasteScheduled)
         {
             LvcRemoteSparseTargetPlanner sparsePlanner = this.sparseTargetPlanner;
+
+            if (sparsePlanner != null)
+            {
+                if (!this.commandMutationsPrepared)
+                {
+                    this.stripUnsupportedCommandPayloads(currentSchematic);
+                }
+
+                return this.processSparseCommandMutations(sparsePlanner);
+            }
+
             this.stripUnsupportedCommandPayloads(currentSchematic);
             this.scheduleCommandPaste(currentSchematic);
             LvcDiagnostics.info(this.handle(), "remote server apply scheduled command paste mode={} regions={} target={} sparse={} changedBlocks={} skippedBlocks={} ignoredBlockEntityTargets={}",
@@ -962,6 +988,205 @@ public final class LvcRemoteServerApplyTask extends LvcChunkedTaskBase<LvcRemote
         TaskScheduler.getInstanceClient().scheduleTask(task, Configs.Generic.COMMAND_TASK_INTERVAL.getIntegerValue());
     }
 
+    private boolean processSparseCommandMutations(LvcRemoteSparseTargetPlanner sparsePlanner) throws IOException
+    {
+        if (!this.commandMutationsPrepared)
+        {
+            this.prepareSparseCommandMutationCommands(sparsePlanner);
+        }
+
+        if (this.commandMutationQueue.isEmpty())
+        {
+            return true;
+        }
+
+        if (!this.ensureCommandFeedbackReady())
+        {
+            return false;
+        }
+
+        boolean complete = this.sendQueuedCommandMutationCommands();
+
+        if (complete)
+        {
+            this.restoreCommandFeedback();
+        }
+
+        return complete;
+    }
+
+    private void prepareSparseCommandMutationCommands(LvcRemoteSparseTargetPlanner sparsePlanner)
+    {
+        if (this.commandMutationsPrepared)
+        {
+            return;
+        }
+
+        for (LvcRemoteSparseTargetPlanner.CommandMutation mutation : sparsePlanner.commandMutations())
+        {
+            this.enqueueCommandMutation(mutation.pos(), mutation.targetState());
+        }
+
+        this.commandMutationsPrepared = true;
+        LvcDiagnostics.info(this.handle(),
+                "remote command sparse apply prepared mode={} regions={} target={} blockMutations={} commands={} skippedBlocks={} ignoredBlockEntityTargets={}",
+                this.mode.name(), this.regionCount, this.targetCommitName(), sparsePlanner.commandMutations().size(),
+                this.commandMutationCommandsPrepared, this.sparseSkippedBlocks(),
+                sparsePlanner.ignoredBlockEntityTargets());
+    }
+
+    private void enqueueCommandMutation(BlockPos pos, BlockState state)
+    {
+        String blockString = BlockStateParser.serialize(state);
+
+        if (Configs.Generic.COMMAND_USE_WORLDEDIT.getBooleanValue())
+        {
+            this.commandMutationQueue.addLast(String.format(Locale.ROOT, "/pos1 %d,%d,%d",
+                    pos.getX(), pos.getY(), pos.getZ()));
+            this.commandMutationQueue.addLast(String.format(Locale.ROOT, "/pos2 %d,%d,%d",
+                    pos.getX(), pos.getY(), pos.getZ()));
+            this.commandMutationQueue.addLast("/set " + blockString);
+            this.commandMutationCommandsPrepared += 3;
+            return;
+        }
+
+        String strict = Configs.Generic.COMMAND_USE_STRICT.getBooleanValue() ? " strict" : "";
+        this.commandMutationQueue.addLast(String.format(Locale.ROOT, "%s %d %d %d %s%s",
+                Configs.Generic.COMMAND_NAME_SETBLOCK.getStringValue(),
+                pos.getX(), pos.getY(), pos.getZ(), blockString, strict));
+        this.commandMutationCommandsPrepared++;
+    }
+
+    private boolean ensureCommandFeedbackReady()
+    {
+        if (this.commandFeedbackProbeComplete)
+        {
+            this.removeCommandFeedbackListener();
+            return true;
+        }
+
+        LocalPlayer player = Minecraft.getInstance().player;
+
+        if (!Configs.Generic.COMMAND_DISABLE_FEEDBACK.getBooleanValue() || player == null)
+        {
+            this.commandFeedbackProbeComplete = true;
+            return true;
+        }
+
+        if (!this.commandFeedbackProbeStarted)
+        {
+            DataManager.addChatListener(this.commandFeedbackListener);
+            this.commandFeedbackListenerRegistered = true;
+            player.connection.sendCommand("gamerule send_command_feedback");
+            this.commandFeedbackProbeTimeout = Util.getNanos() + COMMAND_FEEDBACK_PROBE_TIMEOUT_NANOS;
+            this.commandFeedbackProbeStarted = true;
+            return false;
+        }
+
+        if (Util.getNanos() > this.commandFeedbackProbeTimeout)
+        {
+            this.commandFeedbackProbeComplete = true;
+            this.removeCommandFeedbackListener();
+            LvcDiagnostics.debug(this.handle(), "remote command sparse apply feedback probe timed out");
+            return true;
+        }
+
+        return false;
+    }
+
+    private boolean checkCommandMutationFeedbackGameRuleState(Component message)
+    {
+        if (message instanceof MutableComponent mutableText &&
+                mutableText.getContents() instanceof TranslatableContents text &&
+                "commands.gamerule.query".equals(text.getKey()))
+        {
+            Object[] args = text.getArgs();
+            this.commandFeedbackShouldRestore = args.length == 1 && args[0].equals("true");
+            this.commandFeedbackProbeComplete = true;
+
+            if (this.commandFeedbackShouldRestore)
+            {
+                LocalPlayer player = Minecraft.getInstance().player;
+
+                if (player != null)
+                {
+                    player.connection.sendCommand("gamerule send_command_feedback false");
+                }
+            }
+
+            return true;
+        }
+
+        return false;
+    }
+
+    private boolean sendQueuedCommandMutationCommands() throws IOException
+    {
+        LocalPlayer player = Minecraft.getInstance().player;
+
+        if (player == null)
+        {
+            throw new IOException("Cannot send remote command apply: client player is unavailable");
+        }
+
+        if (this.commandMutationQueue.isEmpty())
+        {
+            return true;
+        }
+
+        if (this.commandMutationTickDelay > 0)
+        {
+            this.commandMutationTickDelay--;
+            return false;
+        }
+
+        int sent = 0;
+        int maxCommands = Math.max(1, Configs.Generic.COMMAND_LIMIT.getIntegerValue());
+
+        while (sent < maxCommands && this.commandMutationQueue.isEmpty() == false)
+        {
+            player.connection.sendCommand(this.commandMutationQueue.removeFirst());
+            sent++;
+        }
+
+        this.commandMutationTickDelay = Math.max(0, Configs.Generic.COMMAND_TASK_INTERVAL.getIntegerValue() - 1);
+
+        if (sent > 0)
+        {
+            LvcDiagnostics.debug(this.handle(),
+                    "remote command sparse apply sent command batch sent={} remaining={}",
+                    sent, this.commandMutationQueue.size());
+        }
+
+        return this.commandMutationQueue.isEmpty();
+    }
+
+    private void restoreCommandFeedback()
+    {
+        this.removeCommandFeedbackListener();
+
+        if (this.commandFeedbackShouldRestore)
+        {
+            LocalPlayer player = Minecraft.getInstance().player;
+
+            if (player != null)
+            {
+                player.connection.sendCommand("gamerule send_command_feedback true");
+            }
+        }
+
+        this.commandFeedbackShouldRestore = false;
+    }
+
+    private void removeCommandFeedbackListener()
+    {
+        if (this.commandFeedbackListenerRegistered)
+        {
+            DataManager.removeChatListener(this.commandFeedbackListener);
+            this.commandFeedbackListenerRegistered = false;
+        }
+    }
+
     private void stripUnsupportedCommandPayloads(LitematicaSchematic currentSchematic)
     {
         int blockEntities = 0;
@@ -1290,7 +1515,7 @@ public final class LvcRemoteServerApplyTask extends LvcChunkedTaskBase<LvcRemote
         return Objects.requireNonNull(this.siteId, "siteId");
     }
 
-    private LvcLocalState.SitePlacement requirePlacement()
+    private LvcSitePlacement requirePlacement()
     {
         return Objects.requireNonNull(this.placement, "placement");
     }

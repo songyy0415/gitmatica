@@ -6,7 +6,6 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import javax.annotation.Nullable;
 import net.minecraft.client.Minecraft;
-import net.minecraft.core.BlockPos;
 import me.niicide.lvc.LvcDiagnostics;
 import me.niicide.lvc.LvcFriendlyErrors.Operation;
 import me.niicide.lvc.capture.LvcMinecraftWorldReader;
@@ -340,7 +339,7 @@ public class GuiLvcProjectBrowser extends GuiListBase<DirectoryEntry, WidgetDire
 
                 if (listWidget != null)
                 {
-                    listWidget.clearSelection();
+                    listWidget.clearProjectSelection();
                     listWidget.refreshEntries();
                 }
 
@@ -406,7 +405,6 @@ public class GuiLvcProjectBrowser extends GuiListBase<DirectoryEntry, WidgetDire
                 LvcProjectService.EmptyProjectResult result = LvcProjectService.createEmptyProject(
                         Minecraft.getInstance().gameDirectory.toPath(),
                         projectName,
-                        this.defaultOrigin(),
                         this.defaultDimension()
                 );
 
@@ -432,16 +430,6 @@ public class GuiLvcProjectBrowser extends GuiListBase<DirectoryEntry, WidgetDire
                         projectName, e.getMessage());
                 LvcGuiMessages.showTaskError(Operation.PROJECT_BROWSER, "litematica.error.lvc_project.create_failed", e);
             }
-        }
-
-        private BlockPos defaultOrigin()
-        {
-            if (Minecraft.getInstance().player != null)
-            {
-                return fi.dy.masa.malilib.util.position.PositionUtils.getEntityBlockPos(Minecraft.getInstance().player);
-            }
-
-            return BlockPos.ZERO;
         }
 
         private String defaultDimension()

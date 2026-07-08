@@ -74,6 +74,14 @@ public class WidgetLvcProjectBrowser extends WidgetFileBrowserBase implements IS
         return Math.max(14, width - 6 - getInfoWidthForTotalWidth(width));
     }
 
+    public void clearProjectSelection()
+    {
+        this.selectedProject = null;
+        this.selectedSummary = null;
+        this.clearSelection();
+        this.selectionListener.onSelectionChange(null);
+    }
+
     @Override
     public boolean onMouseClicked(MouseButtonEvent click, boolean doubleClick)
     {

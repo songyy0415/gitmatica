@@ -4,19 +4,20 @@ Each LVC project is a git repo.
 
 ## Directory structure
 
-- local.json
-- index.json
-- index.nbt
-- READMD.md
-- .gitignore
-- `<regionname>.nbt`
+- lvc.json
+- indexes/
+- objects/
+- .git/
 
 ## Files
 
-local.json:
+`lvc.json`:
 
-Master Origin, this is the origin that all subregion origins are relative to.
-This is never changed even the subregion size changes to keep the subregion origins stable.
+Versioned project metadata, site definitions, and sub-region definitions.
+
+Placement origin:
+
+Stored in Litematica's schematic placement state, not in the Gitmatica project repository.
 
 e.g.
 ```json
@@ -53,4 +54,3 @@ e.g.
 index.nbt, *.nbt:
 
 subregions. stored im vanilla structure block format.
-

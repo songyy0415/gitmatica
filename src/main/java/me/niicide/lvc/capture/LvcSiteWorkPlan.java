@@ -7,18 +7,18 @@ import java.util.Map;
 import java.util.Objects;
 import me.niicide.lvc.model.LvcChunkCoordinate;
 import me.niicide.lvc.model.LvcIntPosition;
-import me.niicide.lvc.model.LvcLocalState;
 import me.niicide.lvc.model.LvcManifest;
+import me.niicide.lvc.model.LvcSitePlacement;
 
 public final class LvcSiteWorkPlan
 {
     private final LvcManifest.Site site;
-    private final LvcLocalState.SitePlacement placement;
+    private final LvcSitePlacement placement;
     private final LvcIntPosition origin;
     private final List<ChunkWork> chunks;
     private final int blockCount;
 
-    private LvcSiteWorkPlan(LvcManifest.Site site, LvcLocalState.SitePlacement placement,
+    private LvcSiteWorkPlan(LvcManifest.Site site, LvcSitePlacement placement,
                             LvcIntPosition origin, List<ChunkWork> chunks, int blockCount)
     {
         this.site = site;
@@ -28,7 +28,7 @@ public final class LvcSiteWorkPlan
         this.blockCount = blockCount;
     }
 
-    public static LvcSiteWorkPlan create(LvcManifest.Site site, LvcLocalState.SitePlacement placement)
+    public static LvcSiteWorkPlan create(LvcManifest.Site site, LvcSitePlacement placement)
     {
         Objects.requireNonNull(site, "site");
         Objects.requireNonNull(placement, "placement");
@@ -51,7 +51,7 @@ public final class LvcSiteWorkPlan
         return this.site;
     }
 
-    public LvcLocalState.SitePlacement placement()
+    public LvcSitePlacement placement()
     {
         return this.placement;
     }

@@ -10,8 +10,9 @@ import me.niicide.lvc.LvcDiagnostics;
 import me.niicide.lvc.LvcPlayerIdentity;
 import me.niicide.lvc.LvcUserActionException;
 import me.niicide.lvc.capture.LvcMinecraftWorldReader;
-import me.niicide.lvc.model.LvcLocalState;
 import me.niicide.lvc.model.LvcManifest;
+import me.niicide.lvc.model.LvcSitePlacement;
+import me.niicide.lvc.overlay.LvcTrackingOverlayService;
 import me.niicide.lvc.project.LvcProjectPositions;
 import me.niicide.lvc.storage.LvcSemanticRepository;
 import me.niicide.lvc.world.LvcWorldAccess;
@@ -25,7 +26,7 @@ final class LvcCapturePublishCommitFlow
 
     static LvcSemanticRepository.CommitResult initProject(Path repositoryDirectory, String projectName,
                                                           LvcManifest.Site site,
-                                                          LvcLocalState.SitePlacement placement,
+                                                          LvcSitePlacement placement,
                                                           Level captureWorld,
                                                           LvcPlayerIdentity player) throws Exception
     {
@@ -63,8 +64,8 @@ final class LvcCapturePublishCommitFlow
                 LvcSemanticRepository.commitSite(
                         repositoryDirectory,
                         activeSite.manifest(),
-                        activeSite.localState(),
                         activeSite.siteId(),
+                        activeSite.placement(),
                         LvcWorldBackend.resolve(authoritativeWorld).createReader(authoritativeWorld),
                         player,
                         commitMessage
@@ -87,8 +88,8 @@ final class LvcCapturePublishCommitFlow
                 LvcSemanticRepository.updateSiteAreas(
                         repositoryDirectory,
                         activeSite.manifest(),
-                        activeSite.localState(),
                         activeSite.siteId(),
+                        activeSite.placement(),
                         updatedRegions,
                         LvcWorldBackend.resolve(authoritativeWorld).createReader(authoritativeWorld),
                         player,
@@ -109,22 +110,15 @@ final class LvcCapturePublishCommitFlow
         Objects.requireNonNull(captureWorld, "captureWorld");
 
         LvcManifest manifest = LvcSemanticRepository.readManifest(repositoryDirectory);
-        LvcLocalState localState = LvcSemanticRepository.readLocalState(repositoryDirectory);
-        String siteId = localState.activeSite();
+        String siteId = LvcSemanticRepository.defaultSiteId(manifest);
         LvcManifest.Site site = manifest.site(siteId);
-        LvcLocalState.SitePlacement placement = localState.sites().get(siteId);
-
-        if (placement == null)
-        {
-            throw new LvcUserActionException(LvcUserActionException.Reason.MISSING_LOCAL_PLACEMENT,
-                    "Missing local placement for active LVC site: " + siteId);
-        }
+        LvcSitePlacement placement = LvcTrackingOverlayService.requireSitePlacement(repositoryDirectory, site);
 
         validatePlacementDimension(placement, captureWorld);
-        return new ActiveSite(manifest, localState, siteId, site, placement);
+        return new ActiveSite(manifest, siteId, site, placement);
     }
 
-    private static void validatePlacementDimension(LvcLocalState.SitePlacement placement, Level captureWorld) throws IOException
+    private static void validatePlacementDimension(LvcSitePlacement placement, Level captureWorld) throws IOException
     {
         String worldDimension = LvcMinecraftWorldReader.dimensionId(captureWorld);
 
@@ -147,8 +141,8 @@ final class LvcCapturePublishCommitFlow
         return trimmed;
     }
 
-    record ActiveSite(LvcManifest manifest, LvcLocalState localState, String siteId,
-                      LvcManifest.Site site, LvcLocalState.SitePlacement placement)
+    record ActiveSite(LvcManifest manifest, String siteId,
+                      LvcManifest.Site site, LvcSitePlacement placement)
     {
         BlockPos origin()
         {

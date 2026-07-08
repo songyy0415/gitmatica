@@ -28,8 +28,9 @@ import me.niicide.lvc.git.LvcProjectGitOps;
 import me.niicide.lvc.model.LvcChunk;
 import me.niicide.lvc.model.LvcChunkCoordinate;
 import me.niicide.lvc.model.LvcIntPosition;
-import me.niicide.lvc.model.LvcLocalState;
 import me.niicide.lvc.model.LvcManifest;
+import me.niicide.lvc.model.LvcSitePlacement;
+import me.niicide.lvc.overlay.LvcTrackingOverlayService;
 import me.niicide.lvc.semantic.LvcSemanticWorldApplier;
 import me.niicide.lvc.semantic.LvcTrackedBlockCursor;
 import me.niicide.lvc.storage.LvcCanonicalNbt;
@@ -89,17 +90,10 @@ public final class LvcSemanticCheckoutTask
 
             LvcManifest currentManifest = LvcSemanticRepository.readCommitManifest(repository, currentCommit);
             LvcManifest targetManifest = LvcSemanticRepository.readCommitManifest(repository, targetCommit);
-            LvcLocalState localState = LvcSemanticRepository.readLocalState(repositoryDirectory);
-            String siteId = localState.activeSite();
+            String siteId = LvcSemanticRepository.defaultSiteId(currentManifest);
             LvcManifest.Site currentSite = currentManifest.site(siteId);
             LvcManifest.Site targetSite = targetManifest.site(siteId);
-            LvcLocalState.SitePlacement placement = localState.sites().get(siteId);
-
-            if (placement == null)
-            {
-                throw new LvcUserActionException(LvcUserActionException.Reason.MISSING_LOCAL_PLACEMENT,
-                        "Missing local placement for active LVC site: " + siteId);
-            }
+            LvcSitePlacement placement = LvcTrackingOverlayService.requireSitePlacement(repositoryDirectory, currentSite);
 
             LvcSemanticTaskContext.validatePlacementDimension(placement, world);
 
@@ -193,17 +187,10 @@ public final class LvcSemanticCheckoutTask
                 String currentBranchName = localBranchName(repository.getFullBranch());
                 LvcManifest currentManifest = LvcSemanticRepository.readCommitManifest(repository, currentCommit);
                 LvcManifest targetManifest = LvcSemanticRepository.readCommitManifest(repository, targetCommit);
-                LvcLocalState localState = LvcSemanticRepository.readLocalState(this.repositoryDirectory);
-                String siteId = localState.activeSite();
+                String siteId = LvcSemanticRepository.defaultSiteId(currentManifest);
                 LvcManifest.Site currentSite = currentManifest.site(siteId);
                 LvcManifest.Site targetSite = targetManifest.site(siteId);
-                LvcLocalState.SitePlacement placement = localState.sites().get(siteId);
-
-                if (placement == null)
-                {
-                    throw new LvcUserActionException(LvcUserActionException.Reason.MISSING_LOCAL_PLACEMENT,
-                            "Missing local placement for active LVC site: " + siteId);
-                }
+                LvcSitePlacement placement = LvcTrackingOverlayService.requireSitePlacement(this.repositoryDirectory, currentSite);
 
                 LvcSemanticTaskContext.validatePlacementDimension(placement, this.world);
 
@@ -657,7 +644,7 @@ public final class LvcSemanticCheckoutTask
         @Nullable private final String currentBranchName;
         private final LvcManifest.Site currentSite;
         private final LvcManifest.Site targetSite;
-        private final LvcLocalState.SitePlacement placement;
+        private final LvcSitePlacement placement;
         private final LvcIntPosition origin;
         private final LvcCommitChunkCache chunkCache;
         private boolean gitChanges;
@@ -666,7 +653,7 @@ public final class LvcSemanticCheckoutTask
         private PreparedCheckout(LvcOperationHandle handle, Path repositoryDirectory, ServerLevel world, Git git, RevWalk revWalk,
                                  RevCommit currentCommit, RevCommit targetCommit, @Nullable String currentBranchName,
                                  LvcManifest.Site currentSite, LvcManifest.Site targetSite,
-                                 LvcLocalState.SitePlacement placement, LvcIntPosition origin)
+                                 LvcSitePlacement placement, LvcIntPosition origin)
         {
             this.handle = Objects.requireNonNull(handle, "handle");
             this.repositoryDirectory = Objects.requireNonNull(repositoryDirectory, "repositoryDirectory");

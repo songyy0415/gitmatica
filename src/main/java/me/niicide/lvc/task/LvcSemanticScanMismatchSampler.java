@@ -19,8 +19,8 @@ import me.niicide.lvc.capture.LvcMinecraftWorldReader;
 import me.niicide.lvc.capture.LvcSiteWorkPlan;
 import me.niicide.lvc.model.LvcChunk;
 import me.niicide.lvc.model.LvcIntPosition;
-import me.niicide.lvc.model.LvcLocalState;
 import me.niicide.lvc.model.LvcManifest;
+import me.niicide.lvc.model.LvcSitePlacement;
 import me.niicide.lvc.storage.LvcChunkCodec;
 import me.niicide.lvc.storage.LvcChunkStore;
 
@@ -31,7 +31,7 @@ public final class LvcSemanticScanMismatchSampler
     }
 
     public static List<LvcProjectService.SemanticScanMismatch> sample(Path repositoryDirectory, LvcManifest.Site site,
-                                                                      LvcLocalState.SitePlacement placement, Level world,
+                                                                      LvcSitePlacement placement, Level world,
                                                                       Map<String, String> expectedTrackedHashes,
                                                                       LvcCaptureEngine.Result scan, int limit) throws IOException
     {
@@ -93,7 +93,7 @@ public final class LvcSemanticScanMismatchSampler
     }
 
     public static LongOpenHashSet mismatchedBlockStatePositions(Path repositoryDirectory, LvcManifest.Site site,
-                                                               LvcLocalState.SitePlacement placement, Level world,
+                                                               LvcSitePlacement placement, Level world,
                                                                Map<String, String> expectedTrackedHashes,
                                                                LvcCaptureEngine.Result scan) throws IOException
     {

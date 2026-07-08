@@ -19,22 +19,20 @@ import me.niicide.lvc.LvcProjectService;
 import me.niicide.lvc.capture.LvcCaptureEngine;
 import me.niicide.lvc.capture.LvcWorldReader;
 import me.niicide.lvc.model.LvcChunk;
-import me.niicide.lvc.model.LvcLocalState;
 import me.niicide.lvc.model.LvcManifest;
+import me.niicide.lvc.model.LvcSitePlacement;
 import me.niicide.lvc.LvcPlayerIdentity;
 
 public final class LvcSemanticRepository
 {
     public static final String MANIFEST = "lvc.json";
-    public static final String GITIGNORE = ".gitignore";
-    public static final String LOCAL_JSON = "local.json";
 
     private LvcSemanticRepository()
     {
     }
 
     public static CommitResult initProject(Path repositoryDirectory, String projectName, LvcManifest.Site site,
-                                           LvcLocalState.SitePlacement placement, LvcWorldReader worldReader,
+                                           LvcSitePlacement placement, LvcWorldReader worldReader,
                                            LvcPlayerIdentity player) throws IOException, GitAPIException
     {
         Objects.requireNonNull(repositoryDirectory, "repositoryDirectory");
@@ -44,11 +42,10 @@ public final class LvcSemanticRepository
         Objects.requireNonNull(player, "player");
 
         LvcManifest initialManifest = LvcManifest.create(projectName, List.of(site));
-        LvcLocalState localState = LvcLocalState.create(initialManifest.projectId(), site.id(), Map.of(site.id(), placement));
         LvcCaptureEngine.Result capture = LvcCaptureEngine.captureSite(repositoryDirectory, site, placement, worldReader);
         LvcManifest capturedManifest = initialManifest.withSiteHashRefs(site.id(), capture.fullHashes(), capture.trackedHashes());
 
-        writeProjectFiles(repositoryDirectory, capturedManifest, localState);
+        writeVersionedProjectFiles(repositoryDirectory, capturedManifest);
         RevCommit commit = commitSemanticFiles(repositoryDirectory, player, "init", true);
 
         if (commit == null)
@@ -56,11 +53,11 @@ public final class LvcSemanticRepository
             throw new IOException("Semantic LVC init unexpectedly had no changes");
         }
 
-        return new CommitResult(capturedManifest, localState, commit);
+        return new CommitResult(capturedManifest, commit);
     }
 
     public static CommitResult initProjectFromCapture(Path repositoryDirectory, String projectName, LvcManifest.Site site,
-                                                      LvcLocalState.SitePlacement placement, LvcCaptureEngine.Result capture,
+                                                      LvcSitePlacement placement, LvcCaptureEngine.Result capture,
                                                       LvcPlayerIdentity player) throws IOException, GitAPIException
     {
         Objects.requireNonNull(repositoryDirectory, "repositoryDirectory");
@@ -70,10 +67,9 @@ public final class LvcSemanticRepository
         Objects.requireNonNull(player, "player");
 
         LvcManifest initialManifest = LvcManifest.create(projectName, List.of(site));
-        LvcLocalState localState = LvcLocalState.create(initialManifest.projectId(), site.id(), Map.of(site.id(), placement));
         LvcManifest capturedManifest = initialManifest.withSiteHashRefs(site.id(), capture.fullHashes(), capture.trackedHashes());
 
-        writeProjectFiles(repositoryDirectory, capturedManifest, localState);
+        writeVersionedProjectFiles(repositoryDirectory, capturedManifest);
         RevCommit commit = commitSemanticFiles(repositoryDirectory, player, "init", true);
 
         if (commit == null)
@@ -81,33 +77,31 @@ public final class LvcSemanticRepository
             throw new IOException("Semantic LVC init unexpectedly had no changes");
         }
 
-        return new CommitResult(capturedManifest, localState, commit);
+        return new CommitResult(capturedManifest, commit);
     }
 
-    public static EmptyProjectResult initEmptyProject(Path repositoryDirectory, String projectName, LvcManifest.Site site,
-                                                      LvcLocalState.SitePlacement placement) throws IOException, GitAPIException
+    public static EmptyProjectResult initEmptyProject(Path repositoryDirectory, String projectName, LvcManifest.Site site)
+            throws IOException, GitAPIException
     {
         Objects.requireNonNull(repositoryDirectory, "repositoryDirectory");
         Objects.requireNonNull(site, "site");
-        Objects.requireNonNull(placement, "placement");
 
         LvcManifest manifest = LvcManifest.create(projectName, List.of(site));
-        LvcLocalState localState = LvcLocalState.create(manifest.projectId(), site.id(), Map.of(site.id(), placement));
 
-        writeProjectFiles(repositoryDirectory, manifest, localState);
+        writeVersionedProjectFiles(repositoryDirectory, manifest);
         initGitRepository(repositoryDirectory);
 
-        return new EmptyProjectResult(manifest, localState);
+        return new EmptyProjectResult(manifest);
     }
 
-    public static CommitResult commitSite(Path repositoryDirectory, LvcManifest manifest, LvcLocalState localState,
-                                          String siteId, LvcWorldReader worldReader, LvcPlayerIdentity player,
-                                          String message) throws IOException, GitAPIException
+    public static CommitResult commitSite(Path repositoryDirectory, LvcManifest manifest, String siteId,
+                                          LvcSitePlacement placement, LvcWorldReader worldReader,
+                                          LvcPlayerIdentity player, String message) throws IOException, GitAPIException
     {
         Objects.requireNonNull(repositoryDirectory, "repositoryDirectory");
         Objects.requireNonNull(manifest, "manifest");
-        Objects.requireNonNull(localState, "localState");
         Objects.requireNonNull(siteId, "siteId");
+        Objects.requireNonNull(placement, "placement");
         Objects.requireNonNull(worldReader, "worldReader");
         Objects.requireNonNull(player, "player");
         Objects.requireNonNull(message, "message");
@@ -118,31 +112,23 @@ public final class LvcSemanticRepository
         }
 
         LvcManifest.Site site = manifest.site(siteId);
-        LvcLocalState.SitePlacement placement = localState.sites().get(siteId);
-
-        if (placement == null)
-        {
-            throw new IOException("Missing local placement for LVC site: " + siteId);
-        }
-
         LvcCaptureEngine.Result scan = LvcCaptureEngine.scanSite(site, placement, worldReader);
 
         if (scan.unknownChunks().isEmpty() && saveVersionHasNoCommitChanges(repositoryDirectory, site, scan.trackedHashes()))
         {
-            return new CommitResult(manifest, localState, null);
+            return new CommitResult(manifest, null);
         }
 
         LvcCaptureEngine.Result capture = LvcCaptureEngine.captureSite(repositoryDirectory, site, placement, worldReader);
-        return commitSiteFromCapture(repositoryDirectory, manifest, localState, siteId, capture, player, message);
+        return commitSiteFromCapture(repositoryDirectory, manifest, siteId, capture, player, message);
     }
 
-    public static CommitResult commitSiteFromCapture(Path repositoryDirectory, LvcManifest manifest, LvcLocalState localState,
+    public static CommitResult commitSiteFromCapture(Path repositoryDirectory, LvcManifest manifest,
                                                      String siteId, LvcCaptureEngine.Result capture,
                                                      LvcPlayerIdentity player, String message) throws IOException, GitAPIException
     {
         Objects.requireNonNull(repositoryDirectory, "repositoryDirectory");
         Objects.requireNonNull(manifest, "manifest");
-        Objects.requireNonNull(localState, "localState");
         Objects.requireNonNull(siteId, "siteId");
         Objects.requireNonNull(capture, "capture");
         Objects.requireNonNull(player, "player");
@@ -155,20 +141,21 @@ public final class LvcSemanticRepository
 
         LvcManifest capturedManifest = manifest.withSiteHashRefs(siteId, capture.fullHashes(), capture.trackedHashes());
 
-        writeProjectFiles(repositoryDirectory, capturedManifest, localState);
+        writeVersionedProjectFiles(repositoryDirectory, capturedManifest);
         LvcSemanticObjectPruner.pruneChangedObjects(repositoryDirectory, manifest, capturedManifest, siteId);
         RevCommit commit = commitSemanticFiles(repositoryDirectory, player, message.trim(), false);
-        return new CommitResult(capturedManifest, localState, commit);
+        return new CommitResult(capturedManifest, commit);
     }
 
-    public static CommitResult updateSiteAreas(Path repositoryDirectory, LvcManifest manifest, LvcLocalState localState,
-                                               String siteId, List<LvcManifest.Region> regions, LvcWorldReader worldReader,
-                                               LvcPlayerIdentity player, String message) throws IOException, GitAPIException
+    public static CommitResult updateSiteAreas(Path repositoryDirectory, LvcManifest manifest, String siteId,
+                                               LvcSitePlacement placement, List<LvcManifest.Region> regions,
+                                               LvcWorldReader worldReader, LvcPlayerIdentity player, String message)
+            throws IOException, GitAPIException
     {
         Objects.requireNonNull(repositoryDirectory, "repositoryDirectory");
         Objects.requireNonNull(manifest, "manifest");
-        Objects.requireNonNull(localState, "localState");
         Objects.requireNonNull(siteId, "siteId");
+        Objects.requireNonNull(placement, "placement");
         Objects.requireNonNull(regions, "regions");
         Objects.requireNonNull(worldReader, "worldReader");
         Objects.requireNonNull(player, "player");
@@ -180,26 +167,18 @@ public final class LvcSemanticRepository
         }
 
         LvcManifest.Site site = manifest.site(siteId);
-        LvcLocalState.SitePlacement placement = localState.sites().get(siteId);
-
-        if (placement == null)
-        {
-            throw new IOException("Missing local placement for LVC site: " + siteId);
-        }
-
         LvcManifest.Site updatedSite = site.withRegions(regions);
         LvcCaptureEngine.Result capture = LvcCaptureEngine.captureSite(repositoryDirectory, updatedSite, placement, worldReader);
-        return updateSiteAreasFromCapture(repositoryDirectory, manifest, localState, siteId, updatedSite.regions(), capture, player, message);
+        return updateSiteAreasFromCapture(repositoryDirectory, manifest, siteId, updatedSite.regions(), capture, player, message);
     }
 
-    public static CommitResult updateSiteAreasFromCapture(Path repositoryDirectory, LvcManifest manifest, LvcLocalState localState,
+    public static CommitResult updateSiteAreasFromCapture(Path repositoryDirectory, LvcManifest manifest,
                                                           String siteId, List<LvcManifest.Region> regions,
                                                           LvcCaptureEngine.Result capture, LvcPlayerIdentity player,
                                                           String message) throws IOException, GitAPIException
     {
         Objects.requireNonNull(repositoryDirectory, "repositoryDirectory");
         Objects.requireNonNull(manifest, "manifest");
-        Objects.requireNonNull(localState, "localState");
         Objects.requireNonNull(siteId, "siteId");
         Objects.requireNonNull(regions, "regions");
         Objects.requireNonNull(capture, "capture");
@@ -214,10 +193,10 @@ public final class LvcSemanticRepository
         LvcManifest.Site updatedSite = manifest.site(siteId).withRegions(regions);
         LvcManifest capturedManifest = manifest.withSite(siteId, updatedSite.withHashRefs(capture.fullHashes(), capture.trackedHashes()));
 
-        writeProjectFiles(repositoryDirectory, capturedManifest, localState);
+        writeVersionedProjectFiles(repositoryDirectory, capturedManifest);
         LvcSemanticObjectPruner.pruneChangedObjects(repositoryDirectory, manifest, capturedManifest, siteId);
         RevCommit commit = commitSemanticFiles(repositoryDirectory, player, message.trim(), false);
-        return new CommitResult(capturedManifest, localState, commit);
+        return new CommitResult(capturedManifest, commit);
     }
 
     public static LvcManifest readManifest(Path repositoryDirectory) throws IOException
@@ -272,11 +251,6 @@ public final class LvcSemanticRepository
         }
 
         return new LvcManifest(manifest.format(), manifest.projectId(), manifest.name(), manifest.content(), sites).validate();
-    }
-
-    public static LvcLocalState readLocalState(Path repositoryDirectory) throws IOException
-    {
-        return LvcLocalState.fromJson(Files.readString(repositoryDirectory.resolve(LOCAL_JSON), StandardCharsets.UTF_8));
     }
 
     public static Map<String, String> computeTrackedHashesFromFullObjects(Path repositoryDirectory, LvcManifest.Site site) throws IOException
@@ -351,26 +325,13 @@ public final class LvcSemanticRepository
         return trackedMatches && !hasGitChanges;
     }
 
-    public static void writeProjectFiles(Path repositoryDirectory, LvcManifest manifest, LvcLocalState localState) throws IOException
-    {
-        writeVersionedProjectFiles(repositoryDirectory, manifest);
-        writeLocalState(repositoryDirectory, localState);
-    }
-
     public static void writeVersionedProjectFiles(Path repositoryDirectory, LvcManifest manifest) throws IOException
     {
         Files.createDirectories(repositoryDirectory);
         writeHashIndexes(repositoryDirectory, manifest);
         Files.writeString(repositoryDirectory.resolve(MANIFEST), manifest.toJson(), StandardCharsets.UTF_8);
-        Files.writeString(repositoryDirectory.resolve(GITIGNORE), "/" + LOCAL_JSON + "\n", StandardCharsets.UTF_8);
         LvcDiagnostics.debug("LvcSemanticRepository: wrote versioned project files repo='{}' sites={} chunkRefs={} internalContent='{}' manifestContentSerialized=false readmeGenerated=false",
                 repositoryDirectory, manifest.sites().size(), totalHashRefs(manifest), contentSummary(manifest.content()));
-    }
-
-    public static void writeLocalState(Path repositoryDirectory, LvcLocalState localState) throws IOException
-    {
-        Files.createDirectories(repositoryDirectory);
-        Files.writeString(repositoryDirectory.resolve(LOCAL_JSON), localState.toJson(), StandardCharsets.UTF_8);
     }
 
     @Nullable
@@ -380,7 +341,7 @@ public final class LvcSemanticRepository
                 repositoryDirectory,
                 player,
                 message,
-                List.of(MANIFEST, LvcHashIndexCodec.INDEXES_DIRECTORY, LvcChunkStore.OBJECTS_DIRECTORY, GITIGNORE),
+                List.of(MANIFEST, LvcHashIndexCodec.INDEXES_DIRECTORY, LvcChunkStore.OBJECTS_DIRECTORY),
                 allowEmpty
         );
     }
@@ -422,6 +383,26 @@ public final class LvcSemanticRepository
         return total;
     }
 
+    public static String defaultSiteId(LvcManifest manifest)
+    {
+        Objects.requireNonNull(manifest, "manifest");
+
+        if (manifest.sites().isEmpty())
+        {
+            throw new IllegalArgumentException("LVC manifest has no sites");
+        }
+
+        for (LvcManifest.Site site : manifest.sites())
+        {
+            if ("main".equals(site.id()))
+            {
+                return site.id();
+            }
+        }
+
+        return manifest.sites().get(0).id();
+    }
+
     private static void logSerializedContentIgnored(String source, String manifestJson)
     {
         if (LvcManifest.hasSerializedContent(manifestJson))
@@ -461,11 +442,11 @@ public final class LvcSemanticRepository
         }
     }
 
-    public record CommitResult(LvcManifest manifest, LvcLocalState localState, @Nullable RevCommit commit)
+    public record CommitResult(LvcManifest manifest, @Nullable RevCommit commit)
     {
     }
 
-    public record EmptyProjectResult(LvcManifest manifest, LvcLocalState localState)
+    public record EmptyProjectResult(LvcManifest manifest)
     {
     }
 

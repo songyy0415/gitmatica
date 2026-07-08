@@ -17,8 +17,8 @@ import net.minecraft.server.Bootstrap;
 import fi.dy.masa.litematica.selection.AreaSelection;
 import fi.dy.masa.malilib.util.data.json.JsonUtils;
 import me.niicide.lvc.model.LvcChunk;
-import me.niicide.lvc.model.LvcLocalState;
 import me.niicide.lvc.model.LvcManifest;
+import me.niicide.lvc.model.LvcSitePlacement;
 import me.niicide.lvc.storage.LvcCanonicalNbt;
 import me.niicide.lvc.storage.LvcChunkStore;
 
@@ -55,9 +55,9 @@ final class LvcIntegrationFixtures
         );
     }
 
-    static LvcLocalState.SitePlacement placementAt(int x, int y, int z)
+    static LvcSitePlacement placementAt(int x, int y, int z)
     {
-        return new LvcLocalState.SitePlacement("minecraft:overworld", List.of(x, y, z), "");
+        return new LvcSitePlacement("minecraft:overworld", List.of(x, y, z));
     }
 
     static LvcPlayerIdentity player(String name)

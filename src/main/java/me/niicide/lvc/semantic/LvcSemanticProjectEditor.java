@@ -5,14 +5,14 @@ import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.HashSet;
 import java.util.List;
-import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
-import java.util.TreeMap;
 import net.minecraft.core.BlockPos;
-import me.niicide.lvc.model.LvcLocalState;
+import me.niicide.lvc.LvcUserActionException;
 import me.niicide.lvc.model.LvcManifest;
+import me.niicide.lvc.model.LvcSitePlacement;
 import me.niicide.lvc.LvcProjectService;
+import me.niicide.lvc.overlay.LvcTrackingOverlayService;
 import me.niicide.lvc.storage.LvcSemanticRepository;
 
 public final class LvcSemanticProjectEditor
@@ -26,12 +26,7 @@ public final class LvcSemanticProjectEditor
         ActiveSemanticProject project = readActiveProject(repositoryDirectory);
         return new LvcProjectService.ProjectEditorState(
                 project.manifest().name(),
-                project.siteId(),
-                project.site().name(),
-                project.site().dimension(),
-                project.placement().dimension(),
                 blockPosFromList(project.placement().origin()),
-                project.placement().worldHint(),
                 project.site().regions()
         );
     }
@@ -55,20 +50,15 @@ public final class LvcSemanticProjectEditor
         LvcSemanticRepository.writeVersionedProjectFiles(repositoryDirectory, updatedManifest);
     }
 
-    public static void updateLocalOrigin(Path repositoryDirectory, BlockPos origin) throws IOException
+    public static void updatePlacementOrigin(Path repositoryDirectory, BlockPos origin) throws IOException
     {
         Objects.requireNonNull(origin, "origin");
-        ActiveSemanticProject project = readActiveProject(repositoryDirectory);
-        Map<String, LvcLocalState.SitePlacement> placements = new TreeMap<>(project.localState().sites());
-        LvcLocalState.SitePlacement updatedPlacement = new LvcLocalState.SitePlacement(
-                project.placement().dimension(),
-                blockPosToList(origin),
-                project.placement().worldHint()
-        );
 
-        placements.put(project.siteId(), updatedPlacement);
-        LvcLocalState updatedLocalState = LvcLocalState.create(project.localState().projectId(), project.localState().activeSite(), placements);
-        LvcSemanticRepository.writeLocalState(repositoryDirectory, updatedLocalState);
+        if (!LvcTrackingOverlayService.updateTrackingOverlayOrigin(repositoryDirectory, origin))
+        {
+            throw new LvcUserActionException(LvcUserActionException.Reason.MISSING_PLACEMENT,
+                    "Load the Gitmatica project placement before editing its origin");
+        }
     }
 
     public static void updateRegion(Path repositoryDirectory, String regionId, String name, BlockPos min, BlockPos size) throws IOException
@@ -183,17 +173,11 @@ public final class LvcSemanticProjectEditor
         }
 
         LvcManifest manifest = LvcSemanticRepository.readManifest(repositoryDirectory);
-        LvcLocalState localState = LvcSemanticRepository.readLocalState(repositoryDirectory);
-        String siteId = localState.activeSite();
+        String siteId = LvcSemanticRepository.defaultSiteId(manifest);
         LvcManifest.Site site = manifest.site(siteId);
-        LvcLocalState.SitePlacement placement = localState.sites().get(siteId);
+        LvcSitePlacement placement = LvcTrackingOverlayService.requireSitePlacement(repositoryDirectory, site);
 
-        if (placement == null)
-        {
-            throw new IOException("Missing local placement for active LVC site: " + siteId);
-        }
-
-        return new ActiveSemanticProject(manifest, localState, siteId, site, placement);
+        return new ActiveSemanticProject(manifest, siteId, site, placement);
     }
 
     private static void writeRegions(Path repositoryDirectory, ActiveSemanticProject project,
@@ -247,8 +231,8 @@ public final class LvcSemanticProjectEditor
         return candidate;
     }
 
-    private record ActiveSemanticProject(LvcManifest manifest, LvcLocalState localState, String siteId,
-                                         LvcManifest.Site site, LvcLocalState.SitePlacement placement)
+    private record ActiveSemanticProject(LvcManifest manifest, String siteId,
+                                         LvcManifest.Site site, LvcSitePlacement placement)
     {
     }
 }

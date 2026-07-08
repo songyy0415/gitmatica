@@ -9,8 +9,8 @@ import java.util.Objects;
 import java.util.Set;
 import javax.annotation.Nullable;
 import net.minecraft.core.BlockPos;
-import me.niicide.lvc.model.LvcLocalState;
 import me.niicide.lvc.model.LvcManifest;
+import me.niicide.lvc.model.LvcSitePlacement;
 
 import fi.dy.masa.litematica.selection.AreaSelection;
 import fi.dy.masa.litematica.selection.Box;
@@ -88,9 +88,9 @@ public final class LvcProjectSelectionStorage
         return List.copyOf(regions);
     }
 
-    public static LvcLocalState.SitePlacement createSitePlacement(BlockPos origin, String dimensionId)
+    public static LvcSitePlacement createSitePlacement(BlockPos origin, String dimensionId)
     {
-        return new LvcLocalState.SitePlacement(dimensionId, LvcProjectPositions.blockPosToList(origin), "");
+        return new LvcSitePlacement(dimensionId, LvcProjectPositions.blockPosToList(origin));
     }
 
     public static int countValidSelectionRegions(AreaSelection selection)

@@ -12,7 +12,7 @@ public final class LvcFriendlyErrors
     private static final String KEY_OUT_OF_WORLD_BOUNDS = "litematica.error.lvc_project.friendly_out_of_world_bounds";
     private static final String KEY_WRONG_DIMENSION = "litematica.error.lvc_project.friendly_wrong_dimension";
     private static final String KEY_NO_AUTHORITATIVE_WORLD = "litematica.error.lvc_project.friendly_no_authoritative_world";
-    private static final String KEY_MISSING_LOCAL_PLACEMENT = "litematica.error.lvc_project.friendly_missing_local_placement";
+    private static final String KEY_MISSING_PLACEMENT = "litematica.error.lvc_project.friendly_missing_placement";
     private static final String KEY_MISSING_HEAD = "litematica.error.lvc_project.friendly_missing_head";
     private static final String KEY_UNEXPECTED = "litematica.error.lvc_project.friendly_unexpected";
 
@@ -47,7 +47,7 @@ public final class LvcFriendlyErrors
             case OUT_OF_WORLD_BOUNDS -> new FriendlyMessage(KEY_OUT_OF_WORLD_BOUNDS, new Object[0], reason, true);
             case WRONG_DIMENSION -> new FriendlyMessage(KEY_WRONG_DIMENSION, new Object[0], reason, true);
             case NO_AUTHORITATIVE_WORLD -> new FriendlyMessage(KEY_NO_AUTHORITATIVE_WORLD, new Object[0], reason, true);
-            case MISSING_LOCAL_PLACEMENT -> new FriendlyMessage(KEY_MISSING_LOCAL_PLACEMENT, new Object[0], reason, true);
+            case MISSING_PLACEMENT -> new FriendlyMessage(KEY_MISSING_PLACEMENT, new Object[0], reason, true);
             case MISSING_HEAD -> new FriendlyMessage(KEY_MISSING_HEAD, new Object[0], reason, true);
         };
     }

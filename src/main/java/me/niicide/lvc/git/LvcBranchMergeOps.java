@@ -150,8 +150,7 @@ final class LvcBranchMergeOps
                     repositoryDirectory,
                     player,
                     "Merge branch '" + normalizedSourceBranch + "' into " + targetBranch,
-                    List.of(LvcSemanticRepository.MANIFEST, LvcHashIndexCodec.INDEXES_DIRECTORY, LvcChunkStore.OBJECTS_DIRECTORY,
-                            LvcSemanticRepository.GITIGNORE),
+                    List.of(LvcSemanticRepository.MANIFEST, LvcHashIndexCodec.INDEXES_DIRECTORY, LvcChunkStore.OBJECTS_DIRECTORY),
                     List.of(currentCommit.getId(), sourceCommit.getId()),
                     true
             );

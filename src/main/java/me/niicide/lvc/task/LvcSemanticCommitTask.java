@@ -77,7 +77,7 @@ public final class LvcSemanticCommitTask extends LvcChunkedTaskBase<LvcSemanticC
             LvcSiteWorkPlan plan = LvcSiteWorkPlan.create(this.captureSite, this.project.placement());
             this.captureSession = new LvcCaptureSession(
                     plan,
-                    this.backend.createReader(this.world),
+                    this.backend.createReader(this.world, this.backend == LvcWorldBackend.SERVUX),
                     this.stagingStore::writeObject,
                     false,
                     true
@@ -233,7 +233,6 @@ public final class LvcSemanticCommitTask extends LvcChunkedTaskBase<LvcSemanticC
             return LvcSemanticRepository.updateSiteAreasFromCapture(
                     this.repositoryDirectory,
                     currentProject.manifest(),
-                    currentProject.localState(),
                     currentProject.siteId(),
                     this.updatedRegions,
                     currentCapture,
@@ -245,7 +244,6 @@ public final class LvcSemanticCommitTask extends LvcChunkedTaskBase<LvcSemanticC
         return LvcSemanticRepository.commitSiteFromCapture(
                 this.repositoryDirectory,
                 currentProject.manifest(),
-                currentProject.localState(),
                 currentProject.siteId(),
                 currentCapture,
                 this.player,

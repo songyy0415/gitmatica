@@ -906,6 +906,12 @@ final class GuiLvcProjectController
         this.gui.trackingOverlay = null;
     }
 
+    void closeTrackingOverlay()
+    {
+        LvcProjectService.closeTrackingOverlay(this.gui.repositoryDirectory);
+        this.gui.trackingOverlay = null;
+    }
+
     void focusTrackingOverlay()
     {
         LvcProjectService.focusTrackingOverlay(this.gui.repositoryDirectory);
@@ -1262,7 +1268,7 @@ final class GuiLvcProjectController
             case PROJECT_SETTINGS -> this.showFullReleaseFeature();
             case CLOSE_PROJECT ->
             {
-                this.removeTrackingOverlay();
+                this.closeTrackingOverlay();
                 GuiBase.openGui(new GuiLvcProjectBrowser());
             }
             case LITEMATICA_MENU -> GuiBase.openGui(new GuiMainMenu());

@@ -33,17 +33,31 @@ public final class LvcServuxWorldReader implements LvcWorldReader
 {
     private final LvcBlockStateOnlyWorldReader blockStateReader;
     private final Level world;
+    private final boolean requireFreshBulkReply;
 
     public LvcServuxWorldReader(Level world)
     {
+        this(world, false);
+    }
+
+    public LvcServuxWorldReader(Level world, boolean requireFreshBulkReply)
+    {
         this.world = Objects.requireNonNull(world, "world");
         this.blockStateReader = new LvcBlockStateOnlyWorldReader(world);
+        this.requireFreshBulkReply = requireFreshBulkReply;
     }
 
     @Override
     public boolean canReadAt(LvcIntPosition worldPos)
     {
-        return this.blockStateReader.canReadAt(worldPos);
+        if (!this.blockStateReader.canReadAt(worldPos))
+        {
+            return false;
+        }
+
+        return !this.requireFreshBulkReply || LvcServuxBulkEntityCache.hasReply(new ChunkPos(
+                SectionPos.blockToSectionCoord(worldPos.x()),
+                SectionPos.blockToSectionCoord(worldPos.z())));
     }
 
     @Override
@@ -57,6 +71,20 @@ public final class LvcServuxWorldReader implements LvcWorldReader
     public byte[] blockEntityNbtAt(LvcIntPosition worldPos) throws IOException
     {
         BlockPos pos = new BlockPos(worldPos.x(), worldPos.y(), worldPos.z());
+        ChunkPos chunkPos = new ChunkPos(SectionPos.blockToSectionCoord(worldPos.x()),
+                SectionPos.blockToSectionCoord(worldPos.z()));
+
+        if (LvcServuxBulkEntityCache.hasReply(chunkPos))
+        {
+            CompoundTag fresh = LvcServuxBulkEntityCache.blockEntityAt(chunkPos, pos);
+            return fresh != null && !fresh.isEmpty() ? LvcCanonicalNbt.encodeBlockEntity(fresh) : null;
+        }
+
+        if (this.world.getBlockEntity(pos) == null)
+        {
+            return null;
+        }
+
         CompoundTag cached = EntityDataManager.getInstance().getCache().getBlockEntityNbtFromCache(pos);
 
         if (cached != null && !cached.isEmpty())

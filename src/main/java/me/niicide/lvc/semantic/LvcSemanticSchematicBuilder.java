@@ -36,8 +36,8 @@ import me.niicide.lvc.capture.LvcCapturePlanner;
 import me.niicide.lvc.model.LvcChunk;
 import me.niicide.lvc.model.LvcChunkCoordinate;
 import me.niicide.lvc.model.LvcIntPosition;
-import me.niicide.lvc.model.LvcLocalState;
 import me.niicide.lvc.model.LvcManifest;
+import me.niicide.lvc.model.LvcSitePlacement;
 import me.niicide.lvc.storage.LvcChunkCodec;
 import me.niicide.lvc.storage.LvcChunkStore;
 import me.niicide.lvc.util.LvcEntityNbt;
@@ -50,31 +50,31 @@ public final class LvcSemanticSchematicBuilder
     }
 
     public static LitematicaSchematic buildWorkingTreeSchematic(Path repositoryDirectory, LvcManifest manifest,
-                                                         LvcLocalState localState, String siteId) throws IOException
+                                                         String siteId, LvcSitePlacement placement) throws IOException
     {
-        return buildWorkingTreeSchematic(repositoryDirectory, manifest, localState, siteId, null);
+        return buildWorkingTreeSchematic(repositoryDirectory, manifest, siteId, placement, null);
     }
 
     public static LitematicaSchematic buildWorkingTreeSchematic(Path repositoryDirectory, LvcManifest manifest,
-                                                         LvcLocalState localState, String siteId,
+                                                         String siteId, LvcSitePlacement placement,
                                                          @javax.annotation.Nullable ServerLevel lootPreviewWorld) throws IOException
     {
         Objects.requireNonNull(repositoryDirectory, "repositoryDirectory");
-        return buildSchematic(manifest, localState, siteId,
+        return buildSchematic(manifest, siteId, placement,
                 objectId -> LvcChunkStore.readObject(repositoryDirectory, objectId), lootPreviewWorld);
     }
 
-    public static LitematicaSchematic buildSchematic(LvcManifest manifest, LvcLocalState localState, String siteId,
+    public static LitematicaSchematic buildSchematic(LvcManifest manifest, String siteId, LvcSitePlacement placement,
                                               ChunkObjectReader objectReader) throws IOException
     {
-        return buildSchematic(manifest, localState, siteId, objectReader, null);
+        return buildSchematic(manifest, siteId, placement, objectReader, null);
     }
 
-    public static LitematicaSchematic buildSchematic(LvcManifest manifest, LvcLocalState localState, String siteId,
+    public static LitematicaSchematic buildSchematic(LvcManifest manifest, String siteId, LvcSitePlacement placement,
                                               ChunkObjectReader objectReader,
                                               @javax.annotation.Nullable ServerLevel lootPreviewWorld) throws IOException
     {
-        BuildSession session = beginSchematicBuild(manifest, localState, siteId, objectReader, lootPreviewWorld);
+        BuildSession session = beginSchematicBuild(manifest, siteId, placement, objectReader, lootPreviewWorld);
 
         while (!session.isComplete())
         {
@@ -84,36 +84,30 @@ public final class LvcSemanticSchematicBuilder
         return session.result();
     }
 
-    public static BuildSession beginSchematicBuild(LvcManifest manifest, LvcLocalState localState, String siteId,
+    public static BuildSession beginSchematicBuild(LvcManifest manifest, String siteId, LvcSitePlacement placement,
                                                    ChunkObjectReader objectReader) throws IOException
     {
-        return beginSchematicBuild(manifest, localState, siteId, objectReader, null);
+        return beginSchematicBuild(manifest, siteId, placement, objectReader, null);
     }
 
-    public static BuildSession beginSchematicBuild(LvcManifest manifest, LvcLocalState localState, String siteId,
+    public static BuildSession beginSchematicBuild(LvcManifest manifest, String siteId, LvcSitePlacement placement,
                                                    ChunkObjectReader objectReader,
                                                    @javax.annotation.Nullable ServerLevel lootPreviewWorld) throws IOException
     {
-        return beginSchematicBuild(manifest, localState, siteId, objectReader, lootPreviewWorld, null);
+        return beginSchematicBuild(manifest, siteId, placement, objectReader, lootPreviewWorld, null);
     }
 
-    public static BuildSession beginSchematicBuild(LvcManifest manifest, LvcLocalState localState, String siteId,
+    public static BuildSession beginSchematicBuild(LvcManifest manifest, String siteId, LvcSitePlacement placement,
                                                    ChunkObjectReader objectReader,
                                                    @javax.annotation.Nullable ServerLevel lootPreviewWorld,
                                                    @javax.annotation.Nullable BlockInclusionPredicate blockInclusionPredicate) throws IOException
     {
         Objects.requireNonNull(manifest, "manifest");
-        Objects.requireNonNull(localState, "localState");
         Objects.requireNonNull(siteId, "siteId");
+        Objects.requireNonNull(placement, "placement");
         Objects.requireNonNull(objectReader, "objectReader");
 
         LvcManifest.Site site = manifest.site(siteId);
-        LvcLocalState.SitePlacement placement = localState.sites().get(siteId);
-
-        if (placement == null)
-        {
-            throw new IOException("Missing local placement for LVC site: " + siteId);
-        }
 
         if (site.regions().isEmpty())
         {
@@ -134,20 +128,14 @@ public final class LvcSemanticSchematicBuilder
                 blockInclusionPredicate);
     }
 
-    public static LitematicaSchematic buildAirSchematic(LvcManifest manifest, LvcLocalState localState,
-                                                        String siteId) throws IOException
+    public static LitematicaSchematic buildAirSchematic(LvcManifest manifest, String siteId,
+                                                        LvcSitePlacement placement) throws IOException
     {
         Objects.requireNonNull(manifest, "manifest");
-        Objects.requireNonNull(localState, "localState");
         Objects.requireNonNull(siteId, "siteId");
+        Objects.requireNonNull(placement, "placement");
 
         LvcManifest.Site site = manifest.site(siteId);
-        LvcLocalState.SitePlacement placement = localState.sites().get(siteId);
-
-        if (placement == null)
-        {
-            throw new IOException("Missing local placement for LVC site: " + siteId);
-        }
 
         if (site.regions().isEmpty())
         {
@@ -350,7 +338,7 @@ public final class LvcSemanticSchematicBuilder
         return candidate;
     }
 
-    private static AreaSelection createSelection(String projectName, LvcLocalState.SitePlacement placement, List<RegionView> regions)
+    private static AreaSelection createSelection(String projectName, LvcSitePlacement placement, List<RegionView> regions)
     {
         BlockPos origin = blockPosFromList(placement.origin());
         JsonObject selection = new JsonObject();

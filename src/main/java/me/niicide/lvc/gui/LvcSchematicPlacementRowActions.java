@@ -118,7 +118,7 @@ public final class LvcSchematicPlacementRowActions
                     repositoryDirectory, e.getMessage());
         }
 
-        LvcProjectService.removeTrackingOverlay(repositoryDirectory);
+        LvcProjectService.closeTrackingOverlay(repositoryDirectory);
         LvcDiagnostics.debug("LvcSchematicPlacementRowActions: closed loaded overlay repo='{}' project='{}' schematic='{}'",
                 repositoryDirectory, projectName, schematic.getMetadata().getName());
         LvcGuiMessages.show(MessageType.SUCCESS, "litematica.message.lvc_project.closed", projectName);

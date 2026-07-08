@@ -7,8 +7,9 @@ import net.minecraft.world.level.Level;
 import me.niicide.lvc.LvcProjectService;
 import me.niicide.lvc.LvcUserActionException;
 import me.niicide.lvc.capture.LvcMinecraftWorldReader;
-import me.niicide.lvc.model.LvcLocalState;
 import me.niicide.lvc.model.LvcManifest;
+import me.niicide.lvc.model.LvcSitePlacement;
+import me.niicide.lvc.overlay.LvcTrackingOverlayService;
 import me.niicide.lvc.storage.LvcSemanticRepository;
 
 final class LvcSemanticTaskContext
@@ -27,26 +28,19 @@ final class LvcSemanticTaskContext
         }
 
         LvcManifest manifest = LvcSemanticRepository.readManifest(repositoryDirectory);
-        LvcLocalState localState = LvcSemanticRepository.readLocalState(repositoryDirectory);
-        String siteId = localState.activeSite();
+        String siteId = LvcSemanticRepository.defaultSiteId(manifest);
         LvcManifest.Site site = manifest.site(siteId);
-        LvcLocalState.SitePlacement placement = localState.sites().get(siteId);
-
-        if (placement == null)
-        {
-            throw new LvcUserActionException(LvcUserActionException.Reason.MISSING_LOCAL_PLACEMENT,
-                    "Missing local placement for active LVC site: " + siteId);
-        }
+        LvcSitePlacement placement = LvcTrackingOverlayService.requireSitePlacement(repositoryDirectory, site);
 
         if (site.regions().isEmpty())
         {
             throw new IOException("LVC project has no tracked sub-regions");
         }
 
-        return new ActiveProject(manifest, localState, siteId, site, placement);
+        return new ActiveProject(manifest, siteId, site, placement);
     }
 
-    static void validatePlacementDimension(LvcLocalState.SitePlacement placement, Level world) throws IOException
+    static void validatePlacementDimension(LvcSitePlacement placement, Level world) throws IOException
     {
         String worldDimension = LvcMinecraftWorldReader.dimensionId(world);
 
@@ -57,8 +51,8 @@ final class LvcSemanticTaskContext
         }
     }
 
-    record ActiveProject(LvcManifest manifest, LvcLocalState localState, String siteId,
-                         LvcManifest.Site site, LvcLocalState.SitePlacement placement)
+    record ActiveProject(LvcManifest manifest, String siteId,
+                         LvcManifest.Site site, LvcSitePlacement placement)
     {
     }
 }

@@ -10,7 +10,7 @@ The implementation authority is:
 
 Do not treat the external PRD as authoritative when it conflicts with these corrections.
 
-2026-06-05 implementation update: the mod has not been released, so there is no legacy repository compatibility contract. The supported repository format is semantic `lvc.json`, raw binary `indexes/*.lvcidx`, raw content-addressed `.lvcchunk` objects, and ignored clone-local `local.json`. Older notes in this file that mention `index.json`, `index.nbt`, `local_selection`, or `master_origin` are historical context only and must not be used to justify keeping or reintroducing legacy repo code.
+2026-06-05 implementation update: the mod has not been released, so there is no legacy repository compatibility contract. The supported repository format is semantic `lvc.json`, raw binary `indexes/*.lvcidx`, and raw content-addressed `.lvcchunk` objects. Placement origin is Litematica placement state, not a Gitmatica repository file. Older notes in this file that mention `index.json`, `index.nbt`, `local_selection`, or `master_origin` are historical context only and must not be used to justify keeping or reintroducing legacy repo code.
 
 ## Gameplay State Rule
 
@@ -24,7 +24,7 @@ Required behavior:
 - Restore the checked-out schematic state into the current Minecraft world for the tracked sub-regions.
 - Refresh the Litematica ghost overlay to the same state.
 - Run or refresh verifier state when the client and schematic worlds are available.
-- Use the active site's local world origin from ignored `local.json`, not an arbitrary repository path or guessed origin.
+- Use the active project's Litematica placement origin, not an arbitrary repository path or guessed origin.
 - Never modify untracked space between independent sub-regions. Semantic tracked masks define exactly which project-relative positions may be captured/restored.
 
 This rule is intentionally stronger than ordinary Git semantics because LVC is an in-game version control workflow. If the repository changes but the player cannot see the corresponding world/overlay state, the feature is incomplete.
@@ -52,33 +52,28 @@ The external PRD proposes files such as `history.json` and a `/data/` directory.
 
 Current LVC repository structure is intentionally simple and Git-native:
 
-- `index.json`: versioned LVC project metadata.
-- `index.nbt`: versioned vanilla structure content saved with Minecraft `StructureTemplate`.
-- `.gitignore`: Git ignore rules for local-only files.
-- `local.json`: local-only state, ignored by Git.
+- `lvc.json`: versioned LVC project metadata.
+- `indexes/*.lvcidx`: versioned per-site full/tracked hash indexes.
+- `objects/sha256/**/*.lvcchunk`: versioned content-addressed chunk objects.
 
 Future structure changes should be designed from the Git-backed model, not copied from the PRD.
 
-### 3. `local.json`, `index.json`, Sub-Regions, and Master Origin
+### 3. Placement Origin and Versioned Project Data
 
-`local.json` must never be synchronized. It is local clone state only and must remain ignored by Git.
+Gitmatica no longer stores clone-local placement state in the project repository.
 
-Reason: different clones of the same LVC repository may be used in different Minecraft worlds or at different physical positions. The same schematic project may therefore need a different Master Origin per clone.
+Reason: project placement should behave like any other loaded Litematica schematic placement. Litematica owns the loaded placement list and its per-world/server placement persistence.
 
 Responsibilities:
 
-- `index.json` records versioned project metadata that must be shared between clones.
-- `index.json` must record all sub-region definitions using coordinates relative to the project coordinate system.
-- `local.json` records local-only workspace information.
-- `local.json` stores the Master Origin for this clone.
-- `local.json` may store local UI/workspace state that should not affect collaborators.
-- `local.json` must be listed in `.gitignore`.
+- `lvc.json` records versioned project metadata that must be shared between clones.
+- `lvc.json` records all sub-region definitions using coordinates relative to the project coordinate system.
+- Litematica schematic placement data stores the loaded placement origin for the local world/server.
+- Opening a Gitmatica project creates or attaches the schematic placement; closing/removing the project removes it.
 
 Important consequence:
 
-Sub-region layout is shared project data and belongs in `index.json`, not `local.json`. Master Origin is per-clone local data and belongs in `local.json`, not `index.json`.
-
-The current implementation stores `local_selection` in `local.json`. This was added to prevent commits from depending on the currently selected in-game area. That is useful as a short-term safety measure, but the final design should move shared sub-region layout into `index.json` while keeping clone-specific Master Origin in `local.json`.
+Sub-region layout is shared project data and belongs in `lvc.json`. Placement origin is not project data and must be read from or written to Litematica's placement state.
 
 ### 4. Current Sub-Region Serialization Needs Fixing
 
@@ -110,8 +105,8 @@ Required direction:
 Implementation notes:
 
 - `index.json` now stores versioned sub-region entries with names, sizes, and positions relative to the local Master Origin.
-- `local.json` stores the clone-local Master Origin and remains ignored by Git.
-- Commit code restores the tracked selection from `index.json` plus `local.json`.
+- Litematica placement state stores the local origin.
+- Commit code restores the tracked selection from versioned project metadata plus the active Litematica placement.
 - Fallback to the current in-game selection remains explicit in method names.
 - `index.nbt` is a single vanilla structure file. During export, LVC copies tracked blocks into a temporary schematic world, fills untracked gaps with `minecraft:structure_void`, and then delegates serialization to `StructureTemplate#fillFromWorld` / `StructureTemplate#save`. This prevents independent sub-regions from committing real world blocks from the space between them.
 
@@ -125,7 +120,7 @@ Any future storage change must answer:
 
 - Why Git's native object/history model is not enough.
 - Whether the data is shared project state or clone-local workspace state.
-- Whether the data belongs in Git, in `index.json`, in `local.json`, or in generated/transient files.
+- Whether the data belongs in Git, in `lvc.json`, in Litematica placement state, or in generated/transient files.
 
 ### 6. Post-Commit Tracking and Verification Needs Fixing
 
@@ -227,12 +222,12 @@ The following implemented areas are intentionally accepted:
 - No `history.json`.
 - Git-native commit history UI.
 - Push and pull may exist in the MVP.
-- `local.json` must stay ignored and local-only.
+- Placement origin must stay out of the Gitmatica repository and live in Litematica placement state.
 
 The following areas have been fixed or deliberately bounded:
 
-- Shared sub-region definitions are versioned in `index.json`.
-- Master Origin is kept in local-only `local.json`.
+- Shared sub-region definitions are versioned in `lvc.json`.
+- Placement origin is kept in Litematica placement state.
 - `index.nbt` currently stores vanilla structure data for the v1 compatibility path. This is accepted for current implementation work, but the long-term canonical storage direction is semantic content-addressed chunks. Untracked gaps inside the enclosing structure volume are written as `minecraft:structure_void`, not as real world blocks and not as air to be pasted over unrelated world space.
 - Post-commit, selected-commit checkout, branch checkout, discard, clear, and update-area operations refresh the visible in-game state through world restoration and/or ghost overlay plus verifier where applicable. Pull restore remains blocked until its dirty/conflict handling is hardened.
 - History rows include `Inspect` and real `Checkout` actions.

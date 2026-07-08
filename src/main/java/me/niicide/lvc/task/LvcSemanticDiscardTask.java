@@ -21,8 +21,9 @@ import me.niicide.lvc.capture.LvcSiteWorkPlan;
 import me.niicide.lvc.git.LvcProjectGitOps;
 import me.niicide.lvc.model.LvcChunk;
 import me.niicide.lvc.model.LvcIntPosition;
-import me.niicide.lvc.model.LvcLocalState;
 import me.niicide.lvc.model.LvcManifest;
+import me.niicide.lvc.model.LvcSitePlacement;
+import me.niicide.lvc.overlay.LvcTrackingOverlayService;
 import me.niicide.lvc.storage.LvcRepository;
 import me.niicide.lvc.storage.LvcSemanticRepository;
 import fi.dy.masa.malilib.gui.GuiBase;
@@ -43,7 +44,7 @@ public final class LvcSemanticDiscardTask extends LvcChunkedTaskBase<LvcSemantic
     @Nullable private RevWalk revWalk;
     @Nullable private RevCommit commit;
     @Nullable private LvcManifest.Site site;
-    @Nullable private LvcLocalState.SitePlacement placement;
+    @Nullable private LvcSitePlacement placement;
     @Nullable private LvcIntPosition origin;
     @Nullable private LvcSiteWorkPlan workPlan;
     @Nullable private LvcCommitChunkCache chunkCache;
@@ -105,16 +106,9 @@ public final class LvcSemanticDiscardTask extends LvcChunkedTaskBase<LvcSemantic
             this.commit = LvcProjectGitOps.resolveCommit(repository, this.revWalk, commitId);
             this.requestedCommitId = this.commit.getName();
             LvcManifest manifest = LvcSemanticRepository.readCommitManifest(repository, this.commit);
-            LvcLocalState localState = LvcSemanticRepository.readLocalState(this.repositoryDirectory);
-            String siteId = localState.activeSite();
+            String siteId = LvcSemanticRepository.defaultSiteId(manifest);
             this.site = manifest.site(siteId);
-            this.placement = localState.sites().get(siteId);
-
-            if (this.placement == null)
-            {
-                throw new LvcUserActionException(LvcUserActionException.Reason.MISSING_LOCAL_PLACEMENT,
-                        "Missing local placement for active LVC site: " + siteId);
-            }
+            this.placement = LvcTrackingOverlayService.requireCurrentOrCachedSitePlacement(this.repositoryDirectory, this.site);
 
             LvcSemanticTaskContext.validatePlacementDimension(this.placement, this.world);
             this.origin = LvcIntPosition.fromList(this.placement.origin());

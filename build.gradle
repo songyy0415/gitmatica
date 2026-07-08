@@ -71,7 +71,10 @@ check.dependsOn integrationTest
 base {
 	group = project.group + "." + project.mod_id
 	archivesName = project.mod_file_name + '-' + project.minecraft_version_out
-	version = project.gitmaticaLoaderVersion
+	// Jar filenames use Gitmatica's release version. fabric.mod.json uses
+	// gitmaticaLoaderVersion so Fabric dependency checks still see the
+	// compatible upstream Litematica/MaLiLib base version.
+	version = project.gitmatica_version
 
 	if (version.endsWith('-dev')) {
 		version += "." + new Date().format('yyyyMMdd.HHmmss')

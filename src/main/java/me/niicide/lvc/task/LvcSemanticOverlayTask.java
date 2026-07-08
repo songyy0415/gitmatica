@@ -1,5 +1,6 @@
 package me.niicide.lvc.task;
 
+import java.io.IOException;
 import java.nio.file.Path;
 import java.util.Objects;
 import javax.annotation.Nullable;
@@ -13,8 +14,8 @@ import net.minecraft.server.level.ServerLevel;
 import net.minecraft.util.Util;
 import me.niicide.lvc.LvcProjectService;
 import me.niicide.lvc.git.LvcProjectGitOps;
-import me.niicide.lvc.model.LvcLocalState;
 import me.niicide.lvc.model.LvcManifest;
+import me.niicide.lvc.model.LvcSitePlacement;
 import me.niicide.lvc.overlay.LvcTrackingOverlayService;
 import me.niicide.lvc.semantic.LvcSemanticSchematicBuilder;
 import me.niicide.lvc.storage.LvcChunkStore;
@@ -37,8 +38,7 @@ public final class LvcSemanticOverlayTask extends LvcChunkedTaskBase<LvcProjectS
     private final boolean startVerifier;
     private final boolean forceRebuild;
     @Nullable private LvcManifest manifest;
-    @Nullable private LvcLocalState localState;
-    @Nullable private LvcLocalState.SitePlacement placementState;
+    @Nullable private LvcSitePlacement placementState;
     @Nullable private String siteId;
     @Nullable private String overlayName;
     @Nullable private ServerLevel lootPreviewWorld;
@@ -86,18 +86,15 @@ public final class LvcSemanticOverlayTask extends LvcChunkedTaskBase<LvcProjectS
     {
         try
         {
-            LvcTrackingOverlayService.removeTrackingOverlay(this.repositoryDirectory);
-            this.localState = LvcSemanticRepository.readLocalState(this.repositoryDirectory);
             this.committedHeadSource = this.shouldUseCommittedHeadSource();
             this.manifest = this.committedHeadSource ? this.readCommittedHeadManifest() :
                     LvcSemanticRepository.readManifest(this.repositoryDirectory);
-            this.siteId = this.localState.activeSite();
-            this.placementState = this.localState.sites().get(this.siteId);
-
-            if (this.placementState == null)
-            {
-                throw new IllegalStateException("Missing local placement for active LVC site: " + this.siteId);
-            }
+            this.siteId = LvcSemanticRepository.defaultSiteId(this.manifest);
+            this.placementState = LvcTrackingOverlayService.resolveSitePlacementForTrackingOverlay(
+                    this.repositoryDirectory,
+                    this.manifest.site(this.siteId)
+            );
+            LvcTrackingOverlayService.removeTrackingOverlay(this.repositoryDirectory);
 
             this.overlayName = LvcTrackingOverlayService.trackingOverlayDisplayName(this.repositoryDirectory, this.manifest.name());
             this.lootPreviewWorld = LvcTrackingOverlayService.resolveLootPreviewWorld(this.clientLevel, this.placementState);
@@ -110,8 +107,8 @@ public final class LvcSemanticOverlayTask extends LvcChunkedTaskBase<LvcProjectS
             {
                 this.buildSession = LvcSemanticSchematicBuilder.beginSchematicBuild(
                         this.manifest,
-                        this.localState,
                         this.siteId,
+                        this.placementState,
                         this::readSourceObject,
                         this.lootPreviewWorld
                 );
@@ -150,8 +147,8 @@ public final class LvcSemanticOverlayTask extends LvcChunkedTaskBase<LvcProjectS
                 this.phase = Phase.BUILD;
                 this.buildSession = LvcSemanticSchematicBuilder.beginSchematicBuild(
                         this.requireManifest(),
-                        this.requireLocalState(),
                         this.requireSiteId(),
+                        this.requirePlacementState(),
                         this::readSourceObject,
                         this.lootPreviewWorld
                 );
@@ -219,6 +216,7 @@ public final class LvcSemanticOverlayTask extends LvcChunkedTaskBase<LvcProjectS
             this.overlay = LvcTrackingOverlayService.addSemanticTrackingOverlay(
                     this.repositoryDirectory,
                     this.requireCachedSchematic(),
+                    this.requireSiteId(),
                     this.requirePlacementState(),
                     this.requireOverlayName(),
                     this.clientLevel,
@@ -290,12 +288,7 @@ public final class LvcSemanticOverlayTask extends LvcChunkedTaskBase<LvcProjectS
         return Objects.requireNonNull(this.manifest, "manifest");
     }
 
-    private LvcLocalState requireLocalState()
-    {
-        return Objects.requireNonNull(this.localState, "localState");
-    }
-
-    private LvcLocalState.SitePlacement requirePlacementState()
+    private LvcSitePlacement requirePlacementState()
     {
         return Objects.requireNonNull(this.placementState, "placementState");
     }

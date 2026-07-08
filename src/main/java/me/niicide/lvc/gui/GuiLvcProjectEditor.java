@@ -9,7 +9,6 @@ import net.minecraft.world.entity.player.Player;
 import net.minecraft.world.level.Level;
 import me.niicide.lvc.LvcDiagnostics;
 import me.niicide.lvc.LvcProjectService;
-import me.niicide.lvc.capture.LvcMinecraftWorldReader;
 import me.niicide.lvc.gui.widgets.WidgetLvcProjectSubRegion;
 import me.niicide.lvc.gui.widgets.WidgetLvcProjectSubRegionList;
 import me.niicide.lvc.model.LvcManifest;
@@ -142,8 +141,8 @@ public class GuiLvcProjectEditor extends GuiListBase<LvcManifest.Region, WidgetL
             this.projectName = this.state.projectName();
             this.title = StringUtils.translate("litematica.gui.title.lvc_project_editor", Reference.MOD_VERSION, this.projectName);
             this.ensureSelectedRegionExists();
-            LvcDiagnostics.debug("GuiLvcProjectEditor: ui state loaded repo='{}' project='{}' regions={} localOrigin='{}'",
-                    this.repositoryDirectory, this.projectName, this.state.regions().size(), this.state.localOrigin());
+            LvcDiagnostics.debug("GuiLvcProjectEditor: ui state loaded repo='{}' project='{}' regions={} placementOrigin='{}'",
+                    this.repositoryDirectory, this.projectName, this.state.regions().size(), this.state.placementOrigin());
         }
         catch (Exception e)
         {
@@ -217,7 +216,7 @@ public class GuiLvcProjectEditor extends GuiListBase<LvcManifest.Region, WidgetL
     {
         int x = this.getOriginGroupX();
         int y = this.getCoordinateFieldY();
-        BlockPos origin = this.state.localOrigin();
+        BlockPos origin = this.state.placementOrigin();
 
         this.createCoordinateField(x, y, FieldKind.ORIGIN_X, origin.getX());
         y += COORDINATE_ROW_SPACING;
@@ -273,21 +272,9 @@ public class GuiLvcProjectEditor extends GuiListBase<LvcManifest.Region, WidgetL
         int y = this.getCoordinateGroupY();
 
         this.drawCoordinateGroup(ctx, this.getOriginGroupX(), y,
-                StringUtils.translate("litematica.gui.label.lvc_project_editor.local_site_origin"),
-                this.state.localOrigin(), true);
+                StringUtils.translate("litematica.gui.label.lvc_project_editor.placement_origin"),
+                this.state.placementOrigin(), true);
 
-        String currentDimension = this.currentWorldDimension();
-
-        if (currentDimension != null && !currentDimension.equals(this.state.localDimension()))
-        {
-            String message = StringUtils.translate("litematica.error.lvc_project_editor.dimension_mismatch", this.state.localDimension(), currentDimension);
-            ctx.drawString(ctx.fontRenderer(), this.ellipsizeToWidth(message, this.getScreenWidth() - MARGIN * 2), MARGIN, this.getCoordinateWarningY(), ERROR_COLOR, false);
-        }
-        else if (!this.state.localDimension().equals(this.state.siteDimension()))
-        {
-            String message = StringUtils.translate("litematica.gui.label.lvc_project_editor.dimension_mismatch", this.state.siteDimension());
-            ctx.drawString(ctx.fontRenderer(), this.ellipsizeToWidth(message, this.getScreenWidth() - MARGIN * 2), MARGIN, this.getCoordinateWarningY(), ERROR_COLOR, false);
-        }
     }
 
     private void drawCoordinateGroup(GuiContext ctx, int x, int y, String title, BlockPos pos, boolean editable)
@@ -345,13 +332,6 @@ public class GuiLvcProjectEditor extends GuiListBase<LvcManifest.Region, WidgetL
         }
     }
 
-    @Nullable
-    private String currentWorldDimension()
-    {
-        Level world = Minecraft.getInstance().level;
-        return world == null ? null : LvcMinecraftWorldReader.dimensionId(world);
-    }
-
     private void updateIntegerField(FieldKind kind, String value)
     {
         try
@@ -393,7 +373,7 @@ public class GuiLvcProjectEditor extends GuiListBase<LvcManifest.Region, WidgetL
 
     private BlockPos updatedOrigin(FieldKind kind, int value)
     {
-        BlockPos origin = this.state.localOrigin();
+        BlockPos origin = this.state.placementOrigin();
 
         return switch (kind)
         {
@@ -438,7 +418,7 @@ public class GuiLvcProjectEditor extends GuiListBase<LvcManifest.Region, WidgetL
             return null;
         }
 
-        BlockPos origin = this.state.localOrigin();
+        BlockPos origin = this.state.placementOrigin();
         return switch (kind)
         {
             case ORIGIN_X -> origin.getX();
@@ -462,14 +442,6 @@ public class GuiLvcProjectEditor extends GuiListBase<LvcManifest.Region, WidgetL
         if (world == null)
         {
             this.addMessage(MessageType.ERROR, "litematica.error.lvc_project.no_world");
-            return;
-        }
-
-        String dimension = LvcMinecraftWorldReader.dimensionId(world);
-
-        if (this.state != null && !dimension.equals(this.state.localDimension()))
-        {
-            this.addMessage(MessageType.ERROR, "litematica.error.lvc_project_editor.dimension_mismatch", this.state.localDimension(), dimension);
             return;
         }
 
@@ -559,11 +531,6 @@ public class GuiLvcProjectEditor extends GuiListBase<LvcManifest.Region, WidgetL
     private int getCoordinateGroupsBottomY()
     {
         return Math.max(this.getCoordinateFieldY() + COORDINATE_ROW_SPACING * 2 + TEXT_FIELD_HEIGHT + 2, this.getOriginMoveButtonY() + BUTTON_HEIGHT);
-    }
-
-    private int getCoordinateWarningY()
-    {
-        return Math.min(this.getCoordinateGroupsBottomY() + 3, this.getBottomButtonY() - 14);
     }
 
     private int getSubRegionLabelY()

@@ -21,7 +21,6 @@ import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
-import java.util.UUID;
 import java.util.stream.Collectors;
 import com.google.gson.JsonObject;
 import net.minecraft.core.BlockPos;
@@ -47,9 +46,10 @@ import me.niicide.lvc.capture.LvcMinecraftWorldReader;
 import me.niicide.lvc.model.LvcChunk;
 import me.niicide.lvc.model.LvcChunkCoordinate;
 import me.niicide.lvc.model.LvcIntPosition;
-import me.niicide.lvc.model.LvcLocalState;
 import me.niicide.lvc.model.LvcManifest;
+import me.niicide.lvc.model.LvcSitePlacement;
 import me.niicide.lvc.LvcProjectService;
+import me.niicide.lvc.overlay.LvcTrackingOverlayService;
 import me.niicide.lvc.semantic.LvcSemanticSchematicBuilder;
 import me.niicide.lvc.storage.LvcCanonicalNbt;
 import me.niicide.lvc.storage.LvcChunkCodec;
@@ -78,7 +78,7 @@ final class LvcSemanticStorageIntegrationTest
         IntegrationTestSupport.run("semantic chunk decode rejects truncated payloads", LvcSemanticStorageIntegrationTest::semanticChunkDecodeRejectsTruncatedPayloads);
         IntegrationTestSupport.run("semantic chunk store writes content addressed objects once", LvcSemanticStorageIntegrationTest::semanticChunkStoreWritesContentAddressedObjectsOnce);
         IntegrationTestSupport.run("semantic hash index codec stores full and tracked hashes", LvcSemanticStorageIntegrationTest::semanticHashIndexCodecStoresFullAndTrackedHashes);
-        IntegrationTestSupport.run("semantic manifest and local state round trip", LvcSemanticStorageIntegrationTest::semanticManifestAndLocalStateRoundTrip);
+        IntegrationTestSupport.run("semantic manifest round trip", LvcSemanticStorageIntegrationTest::semanticManifestAndLocalStateRoundTrip);
         IntegrationTestSupport.run("semantic manifest allows overlapping regions as tracked union masks", LvcSemanticStorageIntegrationTest::semanticManifestAllowsOverlappingRegionsAsTrackedUnionMasks);
         IntegrationTestSupport.run("minecraft block state strings are canonical", LvcSemanticStorageIntegrationTest::minecraftBlockStateStringsAreCanonical);
         IntegrationTestSupport.run("canonical block entity nbt sorts keys and ignores position", LvcSemanticStorageIntegrationTest::canonicalBlockEntityNbtSortsKeysAndIgnoresPosition);
@@ -87,9 +87,10 @@ final class LvcSemanticStorageIntegrationTest
         IntegrationTestSupport.run("tracked chunk hash includes block entity NBT", LvcSemanticStorageIntegrationTest::trackedChunkHashIncludesBlockEntityNbt);
         IntegrationTestSupport.run("tracked chunk hash normalizes stored air variants", LvcSemanticStorageIntegrationTest::trackedChunkHashNormalizesStoredAirVariants);
         IntegrationTestSupport.run("project service maps selection to semantic site", LvcSemanticStorageIntegrationTest::projectServiceMapsSelectionToSemanticSite);
-        IntegrationTestSupport.run("project service updates regions from existing local origin", LvcSemanticStorageIntegrationTest::projectServiceUpdatesRegionsFromExistingLocalOrigin);
-        IntegrationTestSupport.run("project editor helpers separate versioned and local state", LvcSemanticStorageIntegrationTest::projectEditorHelpersSeparateVersionedAndLocalState);
+        IntegrationTestSupport.run("project service updates regions from existing placement origin", LvcSemanticStorageIntegrationTest::projectServiceUpdatesRegionsFromExistingPlacementOrigin);
+        IntegrationTestSupport.run("tracking overlay first load uses seeded project origin", LvcSemanticStorageIntegrationTest::trackingOverlayFirstLoadUsesSeededProjectOrigin);
         IntegrationTestSupport.run("project service creates empty browser project without commit", LvcSemanticStorageIntegrationTest::projectServiceCreatesEmptyBrowserProjectWithoutCommit);
+        IntegrationTestSupport.run("project summary reports no origin when placement is not loaded", LvcSemanticStorageIntegrationTest::projectSummaryToleratesMissingLocalStateWithoutCreatingIt);
         IntegrationTestSupport.run("capture stores gaps as untracked positions", LvcSemanticStorageIntegrationTest::captureStoresGapsAsUntrackedPositions);
         IntegrationTestSupport.run("capture changes only the intersecting storage chunk hash", LvcSemanticStorageIntegrationTest::captureChangesOnlyTheIntersectingStorageChunkHash);
         IntegrationTestSupport.run("capture applies local site origin before reading world", LvcSemanticStorageIntegrationTest::captureAppliesLocalSiteOriginBeforeReadingWorld);
@@ -323,19 +324,6 @@ final class LvcSemanticStorageIntegrationTest
         IntegrationTestSupport.assertEquals(LvcManifest.Content.defaultContent(), userEditedContentManifest.content(), "manifest JSON content block must not override internal content defaults");
         IntegrationTestSupport.assertTrue(!userEditedContentManifest.toJson().contains("\"content\""), "rewritten manifest should drop old content block");
 
-        UUID projectId = decodedManifest.projectId();
-        LvcLocalState localState = LvcLocalState.create(projectId, "overworld_main", Map.of(
-                "overworld_main", new LvcLocalState.SitePlacement("minecraft:overworld", List.of(1000, 64, 1000), "Server"),
-                "overworld_remote", new LvcLocalState.SitePlacement("minecraft:overworld", List.of(8000, 70, -3000), "Server")
-        ));
-        String localJson = localState.toJson();
-
-        IntegrationTestSupport.assertTrue(localJson.contains("\"active_site\""), "local state should use active_site JSON key");
-        IntegrationTestSupport.assertTrue(localJson.contains("\"world_hint\""), "local state should use world_hint JSON key");
-
-        LvcLocalState decodedLocal = LvcLocalState.fromJson(localJson);
-        IntegrationTestSupport.assertEquals(projectId, decodedLocal.projectId(), "local project id");
-        IntegrationTestSupport.assertEquals(List.of(8000, 70, -3000), decodedLocal.sites().get("overworld_remote").origin(), "local remote site origin");
     }
 
     private static void semanticManifestAllowsOverlappingRegionsAsTrackedUnionMasks() throws Exception
@@ -523,19 +511,19 @@ final class LvcSemanticStorageIntegrationTest
         );
 
         LvcManifest.Site site = LvcProjectService.createMainSiteFromSelection("Farm", "minecraft:overworld", selection);
-        LvcLocalState.SitePlacement placement = LvcProjectService.createSitePlacement(selection.getEffectiveOrigin(), "minecraft:overworld");
+        LvcSitePlacement placement = LvcProjectService.createSitePlacement(selection.getEffectiveOrigin(), "minecraft:overworld");
 
         IntegrationTestSupport.assertEquals("main", site.id(), "MVP creates one active site");
         IntegrationTestSupport.assertEquals("minecraft:overworld", site.dimension(), "site dimension");
         IntegrationTestSupport.assertEquals(2, site.regions().size(), "selection boxes become explicit regions");
         IntegrationTestSupport.assertEquals("main_storage", site.regions().get(0).id(), "region id should be stable and safe");
         IntegrationTestSupport.assertEquals("main_storage_2", site.regions().get(1).id(), "duplicate region ids should be uniqued");
-        IntegrationTestSupport.assertEquals(List.of(0, 0, 0), site.regions().get(0).min(), "first region should be relative to local origin");
+        IntegrationTestSupport.assertEquals(List.of(0, 0, 0), site.regions().get(0).min(), "first region should be relative to placement origin");
         IntegrationTestSupport.assertEquals(List.of(2, 2, 2), site.regions().get(0).size(), "region size should be inclusive of both corners");
-        IntegrationTestSupport.assertEquals(List.of(10, 64, 10), placement.origin(), "local placement stores the world origin");
+        IntegrationTestSupport.assertEquals(List.of(10, 64, 10), placement.origin(), "placement stores the world origin");
     }
 
-    private static void projectServiceUpdatesRegionsFromExistingLocalOrigin()
+    private static void projectServiceUpdatesRegionsFromExistingPlacementOrigin()
     {
         LvcManifest.Region existing = new LvcManifest.Region("line", "Line", List.of(0, 0, 0), List.of(1, 1, 1));
         AreaSelection expandedSelection = areaSelectionFromBoxes(
@@ -546,7 +534,7 @@ final class LvcSemanticStorageIntegrationTest
         List<LvcManifest.Region> expanded = LvcProjectService.createRegionsFromSelection(expandedSelection, new BlockPos(10, 64, 10), List.of(existing));
 
         IntegrationTestSupport.assertEquals("line", expanded.get(0).id(), "same region name should preserve id while resizing");
-        IntegrationTestSupport.assertEquals(List.of(0, 0, 0), expanded.get(0).min(), "update areas should stay relative to existing local origin");
+        IntegrationTestSupport.assertEquals(List.of(0, 0, 0), expanded.get(0).min(), "update areas should stay relative to existing placement origin");
         IntegrationTestSupport.assertEquals(List.of(17, 1, 1), expanded.get(0).size(), "expanded region size");
 
         AreaSelection renamedSelection = areaSelectionFromBoxes(
@@ -559,54 +547,36 @@ final class LvcSemanticStorageIntegrationTest
         IntegrationTestSupport.assertEquals("Renamed Line", renamed.get(0).name(), "region display name should update");
     }
 
-    private static void projectEditorHelpersSeparateVersionedAndLocalState() throws Exception
+    private static void trackingOverlayFirstLoadUsesSeededProjectOrigin() throws Exception
     {
-        Path repoDir = Files.createTempDirectory("lvc-editor-state-");
-        FakeWorldReader reader = new FakeWorldReader("minecraft:stone");
-        LvcSemanticRepository.CommitResult init = LvcSemanticRepository.initProject(repoDir, "Editor", singleLineSite(1), placementAt(10, 64, 10), reader, player("Editor"));
-        String manifestBeforeLocalEdit = Files.readString(repoDir.resolve(LvcSemanticRepository.MANIFEST));
+        Path repoDir = Files.createTempDirectory("lvc-overlay-seeded-origin-");
+        AreaSelection selection = areaSelectionFromBoxes(
+                "Farm",
+                List.of(
+                        boxJson("Storage", new BlockPos(20, 70, 20), new BlockPos(20, 70, 20)),
+                        boxJson("Barn", new BlockPos(10, 64, 10), new BlockPos(11, 64, 11))
+                )
+        );
+        LvcManifest.Site site = LvcProjectService.createMainSiteFromSelection("Farm", "minecraft:overworld", selection);
+        LvcSitePlacement placement = LvcProjectService.createSitePlacement(selection.getEffectiveOrigin(), "minecraft:overworld");
 
-        LvcProjectService.updateSemanticLocalOrigin(repoDir, new BlockPos(20, 70, 20));
-        LvcProjectService.ProjectEditorState localState = LvcProjectService.readSemanticProjectEditorState(repoDir);
+        LvcTrackingOverlayService.seedTrackingOverlayOrigin(repoDir, placement);
+        LvcSitePlacement resolved = LvcTrackingOverlayService.resolveSitePlacementForTrackingOverlay(repoDir, site);
 
-        IntegrationTestSupport.assertEquals(new BlockPos(20, 70, 20), localState.localOrigin(), "local origin edit should update local.json");
-        IntegrationTestSupport.assertEquals(manifestBeforeLocalEdit, Files.readString(repoDir.resolve(LvcSemanticRepository.MANIFEST)), "local origin edit must not touch lvc.json");
-
-        try (Git git = Git.open(repoDir.toFile()))
-        {
-            IntegrationTestSupport.assertTrue(git.status().call().isClean(), "local-only editor change should keep Git status clean");
-        }
-
-        LvcProjectService.updateSemanticProjectName(repoDir, "Editor Renamed");
-        LvcManifest renamedManifest = LvcSemanticRepository.readManifest(repoDir);
-
-        IntegrationTestSupport.assertEquals("Editor Renamed", renamedManifest.name(), "project name edit should update manifest name");
-        IntegrationTestSupport.assertEquals("Editor Renamed", renamedManifest.site("main").name(), "single-site MVP should keep site name aligned with project name");
-
-        LvcProjectService.updateSemanticRegion(repoDir, "line", "Long Line", new BlockPos(0, 0, 0), new BlockPos(2, 1, 1));
-        LvcManifest resizedManifest = LvcSemanticRepository.readManifest(repoDir);
-
-        IntegrationTestSupport.assertEquals(List.of(2, 1, 1), resizedManifest.site("main").regions().get(0).size(), "region size edit should update versioned manifest");
-        IntegrationTestSupport.assertEquals(init.manifest().site("main").fullHashes(), resizedManifest.site("main").fullHashes(), "editor metadata edits should not recapture full hashes until commit");
-
-        LvcManifest.Region added = LvcProjectService.createSemanticRegion(repoDir, "Extra", new BlockPos(3, 0, 0), new BlockPos(1, 1, 1));
-        IntegrationTestSupport.assertEquals(2, LvcSemanticRepository.readManifest(repoDir).site("main").regions().size(), "new region should be versioned");
-
-        LvcProjectService.deleteSemanticRegion(repoDir, added.id());
-        IntegrationTestSupport.assertEquals(1, LvcSemanticRepository.readManifest(repoDir).site("main").regions().size(), "deleted region should be removed from versioned manifest");
+        IntegrationTestSupport.assertEquals(List.of(10, 64, 10), resolved.origin(), "first overlay load should use selection-derived project origin");
     }
 
     private static void projectServiceCreatesEmptyBrowserProjectWithoutCommit() throws Exception
     {
         Path gameDir = Files.createTempDirectory("lvc-empty-project-game-");
         BlockPos origin = new BlockPos(12, 65, -4);
-        LvcProjectService.EmptyProjectResult created = LvcProjectService.createEmptyProject(gameDir, "Manual Project", origin, "minecraft:overworld");
+        LvcProjectService.EmptyProjectResult created = LvcProjectService.createEmptyProject(gameDir, "Manual Project", "minecraft:overworld");
         Path repoDir = created.repositoryDirectory();
 
         IntegrationTestSupport.assertEquals("Manual Project", created.projectName(), "manual project display name");
         IntegrationTestSupport.assertTrue(Files.isDirectory(repoDir.resolve(".git")), "manual project should initialize Git repository");
         IntegrationTestSupport.assertTrue(Files.isRegularFile(repoDir.resolve(LvcSemanticRepository.MANIFEST)), "manual project should write manifest");
-        IntegrationTestSupport.assertTrue(Files.isRegularFile(repoDir.resolve(LvcSemanticRepository.LOCAL_JSON)), "manual project should write local state");
+        IntegrationTestSupport.assertTrue(!Files.exists(repoDir.resolve("local.json")), "manual project should not write local.json");
         IntegrationTestSupport.assertTrue(!Files.exists(repoDir.resolve("README.md")), "manual project should not generate README");
         IntegrationTestSupport.assertEquals(null, LvcRepository.resolveHead(repoDir), "manual project should start without an initial commit");
         IntegrationTestSupport.assertEquals(0, LvcProjectService.listCommits(repoDir).size(), "manual project history should start empty");
@@ -617,23 +587,31 @@ final class LvcSemanticStorageIntegrationTest
         }
 
         LvcManifest manifest = LvcSemanticRepository.readManifest(repoDir);
-        LvcLocalState localState = LvcSemanticRepository.readLocalState(repoDir);
 
         IntegrationTestSupport.assertEquals(0, manifest.site("main").regions().size(), "manual project should start with no regions");
         IntegrationTestSupport.assertEquals(0, manifest.site("main").fullHashes().size(), "manual project should start with no full hashes");
         IntegrationTestSupport.assertEquals(0, manifest.site("main").trackedHashes().size(), "manual project should start with no tracked hashes");
-        IntegrationTestSupport.assertEquals(List.of(12, 65, -4), localState.sites().get("main").origin(), "manual project local origin");
 
-        LvcProjectService.ProjectEditorState editorState = LvcProjectService.readSemanticProjectEditorState(repoDir);
-        IntegrationTestSupport.assertEquals(0, editorState.regions().size(), "project editor should open empty manual project");
+        try
+        {
+            LvcProjectService.createSemanticRegion(repoDir, "First Area", BlockPos.ZERO, new BlockPos(1, 1, 1));
+            throw new AssertionError("manual project region edit should require a loaded placement");
+        }
+        catch (LvcUserActionException e)
+        {
+            IntegrationTestSupport.assertEquals(LvcUserActionException.Reason.MISSING_PLACEMENT, e.reason(), "manual project region edit should require a loaded placement");
+        }
 
-        LvcProjectService.createSemanticRegion(repoDir, "First Area", BlockPos.ZERO, new BlockPos(1, 1, 1));
-        LvcManifest withRegion = LvcSemanticRepository.readManifest(repoDir);
+        LvcManifest withRegion = manifest.withSite(
+                "main",
+                manifest.site("main").withRegions(List.of(new LvcManifest.Region("first_area", "First Area", List.of(0, 0, 0), List.of(2, 2, 2))))
+        );
+        LvcSemanticRepository.writeVersionedProjectFiles(repoDir, withRegion);
         LvcSemanticRepository.CommitResult firstCommit = LvcSemanticRepository.commitSite(
                 repoDir,
                 withRegion,
-                LvcSemanticRepository.readLocalState(repoDir),
                 "main",
+                placementAt(origin.getX(), origin.getY(), origin.getZ()),
                 new FakeWorldReader("minecraft:stone"),
                 player("ManualProject"),
                 "first version"
@@ -644,6 +622,18 @@ final class LvcSemanticStorageIntegrationTest
         IntegrationTestSupport.assertEquals(1, firstCommit.manifest().site("main").regions().size(), "first commit should keep the new region");
         IntegrationTestSupport.assertEquals(1, firstCommit.manifest().site("main").fullHashes().size(), "first commit should capture tracked content");
         IntegrationTestSupport.assertEquals(firstCommit.manifest().site("main").fullHashes().keySet(), firstCommit.manifest().site("main").trackedHashes().keySet(), "first commit should track hash per full hash");
+    }
+
+    private static void projectSummaryToleratesMissingLocalStateWithoutCreatingIt() throws Exception
+    {
+        Path gameDir = Files.createTempDirectory("lvc-summary-missing-local-game-");
+        Path repoDir = LvcProjectService.createEmptyProject(gameDir, "Summary Project", "minecraft:overworld").repositoryDirectory();
+
+        LvcProjectService.ProjectSummary summary = LvcProjectService.projectSummary(new LvcProjectService.Project("Summary Project", repoDir));
+
+        IntegrationTestSupport.assertEquals("Summary Project", summary.name(), "summary should still read manifest name");
+        IntegrationTestSupport.assertEquals(null, summary.origin(), "summary should report unknown origin when placement is not loaded");
+        IntegrationTestSupport.assertTrue(!Files.exists(repoDir.resolve("local.json")), "summary should not generate local.json");
     }
 
     private static void captureStoresGapsAsUntrackedPositions() throws Exception
@@ -702,7 +692,7 @@ final class LvcSemanticStorageIntegrationTest
     {
         Path repoDir = Files.createTempDirectory("lvc-semantic-scan-");
         LvcManifest.Site site = singleLineSite(1);
-        LvcLocalState.SitePlacement placement = placementAt(0, 0, 0);
+        LvcSitePlacement placement = placementAt(0, 0, 0);
         FakeWorldReader reader = new FakeWorldReader("minecraft:stone");
         LvcCaptureEngine.Result committed = LvcCaptureEngine.captureSite(repoDir, site, placement, reader);
 
@@ -728,7 +718,7 @@ final class LvcSemanticStorageIntegrationTest
     {
         Path repoDir = Files.createTempDirectory("lvc-semantic-scan-inventory-");
         LvcManifest.Site site = singleLineSite(1);
-        LvcLocalState.SitePlacement placement = placementAt(0, 0, 0);
+        LvcSitePlacement placement = placementAt(0, 0, 0);
         FakeWorldReader reader = new FakeWorldReader(LvcMinecraftWorldReader.blockStateString(Blocks.FURNACE.defaultBlockState()));
         reader.setBlockEntity(new LvcIntPosition(0, 0, 0), inventoryBlockEntity("minecraft:stone", "Tracked Name"));
         LvcCaptureEngine.Result committed = LvcCaptureEngine.captureSite(repoDir, site, placement, reader);
@@ -761,7 +751,7 @@ final class LvcSemanticStorageIntegrationTest
     {
         Path repoDir = Files.createTempDirectory("lvc-semantic-scan-entities-");
         LvcManifest.Site site = singleLineSite(1);
-        LvcLocalState.SitePlacement placement = placementAt(0, 0, 0);
+        LvcSitePlacement placement = placementAt(0, 0, 0);
         FakeWorldReader reader = new FakeWorldReader("minecraft:stone");
         LvcChunkCoordinate coordinate = new LvcChunkCoordinate(0, 0, 0);
 
@@ -817,7 +807,7 @@ final class LvcSemanticStorageIntegrationTest
     {
         Path repoDir = Files.createTempDirectory("lvc-semantic-stale-tracked-");
         LvcManifest.Site site = singleLineSite(1);
-        LvcLocalState.SitePlacement placement = placementAt(0, 0, 0);
+        LvcSitePlacement placement = placementAt(0, 0, 0);
         FakeWorldReader reader = new FakeWorldReader("minecraft:stone");
         LvcCaptureEngine.Result committed = LvcCaptureEngine.captureSite(repoDir, site, placement, reader);
         LvcManifest.Site staleManifestSite = site.withHashRefs(
@@ -846,7 +836,7 @@ final class LvcSemanticStorageIntegrationTest
     {
         Path repoDir = Files.createTempDirectory("lvc-semantic-scan-unknown-");
         LvcManifest.Site site = singleLineSite(17);
-        LvcLocalState.SitePlacement placement = placementAt(0, 0, 0);
+        LvcSitePlacement placement = placementAt(0, 0, 0);
         FakeWorldReader reader = new FakeWorldReader("minecraft:stone");
         LvcCaptureEngine.Result committed = LvcCaptureEngine.captureSite(repoDir, site, placement, reader);
 
@@ -873,8 +863,7 @@ final class LvcSemanticStorageIntegrationTest
         IntegrationTestSupport.assertTrue(!manifestText.contains("\"content\""), "lvc.json should not expose internal content settings");
         IntegrationTestSupport.assertTrue(!manifestText.contains("\"full_hashes\""), "lvc.json should not contain full hash map");
         IntegrationTestSupport.assertTrue(!manifestText.contains("\"tracked_hashes\""), "lvc.json should not contain tracked hash map");
-        IntegrationTestSupport.assertFileContains(repoDir.resolve(LvcSemanticRepository.LOCAL_JSON), "\"format\": \"lvc-local-v1\"");
-        IntegrationTestSupport.assertFileContains(repoDir.resolve(LvcSemanticRepository.GITIGNORE), "/local.json");
+        IntegrationTestSupport.assertTrue(!Files.exists(repoDir.resolve("local.json")), "semantic init should not write local.json");
         IntegrationTestSupport.assertTrue(!Files.exists(repoDir.resolve("README.md")), "semantic init should not generate README");
 
         String objectId = result.manifest().site("main").fullHashes().get("0,0,0");
@@ -899,10 +888,9 @@ final class LvcSemanticStorageIntegrationTest
 
                 IntegrationTestSupport.assertTrue(files.contains(LvcSemanticRepository.MANIFEST), "semantic commit should include lvc.json");
                 IntegrationTestSupport.assertTrue(!files.contains("README.md"), "semantic commit should not include generated README");
-                IntegrationTestSupport.assertTrue(files.contains(LvcSemanticRepository.GITIGNORE), "semantic commit should include .gitignore");
                 IntegrationTestSupport.assertTrue(files.stream().anyMatch(path -> path.endsWith(LvcHashIndexCodec.EXTENSION)), "semantic commit should include hash index");
                 IntegrationTestSupport.assertTrue(files.stream().anyMatch(path -> path.endsWith(LvcChunkStore.EXTENSION)), "semantic commit should include chunk object");
-                IntegrationTestSupport.assertTrue(!files.contains(LvcSemanticRepository.LOCAL_JSON), "semantic commit must not include local.json");
+                IntegrationTestSupport.assertTrue(!files.contains("local.json"), "semantic commit must not include local.json");
 
                 String rawCommit = new String(repository.open(headId).getBytes(), java.nio.charset.StandardCharsets.UTF_8);
                 IntegrationTestSupport.assertTrue(rawCommit.contains("\nlvc-version 1\n"), "semantic commit should include LVC metadata");
@@ -934,7 +922,7 @@ final class LvcSemanticStorageIntegrationTest
         LvcSemanticRepository.CommitResult init = LvcSemanticRepository.initProject(repoDir, "File Overlay", singleLineSite(1), placementAt(0, 0, 0), reader, player("FileOverlay"));
 
         Path expectedFile = repoDir.toAbsolutePath().normalize().resolve(".git").resolve("lvc-cache").resolve("tracking-overlay.litematic").normalize();
-        Path actualFile = LvcProjectService.writeSemanticTrackingCacheFile(repoDir, init.manifest(), init.localState(), "main", "File Overlay");
+        Path actualFile = LvcProjectService.writeSemanticTrackingCacheFile(repoDir, init.manifest(), "main", placementAt(0, 0, 0), "File Overlay");
 
         IntegrationTestSupport.assertEquals(expectedFile, actualFile, "semantic tracking overlay cache should use the local Git cache path");
         IntegrationTestSupport.assertTrue(Files.isRegularFile(expectedFile), "semantic tracking overlay cache file should exist");
@@ -952,7 +940,7 @@ final class LvcSemanticStorageIntegrationTest
         LvcSemanticRepository.CommitResult init = LvcSemanticRepository.initProject(repoDir, "Semantic Noop", singleLineSite(1), placementAt(0, 0, 0), reader, player("SemanticNoop"));
         ObjectId headBefore = LvcRepository.resolveHead(repoDir);
 
-        LvcSemanticRepository.CommitResult noOp = LvcSemanticRepository.commitSite(repoDir, init.manifest(), init.localState(), "main", reader, player("SemanticNoop"), "same content");
+        LvcSemanticRepository.CommitResult noOp = LvcSemanticRepository.commitSite(repoDir, init.manifest(), "main", placementAt(0, 0, 0), reader, player("SemanticNoop"), "same content");
 
         IntegrationTestSupport.assertEquals(null, noOp.commit(), "same semantic content should not create a commit");
         IntegrationTestSupport.assertEquals(headBefore, LvcRepository.resolveHead(repoDir), "no-op semantic commit should not move HEAD");
@@ -973,7 +961,7 @@ final class LvcSemanticStorageIntegrationTest
 
         FakeWorldReader commandLikeReader = new FakeWorldReader(furnace);
         LvcSemanticRepository.CommitResult lossy = LvcSemanticRepository.commitSite(repoDir, init.manifest(),
-                init.localState(), "main", commandLikeReader, player("LossyEmptyBe"), "capture without servux");
+                "main", placementAt(0, 0, 0), commandLikeReader, player("LossyEmptyBe"), "capture without servux");
 
         IntegrationTestSupport.assertNotNull(lossy.commit(), "lossy no-Servux capture should commit inventory removal");
         IntegrationTestSupport.assertTrue(!headBefore.equals(lossy.commit().getId()), "lossy inventory-empty commit should move HEAD");
@@ -995,7 +983,7 @@ final class LvcSemanticStorageIntegrationTest
         reader.setBlock(new LvcIntPosition(1, 0, 0), "minecraft:dirt");
         LvcSemanticRepository.CommitResult init = LvcSemanticRepository.initProject(repoDir, "Semantic Schematic", singleLineSite(2), placementAt(0, 0, 0), reader, player("SemanticSchematic"));
 
-        fi.dy.masa.litematica.schematic.LitematicaSchematic schematic = LvcSemanticSchematicBuilder.buildWorkingTreeSchematic(repoDir, init.manifest(), init.localState(), "main");
+        fi.dy.masa.litematica.schematic.LitematicaSchematic schematic = LvcSemanticSchematicBuilder.buildWorkingTreeSchematic(repoDir, init.manifest(), "main", placementAt(0, 0, 0));
         fi.dy.masa.litematica.schematic.container.LitematicaBlockStateContainer container = schematic.getSubRegionContainer("Line");
 
         IntegrationTestSupport.assertNotNull(container, "semantic schematic should create a region container");
@@ -1017,8 +1005,8 @@ final class LvcSemanticStorageIntegrationTest
 
         LvcSemanticSchematicBuilder.BuildSession session = LvcSemanticSchematicBuilder.beginSchematicBuild(
                 init.manifest(),
-                init.localState(),
                 "main",
+                placementAt(0, 0, 0),
                 objectId -> LvcChunkStore.readObject(repoDir, objectId),
                 null,
                 (block, parsedState) -> block.projectPos().x() == 1
@@ -1059,8 +1047,8 @@ final class LvcSemanticStorageIntegrationTest
                 LvcWorldBackend.COMMANDS, liveReader, init.manifest().site("main"));
         LvcSemanticSchematicBuilder.BuildSession session = LvcSemanticSchematicBuilder.beginSchematicBuild(
                 init.manifest(),
-                init.localState(),
                 "main",
+                placementAt(0, 0, 0),
                 objectId -> LvcChunkStore.readObject(repoDir, objectId),
                 null,
                 planner::include
@@ -1083,6 +1071,10 @@ final class LvcSemanticStorageIntegrationTest
         IntegrationTestSupport.assertEquals(1, planner.ignoredBlockEntityTargets(), "command sparse should count ignored block entity targets");
         IntegrationTestSupport.assertEquals(0, liveReader.blockEntityReadCount(), "command sparse should not read live block entity NBT");
         IntegrationTestSupport.assertEquals(List.of(new BlockPos(2, 0, 0)), planner.furnaceXpCleanupCandidates(), "command sparse furnace cleanup candidates");
+        IntegrationTestSupport.assertEquals(List.of(
+                new LvcRemoteSparseTargetPlanner.CommandMutation(new BlockPos(1, 0, 0), Blocks.DIRT.defaultBlockState()),
+                new LvcRemoteSparseTargetPlanner.CommandMutation(new BlockPos(2, 0, 0), Blocks.STONE.defaultBlockState())
+        ), planner.commandMutations(), "command sparse should queue exact changed block mutations");
         IntegrationTestSupport.assertTrue(planner.affectedRegionIds().contains("line"), "command sparse should mark changed regions");
     }
 
@@ -1105,8 +1097,8 @@ final class LvcSemanticStorageIntegrationTest
                 LvcWorldBackend.COMMANDS, liveReader, init.manifest().site("main"));
         LvcSemanticSchematicBuilder.BuildSession session = LvcSemanticSchematicBuilder.beginSchematicBuild(
                 init.manifest(),
-                init.localState(),
                 "main",
+                placementAt(0, 0, 0),
                 objectId -> LvcChunkStore.readObject(repoDir, objectId),
                 null,
                 planner::include
@@ -1171,7 +1163,7 @@ final class LvcSemanticStorageIntegrationTest
         reader.setBlockEntity(new LvcIntPosition(0, 0, 0), blockEntity);
         LvcSemanticRepository.CommitResult init = LvcSemanticRepository.initProject(repoDir, "Semantic NBT Schematic", singleLineSite(1), placementAt(0, 0, 0), reader, player("SemanticSchematicNbt"));
 
-        fi.dy.masa.litematica.schematic.LitematicaSchematic schematic = LvcSemanticSchematicBuilder.buildWorkingTreeSchematic(repoDir, init.manifest(), init.localState(), "main");
+        fi.dy.masa.litematica.schematic.LitematicaSchematic schematic = LvcSemanticSchematicBuilder.buildWorkingTreeSchematic(repoDir, init.manifest(), "main", placementAt(0, 0, 0));
         Map<BlockPos, CompoundTag> blockEntities = schematic.getBlockEntityMapForRegion("Line");
         CompoundTag restored = blockEntities.get(new BlockPos(0, 0, 0));
 
@@ -1207,7 +1199,7 @@ final class LvcSemanticStorageIntegrationTest
         reader.setBlockEntity(new LvcIntPosition(0, 0, 0), blockEntity);
         LvcSemanticRepository.CommitResult init = LvcSemanticRepository.initProject(repoDir, "Semantic Component Inventory", singleLineSite(1), placementAt(0, 0, 0), reader, player("SemanticComponentInventory"));
 
-        fi.dy.masa.litematica.schematic.LitematicaSchematic schematic = LvcSemanticSchematicBuilder.buildWorkingTreeSchematic(repoDir, init.manifest(), init.localState(), "main");
+        fi.dy.masa.litematica.schematic.LitematicaSchematic schematic = LvcSemanticSchematicBuilder.buildWorkingTreeSchematic(repoDir, init.manifest(), "main", placementAt(0, 0, 0));
         CompoundTag restored = schematic.getBlockEntityMapForRegion("Line").get(new BlockPos(0, 0, 0));
 
         IntegrationTestSupport.assertNotNull(restored, "semantic schematic should restore component-backed block entity NBT");
@@ -1230,7 +1222,7 @@ final class LvcSemanticStorageIntegrationTest
         LvcSemanticRepository.CommitResult init = LvcSemanticRepository.initProject(repoDir, "ExportProject", singleLineSite(2), placementAt(0, 0, 0), reader, player("SemanticExport"));
 
         reader.setBlock(new LvcIntPosition(1, 0, 0), "minecraft:dirt");
-        LvcSemanticRepository.CommitResult update = LvcSemanticRepository.commitSite(repoDir, init.manifest(), init.localState(), "main", reader, player("SemanticExport"), "change export block");
+        LvcSemanticRepository.CommitResult update = LvcSemanticRepository.commitSite(repoDir, init.manifest(), "main", placementAt(0, 0, 0), reader, player("SemanticExport"), "change export block");
 
         IntegrationTestSupport.assertNotNull(update.commit(), "changed semantic export content should create a commit");
 
@@ -1263,7 +1255,7 @@ final class LvcSemanticStorageIntegrationTest
         LvcSemanticRepository.CommitResult init = LvcSemanticRepository.initProject(repoDir, "Semantic Update", singleLineSite(17), placementAt(0, 0, 0), reader, player("SemanticUpdate"));
 
         reader.setBlock(new LvcIntPosition(16, 0, 0), "minecraft:dirt");
-        LvcSemanticRepository.CommitResult update = LvcSemanticRepository.commitSite(repoDir, init.manifest(), init.localState(), "main", reader, player("SemanticUpdate"), "change second chunk");
+        LvcSemanticRepository.CommitResult update = LvcSemanticRepository.commitSite(repoDir, init.manifest(), "main", placementAt(0, 0, 0), reader, player("SemanticUpdate"), "change second chunk");
 
         IntegrationTestSupport.assertNotNull(update.commit(), "changed semantic content should create a commit");
         IntegrationTestSupport.assertEquals(init.manifest().site("main").fullHashes().get("0,0,0"), update.manifest().site("main").fullHashes().get("0,0,0"), "unchanged full hash should be reused");
@@ -1283,8 +1275,8 @@ final class LvcSemanticStorageIntegrationTest
         String oldObject = init.manifest().site("main").fullHashes().get("1,0,0");
 
         reader.setBlock(new LvcIntPosition(16, 0, 0), "minecraft:dirt");
-        LvcSemanticRepository.CommitResult update = LvcSemanticRepository.commitSite(repoDir, init.manifest(), init.localState(),
-                "main", reader, player("SemanticPrune"), "change second chunk");
+        LvcSemanticRepository.CommitResult update = LvcSemanticRepository.commitSite(repoDir, init.manifest(), "main",
+                placementAt(0, 0, 0), reader, player("SemanticPrune"), "change second chunk");
         String newObject = update.manifest().site("main").fullHashes().get("1,0,0");
 
         IntegrationTestSupport.assertNotNull(update.commit(), "changed semantic content should create a commit");
@@ -1312,8 +1304,8 @@ final class LvcSemanticStorageIntegrationTest
         IntegrationTestSupport.assertEquals(sharedObject, init.manifest().site("main").fullHashes().get("1,0,0"), "identical storage chunks should share one object");
 
         reader.setBlock(new LvcIntPosition(0, 0, 0), "minecraft:dirt");
-        LvcSemanticRepository.CommitResult update = LvcSemanticRepository.commitSite(repoDir, init.manifest(), init.localState(),
-                "main", reader, player("SemanticPruneShared"), "change first shared chunk");
+        LvcSemanticRepository.CommitResult update = LvcSemanticRepository.commitSite(repoDir, init.manifest(), "main",
+                placementAt(0, 0, 0), reader, player("SemanticPruneShared"), "change first shared chunk");
 
         IntegrationTestSupport.assertNotNull(update.commit(), "changed semantic content should create a commit");
         IntegrationTestSupport.assertTrue(!sharedObject.equals(update.manifest().site("main").fullHashes().get("0,0,0")), "changed chunk should stop using shared object");
@@ -1357,7 +1349,7 @@ final class LvcSemanticStorageIntegrationTest
 
         List<LvcManifest.Region> expandedRegions = List.of(new LvcManifest.Region("line", "Line", List.of(0, 0, 0), List.of(17, 1, 1)));
         reader.setBlock(new LvcIntPosition(16, 0, 0), "minecraft:dirt");
-        LvcSemanticRepository.CommitResult expanded = LvcSemanticRepository.updateSiteAreas(repoDir, init.manifest(), init.localState(), "main", expandedRegions, reader, player("SemanticAreas"), "expand area");
+        LvcSemanticRepository.CommitResult expanded = LvcSemanticRepository.updateSiteAreas(repoDir, init.manifest(), "main", placementAt(0, 0, 0), expandedRegions, reader, player("SemanticAreas"), "expand area");
 
         IntegrationTestSupport.assertNotNull(expanded.commit(), "expanded area should create a commit");
         IntegrationTestSupport.assertTrue(!initHead.equals(expanded.commit().getId()), "expanded area should move HEAD");
@@ -1368,7 +1360,7 @@ final class LvcSemanticStorageIntegrationTest
         IntegrationTestSupport.assertTrue(!removedAreaObject.equals(expanded.manifest().site("main").fullHashes().get("0,0,0")), "removed chunk object should be unique for prune assertion");
 
         List<LvcManifest.Region> shrunkRegions = List.of(new LvcManifest.Region("line", "Line", List.of(0, 0, 0), List.of(1, 1, 1)));
-        LvcSemanticRepository.CommitResult shrunk = LvcSemanticRepository.updateSiteAreas(repoDir, expanded.manifest(), expanded.localState(), "main", shrunkRegions, reader, player("SemanticAreas"), "shrink area");
+        LvcSemanticRepository.CommitResult shrunk = LvcSemanticRepository.updateSiteAreas(repoDir, expanded.manifest(), "main", placementAt(0, 0, 0), shrunkRegions, reader, player("SemanticAreas"), "shrink area");
 
         IntegrationTestSupport.assertNotNull(shrunk.commit(), "shrunk area should create a commit");
         IntegrationTestSupport.assertEquals(List.of(1, 1, 1), shrunk.manifest().site("main").regions().get(0).size(), "shrunk region should be versioned");

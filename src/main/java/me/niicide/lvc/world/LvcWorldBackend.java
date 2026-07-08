@@ -49,10 +49,15 @@ public enum LvcWorldBackend
 
     public LvcWorldReader createReader(Level world)
     {
+        return this.createReader(world, false);
+    }
+
+    public LvcWorldReader createReader(Level world, boolean requireFreshServuxBulkReply)
+    {
         return switch (this)
         {
             case DIRECT -> new LvcMinecraftWorldReader(world);
-            case SERVUX -> new LvcServuxWorldReader(world);
+            case SERVUX -> new LvcServuxWorldReader(world, requireFreshServuxBulkReply);
             case COMMANDS -> new LvcBlockStateOnlyWorldReader(world);
         };
     }

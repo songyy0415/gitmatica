@@ -206,7 +206,7 @@ final class LvcVersionWorkflow
             LvcPlayerIdentity identity = new LvcPlayerIdentity(player.getName().getString(), player.getUUID());
             var state = LvcProjectService.readSemanticProjectEditorState(controller.gui.repositoryDirectory);
             List<LvcManifest.Region> updatedRegions = LvcProjectService.createRegionsFromSelection(selection,
-                    state.localOrigin(), state.regions());
+                    state.placementOrigin(), state.regions());
             LvcSemanticCommitTask task = new LvcSemanticCommitTask(
                     handle.get(),
                     controller.gui.repositoryDirectory,

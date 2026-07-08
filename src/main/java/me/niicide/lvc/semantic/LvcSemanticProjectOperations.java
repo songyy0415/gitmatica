@@ -23,14 +23,14 @@ import me.niicide.lvc.model.LvcChunk;
 import me.niicide.lvc.model.LvcIntPosition;
 import me.niicide.lvc.storage.LvcChunkCodec;
 import me.niicide.lvc.storage.LvcChunkStore;
-import me.niicide.lvc.model.LvcLocalState;
 import me.niicide.lvc.model.LvcManifest;
+import me.niicide.lvc.model.LvcSitePlacement;
 import me.niicide.lvc.capture.LvcMinecraftWorldReader;
 import me.niicide.lvc.LvcPlayerIdentity;
 import me.niicide.lvc.LvcProjectService;
 import me.niicide.lvc.LvcUserActionException;
+import me.niicide.lvc.overlay.LvcTrackingOverlayService;
 import me.niicide.lvc.storage.LvcSemanticRepository;
-import me.niicide.lvc.semantic.LvcSemanticSchematicBuilder;
 import me.niicide.lvc.git.LvcProjectGitOps;
 import me.niicide.lvc.project.LvcProjectPaths;
 import me.niicide.lvc.project.LvcProjectPositions;
@@ -81,7 +81,7 @@ public final class LvcSemanticProjectOperations
         Level captureWorld = LvcWorldAccess.resolveSemanticCaptureWorld(world);
         String dimensionId = LvcMinecraftWorldReader.dimensionId(captureWorld);
         LvcManifest.Site site = LvcProjectSelectionStorage.createMainSiteFromSelection(displayName, dimensionId, selection);
-        LvcLocalState.SitePlacement placement = LvcProjectSelectionStorage.createSitePlacement(selection.getEffectiveOrigin(), dimensionId);
+        LvcSitePlacement placement = LvcProjectSelectionStorage.createSitePlacement(selection.getEffectiveOrigin(), dimensionId);
         LvcDiagnostics.debug("LvcSemanticProjectOperations: creating semantic project repo='{}' project='{}' dimension='{}' regions={} origin='{}'",
                 repositoryDirectory, displayName, dimensionId, validBoxCount, placement.origin());
         LvcSemanticRepository.CommitResult result = LvcCapturePublishCommitFlow.initProject(
@@ -93,15 +93,15 @@ public final class LvcSemanticProjectOperations
                 player
         );
         RevCommit commit = result.commit();
+        LvcTrackingOverlayService.seedTrackingOverlayOrigin(repositoryDirectory, placement);
 
         return new LvcProjectService.Result(repositoryDirectory, commit.getName());
     }
 
     public static LvcProjectService.EmptyProjectResult createEmptyProject(Path gameRunDirectory, String repositoryName,
-                                                                   BlockPos origin, String dimensionId) throws Exception
+                                                                   String dimensionId) throws Exception
     {
         Objects.requireNonNull(gameRunDirectory, "gameRunDirectory");
-        Objects.requireNonNull(origin, "origin");
         Objects.requireNonNull(dimensionId, "dimensionId");
 
         String displayName = LvcProjectPaths.normalizeDisplayName(repositoryName);
@@ -122,8 +122,7 @@ public final class LvcSemanticProjectOperations
         Files.createDirectories(repositoryDirectory);
 
         LvcManifest.Site site = new LvcManifest.Site("main", displayName, dimensionId, List.of(), Map.of());
-        LvcLocalState.SitePlacement placement = LvcProjectSelectionStorage.createSitePlacement(origin, dimensionId);
-        LvcSemanticRepository.initEmptyProject(repositoryDirectory, displayName, site, placement);
+        LvcSemanticRepository.initEmptyProject(repositoryDirectory, displayName, site);
 
         return new LvcProjectService.EmptyProjectResult(repositoryDirectory, displayName);
     }
@@ -154,16 +153,9 @@ public final class LvcSemanticProjectOperations
 
         Level captureWorld = LvcWorldAccess.resolveSemanticCaptureWorld(world);
         LvcManifest manifest = LvcSemanticRepository.readManifest(repositoryDirectory);
-        LvcLocalState localState = LvcSemanticRepository.readLocalState(repositoryDirectory);
-        String siteId = localState.activeSite();
+        String siteId = LvcSemanticRepository.defaultSiteId(manifest);
         LvcManifest.Site site = manifest.site(siteId);
-        LvcLocalState.SitePlacement placement = localState.sites().get(siteId);
-
-        if (placement == null)
-        {
-            throw new LvcUserActionException(LvcUserActionException.Reason.MISSING_LOCAL_PLACEMENT,
-                    "Missing local placement for active LVC site: " + siteId);
-        }
+        LvcSitePlacement placement = LvcTrackingOverlayService.requireSitePlacement(repositoryDirectory, site);
 
         String worldDimension = LvcMinecraftWorldReader.dimensionId(captureWorld);
 
@@ -361,18 +353,17 @@ public final class LvcSemanticProjectOperations
     {
         Objects.requireNonNull(repositoryDirectory, "repositoryDirectory");
 
-        LvcLocalState localState = LvcSemanticRepository.readLocalState(repositoryDirectory);
-
         try (Git git = Git.open(repositoryDirectory.toFile());
              RevWalk revWalk = new RevWalk(git.getRepository()))
         {
             Repository repository = git.getRepository();
             RevCommit commit = LvcProjectGitOps.resolveCommit(repository, revWalk, commitId);
             LvcManifest manifest = LvcSemanticRepository.readCommitManifest(repository, commit);
-            String siteId = localState.activeSite();
+            String siteId = LvcSemanticRepository.defaultSiteId(manifest);
             LvcManifest.Site site = manifest.site(siteId);
+            LvcSitePlacement placement = new LvcSitePlacement(site.dimension(), List.of(0, 0, 0));
             Map<String, byte[]> objectBytesById = readSemanticCommitChunkObjects(repository, commit, site);
-            LitematicaSchematic schematic = LvcSemanticSchematicBuilder.buildSchematic(manifest, localState, siteId, objectId ->
+            LitematicaSchematic schematic = LvcSemanticSchematicBuilder.buildSchematic(manifest, siteId, placement, objectId ->
             {
                 byte[] bytes = objectBytesById.get(objectId);
 
@@ -384,7 +375,7 @@ public final class LvcSemanticProjectOperations
                 return bytes;
             });
 
-            return new SemanticCommitSnapshot(commit.getName(), manifest, localState, siteId, site, schematic);
+            return new SemanticCommitSnapshot(commit.getName(), manifest, siteId, site, schematic);
         }
     }
 
@@ -419,18 +410,11 @@ public final class LvcSemanticProjectOperations
         }
 
         LvcManifest manifest = LvcSemanticRepository.readManifest(repositoryDirectory);
-        LvcLocalState localState = LvcSemanticRepository.readLocalState(repositoryDirectory);
-        String siteId = localState.activeSite();
+        String siteId = LvcSemanticRepository.defaultSiteId(manifest);
         LvcManifest.Site site = manifest.site(siteId);
-        LvcLocalState.SitePlacement placement = localState.sites().get(siteId);
+        LvcSitePlacement placement = LvcTrackingOverlayService.requireSitePlacement(repositoryDirectory, site);
 
-        if (placement == null)
-        {
-            throw new LvcUserActionException(LvcUserActionException.Reason.MISSING_LOCAL_PLACEMENT,
-                    "Missing local placement for active LVC site: " + siteId);
-        }
-
-        return new ActiveSemanticProject(manifest, localState, siteId, site, placement);
+        return new ActiveSemanticProject(manifest, siteId, site, placement);
     }
 
     private static void validateSemanticSiteReady(LvcManifest.Site site) throws IOException
@@ -441,7 +425,7 @@ public final class LvcSemanticProjectOperations
         }
     }
 
-    private static void validateSemanticPlacementDimension(LvcLocalState.SitePlacement placement, Level world) throws IOException
+    private static void validateSemanticPlacementDimension(LvcSitePlacement placement, Level world) throws IOException
     {
         String worldDimension = LvcMinecraftWorldReader.dimensionId(world);
 
@@ -452,12 +436,12 @@ public final class LvcSemanticProjectOperations
         }
     }
 
-    private record ActiveSemanticProject(LvcManifest manifest, LvcLocalState localState, String siteId,
-                                         LvcManifest.Site site, LvcLocalState.SitePlacement placement)
+    private record ActiveSemanticProject(LvcManifest manifest, String siteId,
+                                         LvcManifest.Site site, LvcSitePlacement placement)
     {
     }
 
-    private record SemanticCommitSnapshot(String commitId, LvcManifest manifest, LvcLocalState localState,
+    private record SemanticCommitSnapshot(String commitId, LvcManifest manifest,
                                           String siteId, LvcManifest.Site site,
                                           LitematicaSchematic schematic)
     {

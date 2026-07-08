@@ -4,8 +4,8 @@ import java.io.IOException;
 import java.nio.file.Path;
 import java.util.Map;
 import java.util.Set;
-import me.niicide.lvc.model.LvcLocalState;
 import me.niicide.lvc.model.LvcManifest;
+import me.niicide.lvc.model.LvcSitePlacement;
 import me.niicide.lvc.storage.LvcChunkStore;
 
 public final class LvcCaptureEngine
@@ -14,19 +14,19 @@ public final class LvcCaptureEngine
     {
     }
 
-    public static Result captureSite(Path repositoryDirectory, LvcManifest.Site site, LvcLocalState.SitePlacement placement,
+    public static Result captureSite(Path repositoryDirectory, LvcManifest.Site site, LvcSitePlacement placement,
                                      LvcWorldReader worldReader) throws IOException
     {
         return captureSite(site, placement, worldReader, (objectId, bytes) -> LvcChunkStore.writeObjectIfMissing(repositoryDirectory, objectId, bytes), false, true);
     }
 
-    public static Result scanSite(LvcManifest.Site site, LvcLocalState.SitePlacement placement,
+    public static Result scanSite(LvcManifest.Site site, LvcSitePlacement placement,
                                   LvcWorldReader worldReader) throws IOException
     {
         return captureSite(site, placement, worldReader, null, true, false);
     }
 
-    private static Result captureSite(LvcManifest.Site site, LvcLocalState.SitePlacement placement,
+    private static Result captureSite(LvcManifest.Site site, LvcSitePlacement placement,
                                       LvcWorldReader worldReader, LvcCaptureSession.ObjectIdResolver objectIdResolver,
                                       boolean allowUnknownChunks, boolean computeFullHashes) throws IOException
     {

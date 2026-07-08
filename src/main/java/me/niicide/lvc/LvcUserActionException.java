@@ -31,7 +31,7 @@ public class LvcUserActionException extends IOException
         OUT_OF_WORLD_BOUNDS,
         WRONG_DIMENSION,
         NO_AUTHORITATIVE_WORLD,
-        MISSING_LOCAL_PLACEMENT,
+        MISSING_PLACEMENT,
         MISSING_HEAD
     }
 }

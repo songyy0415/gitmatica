@@ -2,6 +2,7 @@ package me.niicide.lvc.task;
 
 import java.io.IOException;
 import java.nio.file.Path;
+import java.util.List;
 import java.util.Objects;
 import javax.annotation.Nullable;
 import org.eclipse.jgit.api.Git;
@@ -11,8 +12,8 @@ import org.eclipse.jgit.revwalk.RevWalk;
 import me.niicide.lvc.LvcDiagnostics;
 import me.niicide.lvc.LvcProjectService;
 import me.niicide.lvc.git.LvcProjectGitOps;
-import me.niicide.lvc.model.LvcLocalState;
 import me.niicide.lvc.model.LvcManifest;
+import me.niicide.lvc.model.LvcSitePlacement;
 import me.niicide.lvc.semantic.LvcSemanticSchematicBuilder;
 import me.niicide.lvc.storage.LvcChunkStore;
 import me.niicide.lvc.storage.LvcSemanticRepository;
@@ -55,9 +56,9 @@ public final class LvcSemanticExportTask extends LvcChunkedTaskBase<LvcProjectSe
             this.revWalk = new RevWalk(repository);
             this.commit = LvcProjectGitOps.resolveCommit(repository, this.revWalk, this.commitId);
             LvcManifest manifest = LvcSemanticRepository.readCommitManifest(repository, this.commit);
-            LvcLocalState localState = LvcSemanticRepository.readLocalState(this.repositoryDirectory);
-            String siteId = localState.activeSite();
+            String siteId = LvcSemanticRepository.defaultSiteId(manifest);
             LvcManifest.Site site = manifest.site(siteId);
+            LvcSitePlacement placement = new LvcSitePlacement(site.dimension(), List.of(0, 0, 0));
 
             if (site.regions().isEmpty())
             {
@@ -68,8 +69,8 @@ public final class LvcSemanticExportTask extends LvcChunkedTaskBase<LvcProjectSe
                     LvcLitematicExportFiles.commitBaseName(manifest.name(), this.commit.getName()));
             this.buildSession = LvcSemanticSchematicBuilder.beginSchematicBuild(
                     manifest,
-                    localState,
                     siteId,
+                    placement,
                     objectId -> this.readCommitObject(this.requireCommit(), objectId)
             );
             this.phase = Phase.BUILD;

@@ -40,18 +40,16 @@ import fi.dy.masa.litematica.schematic.verifier.SchematicVerifier;
 import fi.dy.masa.litematica.selection.AreaSelection;
 import fi.dy.masa.malilib.interfaces.ICompletionListener;
 import me.niicide.lvc.capture.LvcCaptureEngine;
-import me.niicide.lvc.model.LvcLocalState;
 import me.niicide.lvc.model.LvcManifest;
+import me.niicide.lvc.model.LvcSitePlacement;
 import me.niicide.lvc.storage.LvcSemanticRepository;
 import me.niicide.lvc.task.LvcSemanticRestoreEngine;
 import me.niicide.lvc.project.LvcProjectPaths;
-import me.niicide.lvc.project.LvcProjectPositions;
 import me.niicide.lvc.project.LvcProjectSelectionStorage;
 
 public final class LvcProjectService
 {
     public static final String REPOS_DIRECTORY = "gitmatica-projects";
-    public static final String LOCAL_JSON = "local.json";
     public static final String DEFAULT_BRANCH = "main";
     private static final int DELETE_RETRY_ATTEMPTS = 6;
     private static final long DELETE_RETRY_DELAY_MILLIS = 25L;
@@ -66,9 +64,9 @@ public final class LvcProjectService
         return LvcSemanticProjectOperations.createProject(gameRunDirectory, repositoryName, player, world, selection);
     }
 
-    public static EmptyProjectResult createEmptyProject(Path gameRunDirectory, String repositoryName, BlockPos origin, String dimensionId) throws Exception
+    public static EmptyProjectResult createEmptyProject(Path gameRunDirectory, String repositoryName, String dimensionId) throws Exception
     {
-        return LvcSemanticProjectOperations.createEmptyProject(gameRunDirectory, repositoryName, origin, dimensionId);
+        return LvcSemanticProjectOperations.createEmptyProject(gameRunDirectory, repositoryName, dimensionId);
     }
 
     @Nullable
@@ -169,7 +167,8 @@ public final class LvcProjectService
     {
         Objects.requireNonNull(project, "project");
         Path repositoryDirectory = project.directory().toAbsolutePath().normalize();
-        ProjectSummarySnapshot snapshot = projectSummarySnapshot(repositoryDirectory);
+        BlockPos origin = LvcTrackingOverlayService.trackingOverlayOrigin(repositoryDirectory);
+        ProjectSummarySnapshot snapshot = projectSummarySnapshot(repositoryDirectory, origin);
         CachedProjectSummary cached = PROJECT_SUMMARY_CACHE.get(repositoryDirectory);
 
         if (cached != null && cached.snapshot().equals(snapshot))
@@ -178,20 +177,16 @@ public final class LvcProjectService
         }
 
         LvcManifest manifest = LvcSemanticRepository.readManifest(repositoryDirectory);
-        LvcLocalState localState = LvcSemanticRepository.readLocalState(repositoryDirectory);
-        LvcLocalState.SitePlacement placement = localState.sites().get(localState.activeSite());
-        BlockPos origin = placement == null ? null : LvcProjectPositions.blockPosFromList(placement.origin());
         ProjectSummary summary = new ProjectSummary(manifest.name(), countCommitsAcrossLocalBranches(repositoryDirectory), origin);
 
         PROJECT_SUMMARY_CACHE.put(repositoryDirectory, new CachedProjectSummary(snapshot, summary));
         return summary;
     }
 
-    private static ProjectSummarySnapshot projectSummarySnapshot(Path repositoryDirectory) throws IOException, GitAPIException
+    private static ProjectSummarySnapshot projectSummarySnapshot(Path repositoryDirectory, @Nullable BlockPos origin) throws IOException, GitAPIException
     {
         long manifestModified = Files.getLastModifiedTime(repositoryDirectory.resolve(LvcSemanticRepository.MANIFEST)).toMillis();
-        long localModified = Files.getLastModifiedTime(repositoryDirectory.resolve(LvcSemanticRepository.LOCAL_JSON)).toMillis();
-        return new ProjectSummarySnapshot(manifestModified, localModified, LvcGitHistoryOps.localBranchRefsSnapshot(repositoryDirectory));
+        return new ProjectSummarySnapshot(manifestModified, origin, LvcGitHistoryOps.localBranchRefsSnapshot(repositoryDirectory));
     }
 
     public static ProjectEditorState readSemanticProjectEditorState(Path repositoryDirectory) throws IOException
@@ -204,15 +199,10 @@ public final class LvcProjectService
         LvcSemanticProjectEditor.updateProjectName(repositoryDirectory, projectName);
     }
 
-    public static void updateSemanticLocalOrigin(Path repositoryDirectory, BlockPos origin) throws IOException
-    {
-        LvcSemanticProjectEditor.updateLocalOrigin(repositoryDirectory, origin);
-    }
-
     public static boolean updateSemanticPlacementOrigin(Path repositoryDirectory, BlockPos origin) throws IOException
     {
-        LvcSemanticProjectEditor.updateLocalOrigin(repositoryDirectory, origin);
-        return LvcTrackingOverlayService.updateTrackingOverlayOrigin(repositoryDirectory, origin);
+        LvcSemanticProjectEditor.updatePlacementOrigin(repositoryDirectory, origin);
+        return true;
     }
 
     public static void updateSemanticRegion(Path repositoryDirectory, String regionId, String name, BlockPos min, BlockPos size) throws IOException
@@ -397,6 +387,11 @@ public final class LvcProjectService
         LvcTrackingOverlayService.removeTrackingOverlay(repositoryDirectory);
     }
 
+    public static void closeTrackingOverlay(Path repositoryDirectory)
+    {
+        LvcTrackingOverlayService.closeTrackingOverlay(repositoryDirectory);
+    }
+
     public static boolean focusTrackingOverlay(Path repositoryDirectory)
     {
         return LvcTrackingOverlayService.focusTrackingOverlay(repositoryDirectory);
@@ -416,17 +411,17 @@ public final class LvcProjectService
     }
 
     static LitematicaSchematic writeAndReloadSemanticTrackingSchematic(Path repositoryDirectory, LvcManifest manifest,
-                                                                       LvcLocalState localState, String siteId,
+                                                                       String siteId, LvcSitePlacement placement,
                                                                        String overlayName) throws IOException
     {
-        return LvcTrackingOverlayService.writeAndReloadSemanticTrackingSchematic(repositoryDirectory, manifest, localState, siteId, overlayName);
+        return LvcTrackingOverlayService.writeAndReloadSemanticTrackingSchematic(repositoryDirectory, manifest, siteId, placement, overlayName);
     }
 
     public static Path writeSemanticTrackingCacheFile(Path repositoryDirectory, LvcManifest manifest,
-                                               LvcLocalState localState, String siteId,
+                                               String siteId, LvcSitePlacement placement,
                                                String overlayName) throws IOException
     {
-        return LvcTrackingOverlayService.writeSemanticTrackingCacheFile(repositoryDirectory, manifest, localState, siteId, overlayName);
+        return LvcTrackingOverlayService.writeSemanticTrackingCacheFile(repositoryDirectory, manifest, siteId, placement, overlayName);
     }
 
     public static Path reposDirectory(Path gameRunDirectory)
@@ -460,7 +455,7 @@ public final class LvcProjectService
         return LvcProjectSelectionStorage.createRegionsFromSelection(selection, origin, existingRegions);
     }
 
-    public static LvcLocalState.SitePlacement createSitePlacement(BlockPos origin, String dimensionId)
+    public static LvcSitePlacement createSitePlacement(BlockPos origin, String dimensionId)
     {
         return LvcProjectSelectionStorage.createSitePlacement(origin, dimensionId);
     }
@@ -518,7 +513,7 @@ public final class LvcProjectService
     {
         try
         {
-            LvcTrackingOverlayService.removeTrackingOverlay(target);
+            LvcTrackingOverlayService.closeTrackingOverlay(target);
         }
         catch (RuntimeException | LinkageError e)
         {
@@ -624,7 +619,7 @@ public final class LvcProjectService
     {
     }
 
-    private record ProjectSummarySnapshot(long manifestModified, long localModified, Map<String, String> localBranchRefs)
+    private record ProjectSummarySnapshot(long manifestModified, @Nullable BlockPos origin, Map<String, String> localBranchRefs)
     {
     }
 
@@ -632,8 +627,7 @@ public final class LvcProjectService
     {
     }
 
-    public record ProjectEditorState(String projectName, String siteId, String siteName, String siteDimension,
-                                     String localDimension, BlockPos localOrigin, String worldHint,
+    public record ProjectEditorState(String projectName, BlockPos placementOrigin,
                                      List<LvcManifest.Region> regions)
     {
         public ProjectEditorState

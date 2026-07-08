@@ -61,7 +61,7 @@ public final class LvcSemanticScanTask extends LvcChunkedTaskBase<LvcProjectServ
             LvcSiteWorkPlan plan = LvcSiteWorkPlan.create(this.project.site(), this.project.placement());
             this.session = new LvcCaptureSession(
                     plan,
-                    this.backend.createReader(this.world),
+                    this.backend.createReader(this.world, this.backend == LvcWorldBackend.SERVUX),
                     null,
                     true,
                     false,

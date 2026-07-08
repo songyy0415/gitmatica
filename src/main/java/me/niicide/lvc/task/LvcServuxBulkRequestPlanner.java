@@ -98,8 +98,15 @@ final class LvcServuxBulkRequestPlanner
             }
         }
 
+        int completedWithoutReply = 0;
+
         for (ChunkPos column : completed)
         {
+            if (!LvcServuxBulkEntityCache.hasReply(column))
+            {
+                completedWithoutReply++;
+            }
+
             entityDataManager.markCompletedChunkDirty(column);
             this.inFlightColumns.remove(column);
             this.completedColumns.add(column);
@@ -107,8 +114,9 @@ final class LvcServuxBulkRequestPlanner
 
         if (!completed.isEmpty())
         {
-            LvcDiagnostics.debug(handle, "{} Servux bulk data received columns={} completedColumns={}/{} inFlight={}",
-                    phaseName, completed.size(), this.completedColumns.size(), this.totalColumns(), this.inFlightColumns.size());
+            LvcDiagnostics.debug(handle, "{} Servux bulk data completed columns={} completedWithoutReply={} completedColumns={}/{} inFlight={}",
+                    phaseName, completed.size(), completedWithoutReply,
+                    this.completedColumns.size(), this.totalColumns(), this.inFlightColumns.size());
         }
     }
 
