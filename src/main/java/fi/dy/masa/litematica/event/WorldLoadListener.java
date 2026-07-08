@@ -19,8 +19,8 @@ import fi.dy.masa.litematica.render.LitematicaRenderer;
 import fi.dy.masa.litematica.schematic.conversion.SchematicConversionMaps;
 import fi.dy.masa.litematica.schematic.placement.TemporaryWorldManager;
 import fi.dy.masa.litematica.world.SchematicWorldHandler;
-import me.zly2006.lvc.gui.LvcInterruptedOperationPrompts;
-import me.zly2006.lvc.task.LvcTaskRegistry;
+import me.niicide.lvc.gui.LvcInterruptedOperationPrompts;
+import me.niicide.lvc.task.LvcTaskRegistry;
 
 public class WorldLoadListener implements IWorldLoadListener
 {

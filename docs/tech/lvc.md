@@ -4,7 +4,7 @@ Note: this document describes the older/current `index.nbt` implementation path.
 
 LVC 是把 Minecraft 结构版本接入 Git 的重大尝试。
 
-所有新的类必须写在me.zly2006.lvc包下。
+所有新的类必须写在me.niicide.lvc包下。
 
 一个 LVC project 是一个 Git repo，它可以在 GitHub 上被同步。作为 MVP，首先要实现 commit。
 
@@ -12,7 +12,8 @@ LVC 是把 Minecraft 结构版本接入 Git 的重大尝试。
 
 - index.json （LVC 元数据和 sub-region 定义）
 - index.nbt （使用原版 vanilla structure NBT 保存的主内容）
-- local.json （本地 workspace 状态，必须写入 .gitignore）
+
+本地 placement origin 由 Litematica 的 schematic placement 状态保存，不写入 LVC repo 文件。
 
 项目使用jgit操作git。
 

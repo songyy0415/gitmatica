@@ -24,7 +24,7 @@ When checking out a commit or branch, LVC will:
 
 ### Commit
 
-1. Find the bbox. try to load from local.json, if not exist, fallback to current area selection.
+1. Find the tracked regions from versioned project metadata and the active Litematica placement origin.
 2. Export the bbox area into a schematic world, and then save it as index.nbt in vanilla structure format.
 3. if bbox changed, also update the index.json with the new bbox and subregion definition.
 4. Use jgit to create a commit with the new index.nbt, and custom metadata.

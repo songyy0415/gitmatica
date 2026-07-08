@@ -1,8 +1,8 @@
 package fi.dy.masa.litematica.event;
 
-import me.zly2006.lvc.LvcDiagnostics;
-import me.zly2006.lvc.gui.GuiLvcDiffViewer;
-import me.zly2006.lvc.overlay.LvcTrackingOverlayService;
+import me.niicide.lvc.LvcDiagnostics;
+import me.niicide.lvc.gui.GuiLvcDiffViewer;
+import me.niicide.lvc.overlay.LvcTrackingOverlayService;
 import net.minecraft.client.Minecraft;
 import net.minecraft.core.BlockPos;
 import net.minecraft.world.entity.Entity;

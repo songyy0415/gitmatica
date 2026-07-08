@@ -1148,5 +1148,5 @@
     "litematica.tool_mode.name.replace_block": "Замена блока",
     "litematica.tool_mode.name.schematic_placement": "Размещение голограммы",
     "litematica.warning.area_editor.area_rendering_disabled": "Примечание: В настоящее время отображение регионов отключено\nПроверьте [Отображение] -> %s, или [Клавиши] -> %s ['%s']",
-    "modmenu.descriptionTranslation.litematica": "Современный мод на схемы для LiteLoader, Rift, Fabric, итд."
+    "modmenu.descriptionTranslation.litematica": "Gitmatica добавляет управление версиями на базе Git для построек Minecraft."
 }

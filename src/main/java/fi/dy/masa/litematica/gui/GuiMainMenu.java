@@ -13,7 +13,7 @@ import fi.dy.masa.malilib.gui.button.ButtonBase;
 import fi.dy.masa.malilib.gui.button.ButtonGeneric;
 import fi.dy.masa.malilib.gui.button.IButtonActionListener;
 import fi.dy.masa.malilib.util.StringUtils;
-import me.zly2006.lvc.gui.GuiLvcProjectBrowser;
+import me.niicide.lvc.gui.GuiLvcProjectBrowser;
 
 public class GuiMainMenu extends GuiBase
 {

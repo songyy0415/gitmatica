@@ -24,8 +24,8 @@ import fi.dy.masa.litematica.gui.Icons;
 import fi.dy.masa.litematica.schematic.LitematicaSchematic;
 import fi.dy.masa.litematica.schematic.placement.SchematicPlacement;
 import fi.dy.masa.litematica.schematic.placement.SchematicPlacementManager;
-import me.zly2006.lvc.gui.LvcSchematicPlacementRowActions;
-import me.zly2006.lvc.overlay.LvcTrackingOverlayService;
+import me.niicide.lvc.gui.LvcSchematicPlacementRowActions;
+import me.niicide.lvc.overlay.LvcTrackingOverlayService;
 
 public class WidgetSchematicEntry extends WidgetListEntryBase<LitematicaSchematic>
 {

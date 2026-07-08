@@ -16,7 +16,7 @@ This document defines the long-term storage format for the new LVC MVP. Git rema
 Implemented:
 
 - `lvc.json` manifest model.
-- local-only `local.json` model.
+- Litematica placement-origin model.
 - fixed-size `16x16x16` LVC chunks.
 - tracked mask semantics where mask false means untracked, not air.
 - deterministic raw `.lvcchunk` codec.
@@ -52,8 +52,6 @@ project/
     sha256/
       ab/
         abcdef....lvcchunk
-  .gitignore
-  local.json
   .git/
 ```
 
@@ -62,11 +60,11 @@ Versioned files:
 - `lvc.json`: project manifest, sites, regions, and per-site hash index references.
 - `indexes/*.lvcidx`: raw binary per-site full/tracked hash indexes.
 - `objects/sha256/**.lvcchunk`: immutable content-addressed storage chunks.
-- `.gitignore`: must ignore `/local.json`.
 
-Local-only files:
+Local placement state:
 
-- `local.json`: clone-local world/server binding and site origins. This file must never be committed.
+- Gitmatica does not write clone-local placement files into the project repository.
+- Loaded project origins are Litematica schematic placement origins, persisted by Litematica per world/server.
 
 ## Terminology
 
@@ -90,13 +88,13 @@ Local-only files:
 LVC chunks are project-relative storage chunks.
 
 ```text
-world_pos = local_site_origin + project_relative_pos
+world_pos = litematica_placement_origin + project_relative_pos
 project_relative_pos = chunk_coord * chunk_size + local_chunk_pos
 ```
 
 Consequences:
 
-- Moving a site in `local.json` does not rewrite storage chunks.
+- Moving a Litematica placement does not rewrite storage chunks.
 - One LVC chunk may overlap multiple real Minecraft chunks or sections.
 - Scan/capture code must map LVC chunks to all touched authoritative world chunks.
 - The repo stores the build's coordinate system, not the Minecraft world chunk grid.
@@ -167,38 +165,16 @@ Overlap policy:
 - Storage uses the union of all region volumes, so an overlapped world position is stored once.
 - If a future Litematic import finds conflicting contents for the same project coordinate across overlapping sub-regions, reject the import instead of guessing.
 
-## Local State: `local.json`
+## Placement State
 
-`local.json` binds the versioned project to this clone's world/server placement.
-
-Example:
-
-```json
-{
-  "format": "lvc-local-v1",
-  "project_id": "2f3b5d3a-64c1-46c1-9658-193d24283e68",
-  "active_site": "overworld_main",
-  "sites": {
-    "overworld_main": {
-      "dimension": "minecraft:overworld",
-      "origin": [1000, 64, 1000],
-      "world_hint": "Survival Server"
-    },
-    "nether_roof": {
-      "dimension": "minecraft:the_nether",
-      "origin": [125, 128, 125],
-      "world_hint": "Survival Server"
-    }
-  }
-}
-```
+Gitmatica does not write clone-local placement files into the project repository.
 
 Required rules:
 
-- `local.json` must be ignored by Git.
-- Every local site entry is keyed by versioned `site.id`.
-- `origin` is local clone state and must not be written to `lvc.json`.
-- Missing local placement for a site makes that site `UNKNOWN` for scan/commit/restore in this clone.
+- Opening a project creates or attaches a normal Litematica schematic placement at the current player block position.
+- Litematica owns loaded-placement persistence per world/server.
+- Project editor origin changes must update the Litematica placement origin directly.
+- If no project placement is loaded, scan/commit/restore/editor placement operations must report a missing placement for this clone.
 
 ## Object Path
 
@@ -320,13 +296,12 @@ If canonical NBT writing is not available from Minecraft helpers, implement a sm
 Input:
 
 - `lvc.json`
-- `local.json`
 - selected site IDs, or all sites for full commit
 - authoritative server/integrated-server world access
 
 Algorithm:
 
-1. Validate manifest and local placement.
+1. Validate manifest and loaded placement.
 2. For each selected site, collect regions.
 3. Treat same-site regions as non-owning tracking masks. Overlapping regions are allowed.
 4. Enumerate all LVC chunks intersecting the site regions.
@@ -354,10 +329,9 @@ Untracked positions must never be committed, restored, diffed, or overwritten.
 1. Run capture for the selected commit scope.
 2. Update the site's `.lvcidx` with new chunk hashes.
 3. Candidate-prune old full object files whose previous chunk refs changed or disappeared and whose object IDs are not referenced by the resulting manifest/index state.
-4. Stage `lvc.json`, `indexes/*.lvcidx`, new object files, object deletions, and `.gitignore`.
-5. Do not stage `local.json`.
-6. If no staged changes exist, report `nothing to commit`.
-7. Create a Git commit with player identity and message.
+4. Stage `lvc.json`, `indexes/*.lvcidx`, new object files, and object deletions.
+5. If no staged changes exist, report `nothing to commit`.
+6. Create a Git commit with player identity and message.
 
 Pruning is current-tree cleanup only. Older commits and branches keep their historical `.lvcchunk` blobs through Git commit trees; LVC does not run automatic Git garbage collection.
 
@@ -406,7 +380,6 @@ Export:
 ## MVP Validation Checklist
 
 - `lvc.json` validates.
-- `local.json` is ignored by Git.
 - Same chunk content produces the same SHA-256 hash.
 - Changing one block changes only the intersecting LVC chunk object hash.
 - Independent region gaps remain untracked.

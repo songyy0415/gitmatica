@@ -1,21 +1,21 @@
 {
 	"schemaVersion": 1,
-	"id": "litematica",
-	"name": "Gitmatica",
+	"id": "${mod_id}",
+	"name": "${mod_name}",
 	"version": "${mod_version}",
 
 	"description": "A Litematica fork with Git-backed structure version control for tracking, committing, branching, and restoring builds.",
 	"authors": [
-		"niicide"
+		"${author}"
 	],
 	"contributors": [
 		"masa",
 		"Sakura-Ryoko"
 	],
 	"contact": {
-		"homepage": "https://github.com/Arnavpmr/GitMatica",
-		"issues": "https://github.com/Arnavpmr/GitMatica/issues",
-		"sources": "https://github.com/Arnavpmr/GitMatica"
+		"homepage": "https://github.com/Arnavpmr/gitmatica",
+		"issues": "https://github.com/Arnavpmr/gitmatica/issues",
+		"sources": "https://github.com/Arnavpmr/gitmatica"
 	},
 
 	"license": "LGPL-3.0-only",
@@ -36,10 +36,10 @@
     "accessWidener": "litematica.accesswidener",
 
 	"depends": {
-		"minecraft": "~26.2-",
-		"malilib": ">=0.29.2- <0.30.0-"
+		"minecraft": "~${minecraft_version}-",
+		"malilib": ">=${malilib_version}- <0.30.0-"
 	},
 	"breaks": {
-		"malilib": "<0.29.2-"
+		"malilib": "<${malilib_version}-"
 	}
 }

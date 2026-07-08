@@ -27,6 +27,8 @@ configurations {
 	implementation.extendsFrom shadow
 }
 
+ext.gitmaticaLoaderVersion = "${project.litematica_base_version}-gitmatica.${project.gitmatica_version}"
+
 dependencies {
 	minecraft "com.mojang:minecraft:${project.minecraft_version}"
 	implementation "net.fabricmc:fabric-loader:${project.fabric_loader_version}"
@@ -61,7 +63,7 @@ tasks.register('integrationTest', JavaExec) {
 	group = 'verification'
 	description = 'Runs integration tests without mocks.'
 	classpath = sourceSets.integrationTest.runtimeClasspath
-	mainClass = 'me.zly2006.lvc.LvcRepositoryIntegrationTest'
+	mainClass = 'me.niicide.lvc.LvcRepositoryIntegrationTest'
 }
 
 check.dependsOn integrationTest
@@ -69,7 +71,10 @@ check.dependsOn integrationTest
 base {
 	group = project.group + "." + project.mod_id
 	archivesName = project.mod_file_name + '-' + project.minecraft_version_out
-	version = project.mod_version
+	// Jar filenames use Gitmatica's release version. fabric.mod.json uses
+	// gitmaticaLoaderVersion so Fabric dependency checks still see the
+	// compatible upstream Litematica/MaLiLib base version.
+	version = project.gitmatica_version
 
 	if (version.endsWith('-dev')) {
 		version += "." + new Date().format('yyyyMMdd.HHmmss')
@@ -96,13 +101,24 @@ processResources {
 	exclude '**/*.xcf'
 	exclude '**/xcf'
 
-	// this will ensure that this task is redone when the versions change.
-	//inputs.property "minecraft_version", project.project.minecraft_version
-
-	inputs.property "mod_version", project.mod_version
+	inputs.properties([
+			"mod_id": project.mod_id,
+			"mod_name": project.mod_name,
+			"mod_version": project.gitmaticaLoaderVersion,
+			"author": project.author,
+			"minecraft_version": project.minecraft_version,
+			"malilib_version": project.malilib_version
+	])
 
 	filesMatching("fabric.mod.json") {
-		expand "mod_version": project.mod_version
+		expand([
+				"mod_id": project.mod_id,
+				"mod_name": project.mod_name,
+				"mod_version": project.gitmaticaLoaderVersion,
+				"author": project.author,
+				"minecraft_version": project.minecraft_version,
+				"malilib_version": project.malilib_version
+		])
 	}
 }
 
