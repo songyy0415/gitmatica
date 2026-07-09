@@ -6,6 +6,7 @@ import it.unimi.dsi.fastutil.objects.ReferenceOpenHashSet;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.gui.screens.Screen;
 import net.minecraft.client.gui.screens.inventory.MenuAccess;
+import net.minecraft.client.gui.screens.inventory.ShulkerBoxScreen;
 import net.minecraft.client.renderer.state.gui.GuiItemRenderState;
 import net.minecraft.core.BlockPos;
 import net.minecraft.world.Container;
@@ -14,6 +15,7 @@ import net.minecraft.world.entity.player.Inventory;
 import net.minecraft.world.inventory.ResultContainer;
 import net.minecraft.world.inventory.Slot;
 import net.minecraft.world.item.ItemStack;
+import net.minecraft.world.level.block.ShulkerBoxBlock;
 import net.minecraft.world.level.block.entity.BlockEntity;
 import net.minecraft.world.level.block.state.BlockState;
 import net.minecraft.world.phys.BlockHitResult;
@@ -76,7 +78,9 @@ public class VerifierInventoryOverlay
             return;
         }
 
-        bindOpenContainer(screen, lastClickedPos);
+        BlockPos pos = lastClickedPos;
+        lastClickedPos = null;
+        bindOpenContainer(screen, pos);
     }
 
     public static void markOpenContainerChanged()
@@ -245,19 +249,30 @@ public class VerifierInventoryOverlay
         }
 
         BlockState state = mc.level.getBlockState(pos);
-        boundContainer = validSlot.container;
-        boundPos = pos.immutable();
-        boundExpected = VerifierInventoryLookup.getSchematicInventory(pos, state).orElse(null);
+        VerifierInventorySide expected = VerifierInventoryLookup.getSchematicInventory(pos, state).orElse(null);
 
-        if (boundExpected == null)
+        if (expected == null ||
+            screenMatchesClickedBlock(screen, state) == false ||
+            containerMatchesExpectedInventory(validSlot.container, expected) == false)
         {
-            boundContainer = null;
-            boundPos = null;
             return;
         }
 
+        boundContainer = validSlot.container;
+        boundPos = pos.immutable();
+        boundExpected = expected;
         boundPreview = createOpenContainerPreview(pos, boundContainer, boundExpected);
         boundContainerSignature = inventorySignature(boundContainer);
+    }
+
+    private static boolean containerMatchesExpectedInventory(Container container, VerifierInventorySide expected)
+    {
+        return container.getContainerSize() == expected.inventory().getContainerSize();
+    }
+
+    private static boolean screenMatchesClickedBlock(Screen screen, BlockState state)
+    {
+        return (state.getBlock() instanceof ShulkerBoxBlock) == false || screen instanceof ShulkerBoxScreen;
     }
 
     @Nullable
