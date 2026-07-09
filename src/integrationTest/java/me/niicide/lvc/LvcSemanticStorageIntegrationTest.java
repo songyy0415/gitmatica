@@ -104,6 +104,7 @@ final class LvcSemanticStorageIntegrationTest
         IntegrationTestSupport.run("semantic repository init commits manifest and objects", LvcSemanticStorageIntegrationTest::semanticRepositoryInitCommitsManifestAndObjects);
         IntegrationTestSupport.run("tracking overlay display name includes short head commit", LvcSemanticStorageIntegrationTest::trackingOverlayDisplayNameIncludesShortHeadCommit);
         IntegrationTestSupport.run("semantic tracking overlay cache is file backed", LvcSemanticStorageIntegrationTest::semanticTrackingOverlayCacheIsFileBacked);
+        IntegrationTestSupport.run("corrupt semantic tracking overlay descriptor is recoverable", LvcSemanticStorageIntegrationTest::corruptSemanticTrackingOverlayDescriptorIsRecoverable);
         IntegrationTestSupport.run("semantic working tree schematic loads full hashes", LvcSemanticStorageIntegrationTest::semanticWorkingTreeSchematicLoadsFullHashes);
         IntegrationTestSupport.run("semantic sparse schematic uses structure void for skipped blocks", LvcSemanticStorageIntegrationTest::semanticSparseSchematicUsesStructureVoidForSkippedBlocks);
         IntegrationTestSupport.run("remote command sparse planner builds block state only schematic", LvcSemanticStorageIntegrationTest::remoteCommandSparsePlannerBuildsBlockStateOnlySchematic);
@@ -921,16 +922,40 @@ final class LvcSemanticStorageIntegrationTest
         FakeWorldReader reader = new FakeWorldReader("minecraft:stone");
         LvcSemanticRepository.CommitResult init = LvcSemanticRepository.initProject(repoDir, "File Overlay", singleLineSite(1), placementAt(0, 0, 0), reader, player("FileOverlay"));
 
-        Path expectedFile = repoDir.toAbsolutePath().normalize().resolve(".git").resolve("lvc-cache").resolve("tracking-overlay.litematic").normalize();
+        Path expectedDirectory = repoDir.toAbsolutePath().normalize().resolve(".git").resolve("lvc-cache").normalize();
         Path actualFile = LvcProjectService.writeSemanticTrackingCacheFile(repoDir, init.manifest(), "main", placementAt(0, 0, 0), "File Overlay");
+        String actualFileName = actualFile.getFileName().toString();
 
-        IntegrationTestSupport.assertEquals(expectedFile, actualFile, "semantic tracking overlay cache should use the local Git cache path");
-        IntegrationTestSupport.assertTrue(Files.isRegularFile(expectedFile), "semantic tracking overlay cache file should exist");
+        IntegrationTestSupport.assertEquals(expectedDirectory, actualFile.getParent(), "semantic tracking overlay cache should use the local Git cache path");
+        IntegrationTestSupport.assertTrue(actualFileName.startsWith("tracking-overlay-"), "semantic tracking overlay cache should use a generated tracking overlay file name");
+        IntegrationTestSupport.assertTrue(actualFileName.endsWith(".litematic"), "semantic tracking overlay cache should be a litematic file");
+        IntegrationTestSupport.assertTrue(Files.isRegularFile(actualFile), "semantic tracking overlay cache file should exist");
+
+        Path secondFile = LvcProjectService.writeSemanticTrackingCacheFile(repoDir, init.manifest(), "main", placementAt(0, 0, 0), "File Overlay");
+        IntegrationTestSupport.assertTrue(!actualFile.equals(secondFile), "semantic tracking overlay cache writes should not overwrite the previous file path");
+        IntegrationTestSupport.assertTrue(Files.isRegularFile(secondFile), "second semantic tracking overlay cache file should exist");
 
         try (Git git = Git.open(repoDir.toFile()))
         {
             IntegrationTestSupport.assertTrue(git.status().call().isClean(), "semantic overlay cache under .git should not dirty the project");
         }
+    }
+
+    private static void corruptSemanticTrackingOverlayDescriptorIsRecoverable() throws Exception
+    {
+        bootstrapMinecraft();
+
+        Path repoDir = Files.createTempDirectory("lvc-semantic-corrupt-overlay-descriptor-");
+        FakeWorldReader reader = new FakeWorldReader("minecraft:stone");
+        LvcSemanticRepository.CommitResult init = LvcSemanticRepository.initProject(repoDir, "Corrupt Overlay", singleLineSite(1), placementAt(0, 0, 0), reader, player("CorruptOverlay"));
+        Path descriptor = repoDir.toAbsolutePath().normalize().resolve(".git").resolve("lvc-cache").resolve("tracking-overlay.json");
+
+        LvcProjectService.writeSemanticTrackingCacheFile(repoDir, init.manifest(), "main", placementAt(0, 0, 0), "Corrupt Overlay");
+        Files.createDirectories(descriptor.getParent());
+        Files.writeString(descriptor, "{", StandardCharsets.UTF_8);
+
+        IntegrationTestSupport.assertTrue(!LvcTrackingOverlayService.isSemanticTrackingCacheCurrent(repoDir),
+                "corrupt semantic tracking overlay descriptor should be ignored so the overlay can rebuild");
     }
 
     private static void semanticRepositoryNoOpCommitReportsNoChanges() throws Exception

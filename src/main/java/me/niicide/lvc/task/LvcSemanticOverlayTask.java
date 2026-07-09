@@ -94,7 +94,6 @@ public final class LvcSemanticOverlayTask extends LvcChunkedTaskBase<LvcProjectS
                     this.repositoryDirectory,
                     this.manifest.site(this.siteId)
             );
-            LvcTrackingOverlayService.removeTrackingOverlay(this.repositoryDirectory);
 
             this.overlayName = LvcTrackingOverlayService.trackingOverlayDisplayName(this.repositoryDirectory, this.manifest.name());
             this.lootPreviewWorld = LvcTrackingOverlayService.resolveLootPreviewWorld(this.clientLevel, this.placementState);
@@ -137,6 +136,7 @@ public final class LvcSemanticOverlayTask extends LvcChunkedTaskBase<LvcProjectS
         if (this.phase == Phase.LOAD_CACHE)
         {
             long started = Util.getNanos();
+            LvcTrackingOverlayService.removeTrackingOverlay(this.repositoryDirectory);
             LitematicaSchematic schematic = LvcTrackingOverlayService.reloadLitematicaSchematic(
                     LvcTrackingOverlayService.semanticTrackingCachePath(this.repositoryDirectory)
             );
@@ -194,6 +194,7 @@ public final class LvcSemanticOverlayTask extends LvcChunkedTaskBase<LvcProjectS
         if (this.phase == Phase.RELOAD_CACHE)
         {
             long started = Util.getNanos();
+            LvcTrackingOverlayService.removeTrackingOverlay(this.repositoryDirectory);
             LitematicaSchematic reloaded = LvcTrackingOverlayService.reloadLitematicaSchematic(this.requireCacheFile());
 
             if (reloaded == null)

@@ -1,14 +1,22 @@
 package me.niicide.lvc.overlay;
 
 import java.io.IOException;
+import java.lang.reflect.Method;
+import java.nio.ByteBuffer;
 import java.nio.charset.StandardCharsets;
+import java.nio.channels.FileChannel;
+import java.nio.file.AtomicMoveNotSupportedException;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.nio.file.StandardCopyOption;
+import java.nio.file.StandardOpenOption;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
+import java.util.Set;
+import java.util.UUID;
 import javax.annotation.Nullable;
 import com.google.gson.Gson;
 import com.google.gson.GsonBuilder;
@@ -22,7 +30,10 @@ import net.minecraft.client.Minecraft;
 import net.minecraft.client.multiplayer.ClientLevel;
 import net.minecraft.core.BlockPos;
 import net.minecraft.server.level.ServerLevel;
+import net.minecraft.world.entity.Entity;
+import net.minecraft.world.level.ChunkPos;
 import net.minecraft.world.level.Level;
+import net.minecraft.world.phys.AABB;
 import me.niicide.lvc.LvcDiagnostics;
 import me.niicide.lvc.LvcUserActionException;
 import me.niicide.lvc.git.LvcProjectGitOps;
@@ -38,11 +49,16 @@ import me.niicide.lvc.world.LvcWorldAccess;
 
 import fi.dy.masa.litematica.data.DataManager;
 import fi.dy.masa.litematica.data.SchematicHolder;
+import fi.dy.masa.litematica.render.LitematicaRenderer;
 import fi.dy.masa.litematica.schematic.LitematicaSchematic;
 import fi.dy.masa.litematica.schematic.placement.SchematicPlacement;
+import fi.dy.masa.litematica.schematic.placement.SubRegionPlacement.RequiredEnabled;
 import fi.dy.masa.litematica.schematic.verifier.SchematicVerifier;
 import fi.dy.masa.litematica.schematic.verifier.SchematicVerifier.MismatchType;
+import fi.dy.masa.litematica.selection.Box;
 import fi.dy.masa.litematica.util.OverlayType;
+import fi.dy.masa.litematica.util.PositionUtils;
+import fi.dy.masa.litematica.world.SchematicEntityLookup;
 import fi.dy.masa.litematica.world.SchematicWorldHandler;
 import fi.dy.masa.litematica.world.WorldSchematic;
 import fi.dy.masa.malilib.interfaces.ICompletionListener;
@@ -52,8 +68,10 @@ import fi.dy.masa.malilib.util.data.Color4f;
 public final class LvcTrackingOverlayService
 {
     private static final String TRACKING_OVERLAY_CACHE_DIRECTORY = "lvc-cache";
-    private static final String TRACKING_OVERLAY_CACHE_FILE = "tracking-overlay.litematic";
+    private static final String TRACKING_OVERLAY_CACHE_FILE_STEM = "tracking-overlay";
+    private static final String TRACKING_OVERLAY_CACHE_FILE_PREFIX = TRACKING_OVERLAY_CACHE_FILE_STEM + "-";
     private static final String TRACKING_OVERLAY_DESCRIPTOR_FILE = "tracking-overlay.json";
+    private static final int TRACKING_OVERLAY_COMMIT_TOKEN_LENGTH = 8;
     private static final Color4f CHANGE_OVERLAY_ADDED = Color4f.fromColor(0x33CC33, 0.30f);
     private static final Color4f CHANGE_OVERLAY_REMOVED = Color4f.fromColor(0xFF3333, 0.30f);
     private static final Color4f CHANGE_OVERLAY_STATE = Color4f.fromColor(0xFAF000, 0.30f);
@@ -65,6 +83,7 @@ public final class LvcTrackingOverlayService
     private static final Gson GSON = new GsonBuilder().setPrettyPrinting().create();
     private static final Map<Path, TrackingOverlayEntry> ACTIVE_TRACKING_OVERLAYS = new HashMap<>();
     private static final Map<Path, BlockPos> TRACKING_OVERLAY_ORIGIN_CACHE = new HashMap<>();
+    @Nullable private static final Method SCHEMATIC_ENTITY_LOOKUP_REMOVE_BY_UUID = resolveSchematicEntityLookupRemoveByUuid();
 
     private LvcTrackingOverlayService()
     {
@@ -90,8 +109,6 @@ public final class LvcTrackingOverlayService
         LvcManifest.Site site = manifest.site(siteId);
         LvcSitePlacement placementState = resolveSitePlacementForTrackingOverlay(repositoryDirectory, site);
 
-        removeTrackingOverlay(repositoryDirectory);
-
         String overlayName = trackingOverlayDisplayName(repositoryDirectory, manifest.name());
         ServerLevel lootPreviewWorld = resolveLootPreviewWorld(clientLevel, placementState);
         LitematicaSchematic schematic = writeAndReloadSemanticTrackingSchematic(repositoryDirectory, manifest, siteId, placementState, overlayName, lootPreviewWorld);
@@ -105,7 +122,8 @@ public final class LvcTrackingOverlayService
         }
 
         LvcProjectService.TrackingOverlay overlay = addTrackingOverlay(repositoryDirectory, placement, verifierWorld, completionListener, startVerifier);
-        trackOverlay(repositoryDirectory, overlay, currentOverlayDescriptor(repositoryDirectory, siteId, placementState.dimension(), overlayName));
+        trackOverlay(repositoryDirectory, overlay, currentOverlayDescriptor(repositoryDirectory, siteId, placementState.dimension(),
+                placement.getSchematicFile(), overlayName));
         return overlay;
     }
 
@@ -140,7 +158,8 @@ public final class LvcTrackingOverlayService
             try
             {
                 LitematicaSchematic schematic = overlay.placement().getSchematic();
-                DataManager.getSchematicPlacementManager().removeSchematicPlacement(overlay.placement(), false);
+                purgeSchematicWorldEntitiesForTrackingPlacement(repositoryDirectory, overlay.placement());
+                DataManager.getSchematicPlacementManager().removeSchematicPlacement(overlay.placement(), true);
                 SchematicHolder.getInstance().removeSchematic(schematic);
             }
             catch (RuntimeException | LinkageError e)
@@ -175,12 +194,18 @@ public final class LvcTrackingOverlayService
         }
 
         Path key = trackingOverlayKey(repositoryDirectory);
-        Path cacheFile = semanticTrackingCacheFile(repositoryDirectory);
         LvcManifest manifest = LvcSemanticRepository.readManifest(repositoryDirectory);
         String siteId = LvcSemanticRepository.defaultSiteId(manifest);
         LvcManifest.Site site = manifest.site(siteId);
 
         if (!isSemanticTrackingCacheCurrent(repositoryDirectory))
+        {
+            return null;
+        }
+
+        Path cacheFile = currentSemanticTrackingCacheFile(repositoryDirectory);
+
+        if (cacheFile == null)
         {
             return null;
         }
@@ -210,7 +235,8 @@ public final class LvcTrackingOverlayService
         }
 
         LvcProjectService.TrackingOverlay restoredOverlay = wrapExistingPlacement(restoredPlacement);
-        trackOverlay(repositoryDirectory, restoredOverlay, currentOverlayDescriptor(repositoryDirectory, siteId, currentPlacementDimension(site), expectedName));
+        trackOverlay(repositoryDirectory, restoredOverlay, currentOverlayDescriptor(repositoryDirectory, siteId, currentPlacementDimension(site),
+                restoredPlacement.getSchematicFile(), expectedName));
         attachCompletionListener(restoredOverlay, completionListener);
         focusTrackingOverlayInternal(repositoryDirectory, restoredPlacement);
         LvcDiagnostics.debug("LvcTrackingOverlayService: attached restart-persisted tracking overlay for '{}'", repositoryDirectory);
@@ -281,6 +307,7 @@ public final class LvcTrackingOverlayService
                                                                        @Nullable ServerLevel lootPreviewWorld) throws IOException
     {
         Path cacheFile = writeSemanticTrackingCacheFile(repositoryDirectory, manifest, siteId, placementState, overlayName, lootPreviewWorld);
+        removeTrackingOverlay(repositoryDirectory);
         LitematicaSchematic reloaded = reloadLitematicaSchematic(cacheFile);
 
         if (reloaded == null)
@@ -294,9 +321,9 @@ public final class LvcTrackingOverlayService
 
     public static boolean isSemanticTrackingCacheCurrent(Path repositoryDirectory) throws IOException
     {
-        Path cacheFile = semanticTrackingCacheFile(repositoryDirectory);
+        Path cacheFile = currentSemanticTrackingCacheFile(repositoryDirectory);
 
-        if (!Files.isRegularFile(cacheFile))
+        if (cacheFile == null || !Files.isRegularFile(cacheFile))
         {
             return false;
         }
@@ -310,10 +337,10 @@ public final class LvcTrackingOverlayService
 
     public static Path writeSemanticTrackingCacheFile(Path repositoryDirectory, LitematicaSchematic schematic) throws IOException
     {
-        Path cacheFile = semanticTrackingCacheFile(repositoryDirectory);
+        Path cacheFile = newSemanticTrackingCacheFile(repositoryDirectory);
         Files.createDirectories(cacheFile.getParent());
 
-        if (!schematic.writeToFile(cacheFile.getParent(), cacheFile.getFileName().toString(), true))
+        if (!schematic.writeToFile(cacheFile.getParent(), cacheFile.getFileName().toString(), false))
         {
             throw new IOException("Failed to write LVC tracking schematic cache: " + cacheFile);
         }
@@ -387,13 +414,15 @@ public final class LvcTrackingOverlayService
         }
 
         LvcProjectService.TrackingOverlay overlay = addTrackingOverlay(repositoryDirectory, placement, verifierWorld, completionListener, startVerifier);
-        trackOverlay(repositoryDirectory, overlay, currentOverlayDescriptor(repositoryDirectory, siteId, placementState.dimension(), overlayName));
+        trackOverlay(repositoryDirectory, overlay, currentOverlayDescriptor(repositoryDirectory, siteId, placementState.dimension(),
+                placement.getSchematicFile(), overlayName));
         return overlay;
     }
 
     public static Path semanticTrackingCachePath(Path repositoryDirectory)
     {
-        return semanticTrackingCacheFile(repositoryDirectory);
+        Path cacheFile = currentSemanticTrackingCacheFile(repositoryDirectory);
+        return cacheFile != null ? cacheFile : defaultSemanticTrackingCacheFile(repositoryDirectory);
     }
 
     public static boolean isSemanticTrackingCachePath(@Nullable Path path)
@@ -411,7 +440,7 @@ public final class LvcTrackingOverlayService
         Path gitDirectoryName = gitDirectory != null ? gitDirectory.getFileName() : null;
 
         return fileName != null &&
-                TRACKING_OVERLAY_CACHE_FILE.equals(fileName.toString()) &&
+                isGeneratedTrackingCacheFileName(fileName.toString()) &&
                 cacheDirectoryName != null &&
                 TRACKING_OVERLAY_CACHE_DIRECTORY.equals(cacheDirectoryName.toString()) &&
                 gitDirectoryName != null &&
@@ -643,7 +672,7 @@ public final class LvcTrackingOverlayService
         if (placement == null || !DataManager.getSchematicPlacementManager().getAllSchematicsPlacements().contains(placement))
         {
             ACTIVE_TRACKING_OVERLAYS.remove(key);
-            placement = findTrackingPlacementByCacheFile(semanticTrackingCacheFile(repositoryDirectory));
+            placement = findTrackingPlacementByRepository(repositoryDirectory);
 
             if (placement == null)
             {
@@ -718,7 +747,13 @@ public final class LvcTrackingOverlayService
 
         if (descriptor != null)
         {
-            writeOverlayDescriptor(repositoryDirectory, descriptor);
+            List<Path> protectedCacheFiles = protectedSemanticTrackingCacheFiles(repositoryDirectory, overlay.placement().getSchematicFile());
+
+            if (writeOverlayDescriptor(repositoryDirectory, descriptor))
+            {
+                removeOtherSemanticTrackingCacheOverlays(repositoryDirectory, overlay.placement());
+                pruneSemanticTrackingCacheFiles(repositoryDirectory, protectedCacheFiles);
+            }
         }
     }
 
@@ -752,13 +787,12 @@ public final class LvcTrackingOverlayService
 
     private static void removeSemanticTrackingCacheOverlay(Path repositoryDirectory)
     {
-        Path cacheFile = semanticTrackingCacheFile(repositoryDirectory);
-
         for (SchematicPlacement placement : new ArrayList<>(DataManager.getSchematicPlacementManager().getAllSchematicsPlacements()))
         {
-            if (pathsEqual(cacheFile, placement.getSchematicFile()))
+            if (isTrackingCacheForRepository(repositoryDirectory, placement.getSchematicFile()))
             {
-                DataManager.getSchematicPlacementManager().removeSchematicPlacement(placement, false);
+                purgeSchematicWorldEntitiesForTrackingPlacement(repositoryDirectory, placement);
+                DataManager.getSchematicPlacementManager().removeSchematicPlacement(placement, true);
             }
         }
 
@@ -766,11 +800,167 @@ public final class LvcTrackingOverlayService
 
         for (LitematicaSchematic schematic : new ArrayList<>(holder.getAllSchematics()))
         {
-            if (pathsEqual(cacheFile, schematic.getFile()))
+            if (isTrackingCacheForRepository(repositoryDirectory, schematic.getFile()))
             {
                 holder.removeSchematic(schematic);
             }
         }
+
+    }
+
+    private static void removeOtherSemanticTrackingCacheOverlays(Path repositoryDirectory, SchematicPlacement keepPlacement)
+    {
+        try
+        {
+            for (SchematicPlacement placement : new ArrayList<>(DataManager.getSchematicPlacementManager().getAllSchematicsPlacements()))
+            {
+                if (placement != keepPlacement && isTrackingCacheForRepository(repositoryDirectory, placement.getSchematicFile()))
+                {
+                    purgeSchematicWorldEntitiesForTrackingPlacement(repositoryDirectory, placement);
+                    DataManager.getSchematicPlacementManager().removeSchematicPlacement(placement, true);
+                }
+            }
+
+            LitematicaSchematic keepSchematic = keepPlacement.getSchematic();
+            SchematicHolder holder = SchematicHolder.getInstance();
+
+            for (LitematicaSchematic schematic : new ArrayList<>(holder.getAllSchematics()))
+            {
+                if (schematic != keepSchematic && isTrackingCacheForRepository(repositoryDirectory, schematic.getFile()))
+                {
+                    holder.removeSchematic(schematic);
+                }
+            }
+        }
+        catch (RuntimeException | LinkageError e)
+        {
+            LvcDiagnostics.debug("LvcTrackingOverlayService: skipped stale tracking overlay cleanup repo='{}' placement='{}' error='{}'",
+                    repositoryDirectory, keepPlacement.getName(), e.getMessage());
+        }
+    }
+
+    private static void purgeSchematicWorldEntitiesForTrackingPlacement(Path repositoryDirectory, SchematicPlacement placement)
+    {
+        try
+        {
+            WorldSchematic schematicWorld = SchematicWorldHandler.getSchematicWorld();
+            Method removeByUuid = SCHEMATIC_ENTITY_LOOKUP_REMOVE_BY_UUID;
+
+            if (schematicWorld == null || removeByUuid == null || !SchematicEntityLookup.class.isInstance(schematicWorld.getEntities()))
+            {
+                return;
+            }
+
+            Set<ChunkPos> touchedChunks = placement.getTouchedChunks(RequiredEnabled.ANY);
+            List<AABB> bounds = trackingPlacementEntityBounds(placement);
+
+            if (touchedChunks.isEmpty() && bounds.isEmpty())
+            {
+                return;
+            }
+
+            int beforeCount = schematicWorld.getRegularEntityCount();
+
+            for (ChunkPos chunk : touchedChunks)
+            {
+                schematicWorld.unloadEntitiesByChunk(chunk.x(), chunk.z());
+            }
+
+            List<UUID> entitiesToRemove = new ArrayList<>();
+
+            if (!bounds.isEmpty())
+            {
+                for (Entity entity : schematicWorld.getEntities().getAll())
+                {
+                    if (isWithinAnyBounds(entity.getBoundingBox(), bounds))
+                    {
+                        entitiesToRemove.add(entity.getUUID());
+                    }
+                }
+            }
+
+            int removedByBounds = 0;
+
+            for (UUID uuid : entitiesToRemove)
+            {
+                Object removed = removeByUuid.invoke(schematicWorld.getEntities(), uuid, schematicWorld);
+
+                if (Boolean.TRUE.equals(removed))
+                {
+                    removedByBounds++;
+                }
+            }
+
+            int removedCount = beforeCount - schematicWorld.getRegularEntityCount();
+
+            if (removedCount > 0)
+            {
+                LitematicaRenderer.getInstance().getWorldRenderer().clearWorldRenderStates();
+                LitematicaRenderer.getInstance().getWorldRenderer().markNeedsUpdate();
+                LvcDiagnostics.debug("LvcTrackingOverlayService: purged schematic entities for tracking overlay repo='{}' placement='{}' chunks={} removed={} removedByBounds={}",
+                        repositoryDirectory, placement.getName(), touchedChunks.size(), removedCount, removedByBounds);
+            }
+
+        }
+        catch (ReflectiveOperationException | RuntimeException | LinkageError e)
+        {
+            LvcDiagnostics.debug("LvcTrackingOverlayService: skipped tracking overlay entity purge repo='{}' placement='{}' error='{}'",
+                    repositoryDirectory, placement.getName(), e.getMessage());
+        }
+    }
+
+    private static List<AABB> trackingPlacementEntityBounds(SchematicPlacement placement)
+    {
+        List<AABB> bounds = new ArrayList<>();
+
+        for (Box box : placement.getSubRegionBoxes(RequiredEnabled.ANY).values())
+        {
+            BlockPos pos1 = box.getPos1();
+            BlockPos pos2 = box.getPos2();
+
+            if (pos1 != null && pos2 != null)
+            {
+                bounds.add(PositionUtils.createEnclosingAABB(pos1, pos2));
+            }
+        }
+
+        return bounds;
+    }
+
+    private static boolean isWithinAnyBounds(AABB entityBounds, List<AABB> bounds)
+    {
+        for (AABB bound : bounds)
+        {
+            if (bound.intersects(entityBounds))
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    @Nullable
+    private static Method resolveSchematicEntityLookupRemoveByUuid()
+    {
+        try
+        {
+            Method method = SchematicEntityLookup.class.getDeclaredMethod("remove", UUID.class, WorldSchematic.class);
+            method.setAccessible(true);
+            return method;
+        }
+        catch (ReflectiveOperationException | RuntimeException | LinkageError e)
+        {
+            LvcDiagnostics.debug("LvcTrackingOverlayService: failed to resolve schematic entity removal error='{}'",
+                    e.getMessage());
+            return null;
+        }
+    }
+
+    private static boolean isTrackingCacheForRepository(Path repositoryDirectory, @Nullable Path cacheFile)
+    {
+        Path expectedRepository = semanticTrackingRepositoryDirectory(cacheFile);
+        return expectedRepository != null && trackingOverlayKey(repositoryDirectory).equals(trackingOverlayKey(expectedRepository));
     }
 
     private static boolean pathsEqual(Path expected, @Nullable Path actual)
@@ -792,7 +982,7 @@ public final class LvcTrackingOverlayService
         }
 
         ACTIVE_TRACKING_OVERLAYS.remove(key);
-        return findTrackingPlacementByCacheFile(semanticTrackingCacheFile(repositoryDirectory));
+        return findTrackingPlacementByRepository(repositoryDirectory);
     }
 
     @Nullable
@@ -801,6 +991,20 @@ public final class LvcTrackingOverlayService
         for (SchematicPlacement placement : DataManager.getSchematicPlacementManager().getAllSchematicsPlacements())
         {
             if (pathsEqual(cacheFile, placement.getSchematicFile()))
+            {
+                return placement;
+            }
+        }
+
+        return null;
+    }
+
+    @Nullable
+    private static SchematicPlacement findTrackingPlacementByRepository(Path repositoryDirectory)
+    {
+        for (SchematicPlacement placement : DataManager.getSchematicPlacementManager().getAllSchematicsPlacements())
+        {
+            if (isTrackingCacheForRepository(repositoryDirectory, placement.getSchematicFile()))
             {
                 return placement;
             }
@@ -963,7 +1167,14 @@ public final class LvcTrackingOverlayService
         String siteId = LvcSemanticRepository.defaultSiteId(manifest);
         LvcManifest.Site site = manifest.site(siteId);
         String overlayName = trackingOverlayDisplayNameForCommit(manifest.name(), commitId);
-        SchematicPlacement placement = findMatchingTrackingPlacement(semanticTrackingCacheFile(repositoryDirectory), overlayName);
+        Path cacheFile = currentSemanticTrackingCacheFile(repositoryDirectory);
+
+        if (cacheFile == null)
+        {
+            return null;
+        }
+
+        SchematicPlacement placement = findMatchingTrackingPlacement(cacheFile, overlayName);
 
         if (placement == null)
         {
@@ -971,9 +1182,9 @@ public final class LvcTrackingOverlayService
         }
 
         String dimension = currentPlacementDimension(site);
-        OverlayDescriptor descriptor = currentOverlayDescriptor(repositoryDirectory, siteId, dimension, overlayName);
+        OverlayDescriptor descriptor = currentOverlayDescriptor(repositoryDirectory, siteId, dimension, cacheFile, overlayName);
         return new OverlayTarget(repositoryDirectory.toAbsolutePath().normalize(), commitId, siteId, dimension,
-                semanticTrackingCacheFile(repositoryDirectory), overlayName, descriptor);
+                cacheFile, overlayName, descriptor);
     }
 
     private static LvcManifest readCommitManifest(Path repositoryDirectory, String commitId) throws IOException
@@ -989,7 +1200,7 @@ public final class LvcTrackingOverlayService
 
     private static String trackingOverlayDisplayNameForCommit(String projectName, String commitId)
     {
-        return projectName + " @ " + commitId.substring(0, Math.min(8, commitId.length()));
+        return projectName + " @ " + shortCommitToken(commitId);
     }
 
     private static BlockPos currentPlayerBlockPosForPlacement() throws IOException
@@ -1005,11 +1216,12 @@ public final class LvcTrackingOverlayService
     @Nullable
     private static OverlayDescriptor currentOverlayDescriptor(Path repositoryDirectory, String siteId,
                                                              String dimension,
+                                                             @Nullable Path cacheFile,
                                                              String overlayName) throws IOException
     {
         ObjectId head = LvcRepository.resolveHead(repositoryDirectory);
 
-        if (head == null)
+        if (head == null || cacheFile == null)
         {
             return null;
         }
@@ -1018,7 +1230,7 @@ public final class LvcTrackingOverlayService
                 head.getName(),
                 siteId,
                 dimension,
-                semanticTrackingCacheFile(repositoryDirectory).toString(),
+                cacheFile.toAbsolutePath().normalize().toString(),
                 overlayName
         );
     }
@@ -1051,19 +1263,78 @@ public final class LvcTrackingOverlayService
         return null;
     }
 
-    private static void writeOverlayDescriptor(Path repositoryDirectory, OverlayDescriptor descriptor)
+    private static boolean writeOverlayDescriptor(Path repositoryDirectory, OverlayDescriptor descriptor)
     {
         Path path = semanticTrackingDescriptorFile(repositoryDirectory);
 
         try
         {
             Files.createDirectories(path.getParent());
-            Files.writeString(path, GSON.toJson(descriptor), StandardCharsets.UTF_8);
+            writeStringAtomic(path, GSON.toJson(descriptor));
+            return true;
         }
         catch (IOException e)
         {
             LvcDiagnostics.debug("LvcTrackingOverlayService: failed to write overlay descriptor repo='{}' error='{}'",
                     repositoryDirectory, e.getMessage());
+            return false;
+        }
+    }
+
+    private static void writeStringAtomic(Path path, String contents) throws IOException
+    {
+        Path temp = path.resolveSibling(path.getFileName() + "." + UUID.randomUUID() + ".tmp");
+        boolean moved = false;
+
+        try (FileChannel channel = FileChannel.open(temp,
+                StandardOpenOption.CREATE_NEW,
+                StandardOpenOption.WRITE))
+        {
+            ByteBuffer buffer = ByteBuffer.wrap(contents.getBytes(StandardCharsets.UTF_8));
+
+            while (buffer.hasRemaining())
+            {
+                channel.write(buffer);
+            }
+
+            channel.force(true);
+        }
+
+        try
+        {
+            moveReplacing(temp, path);
+            moved = true;
+            forceDirectory(path.getParent());
+        }
+        finally
+        {
+            if (!moved)
+            {
+                Files.deleteIfExists(temp);
+            }
+        }
+    }
+
+    private static void moveReplacing(Path source, Path target) throws IOException
+    {
+        try
+        {
+            Files.move(source, target, StandardCopyOption.ATOMIC_MOVE, StandardCopyOption.REPLACE_EXISTING);
+        }
+        catch (AtomicMoveNotSupportedException e)
+        {
+            Files.move(source, target, StandardCopyOption.REPLACE_EXISTING);
+        }
+    }
+
+    private static void forceDirectory(Path directory)
+    {
+        try (FileChannel channel = FileChannel.open(directory, StandardOpenOption.READ))
+        {
+            channel.force(true);
+        }
+        catch (IOException | UnsupportedOperationException ignored)
+        {
         }
     }
 
@@ -1089,13 +1360,163 @@ public final class LvcTrackingOverlayService
         }
     }
 
-    private static Path semanticTrackingCacheFile(Path repositoryDirectory)
+    @Nullable
+    private static Path currentSemanticTrackingCacheFile(Path repositoryDirectory)
+    {
+        OverlayDescriptor descriptor = readOverlayDescriptor(repositoryDirectory);
+
+        if (descriptor == null || descriptor.cacheFile() == null)
+        {
+            return null;
+        }
+
+        Path cacheFile = Path.of(descriptor.cacheFile()).toAbsolutePath().normalize();
+        return isTrackingCacheForRepository(repositoryDirectory, cacheFile) &&
+                isCurrentTrackingCacheFileName(repositoryDirectory, cacheFile) ? cacheFile : null;
+    }
+
+    private static Path newSemanticTrackingCacheFile(Path repositoryDirectory)
+    {
+        return semanticTrackingCacheDirectory(repositoryDirectory)
+                .resolve(TRACKING_OVERLAY_CACHE_FILE_PREFIX + cacheFileToken(repositoryDirectory) + "-" + UUID.randomUUID() + LitematicaSchematic.FILE_EXTENSION)
+                .normalize();
+    }
+
+    private static Path defaultSemanticTrackingCacheFile(Path repositoryDirectory)
+    {
+        return semanticTrackingCacheDirectory(repositoryDirectory)
+                .resolve(TRACKING_OVERLAY_CACHE_FILE_STEM + LitematicaSchematic.FILE_EXTENSION)
+                .normalize();
+    }
+
+    private static Path semanticTrackingCacheDirectory(Path repositoryDirectory)
     {
         return repositoryDirectory.toAbsolutePath().normalize()
                 .resolve(".git")
                 .resolve(TRACKING_OVERLAY_CACHE_DIRECTORY)
-                .resolve(TRACKING_OVERLAY_CACHE_FILE)
                 .normalize();
+    }
+
+    private static String cacheFileToken(Path repositoryDirectory)
+    {
+        try
+        {
+            ObjectId head = LvcRepository.resolveHead(repositoryDirectory);
+
+            if (head != null)
+            {
+                String commitId = head.getName();
+                return shortCommitToken(commitId);
+            }
+        }
+        catch (Exception ignored)
+        {
+        }
+
+        return "unborn";
+    }
+
+    private static boolean isCurrentTrackingCacheFileName(Path repositoryDirectory, Path cacheFile)
+    {
+        Path fileName = cacheFile.getFileName();
+        return fileName != null &&
+                fileName.toString().startsWith(TRACKING_OVERLAY_CACHE_FILE_PREFIX + cacheFileToken(repositoryDirectory) + "-") &&
+                fileName.toString().endsWith(LitematicaSchematic.FILE_EXTENSION);
+    }
+
+    private static String shortCommitToken(String commitId)
+    {
+        return commitId.substring(0, Math.min(TRACKING_OVERLAY_COMMIT_TOKEN_LENGTH, commitId.length()));
+    }
+
+    private static boolean isGeneratedTrackingCacheFileName(String fileName)
+    {
+        return fileName.endsWith(LitematicaSchematic.FILE_EXTENSION) &&
+                (fileName.equals(TRACKING_OVERLAY_CACHE_FILE_STEM + LitematicaSchematic.FILE_EXTENSION) ||
+                        fileName.startsWith(TRACKING_OVERLAY_CACHE_FILE_PREFIX));
+    }
+
+    private static List<Path> protectedSemanticTrackingCacheFiles(Path repositoryDirectory, @Nullable Path keepFile)
+    {
+        List<Path> cacheFiles = new ArrayList<>();
+        addProtectedCacheFile(repositoryDirectory, cacheFiles, keepFile);
+
+        OverlayDescriptor descriptor = readOverlayDescriptor(repositoryDirectory);
+
+        if (descriptor != null)
+        {
+            addProtectedCacheFile(repositoryDirectory, cacheFiles, descriptor.cacheFilePath());
+        }
+
+        for (SchematicPlacement placement : DataManager.getSchematicPlacementManager().getAllSchematicsPlacements())
+        {
+            addProtectedCacheFile(repositoryDirectory, cacheFiles, placement.getSchematicFile());
+        }
+
+        for (LitematicaSchematic schematic : SchematicHolder.getInstance().getAllSchematics())
+        {
+            addProtectedCacheFile(repositoryDirectory, cacheFiles, schematic.getFile());
+        }
+
+        return cacheFiles;
+    }
+
+    private static void addProtectedCacheFile(Path repositoryDirectory, List<Path> cacheFiles, @Nullable Path cacheFile)
+    {
+        if (cacheFile == null || !isTrackingCacheForRepository(repositoryDirectory, cacheFile))
+        {
+            return;
+        }
+
+        Path normalized = cacheFile.toAbsolutePath().normalize();
+
+        if (!containsPath(cacheFiles, normalized))
+        {
+            cacheFiles.add(normalized);
+        }
+    }
+
+    private static void pruneSemanticTrackingCacheFiles(Path repositoryDirectory, List<Path> protectedCacheFiles)
+    {
+        Path cacheDirectory = semanticTrackingCacheDirectory(repositoryDirectory);
+
+        if (!Files.isDirectory(cacheDirectory))
+        {
+            return;
+        }
+
+        try (var stream = Files.newDirectoryStream(cacheDirectory))
+        {
+            for (Path cacheFile : stream)
+            {
+                Path fileName = cacheFile.getFileName();
+
+                if (fileName == null || !isGeneratedTrackingCacheFileName(fileName.toString()) || containsPath(protectedCacheFiles, cacheFile))
+                {
+                    continue;
+                }
+
+                Files.deleteIfExists(cacheFile);
+            }
+        }
+        catch (IOException e)
+        {
+            LvcDiagnostics.debug("LvcTrackingOverlayService: failed to prune stale overlay cache files repo='{}' error='{}'",
+                    repositoryDirectory, e.getMessage());
+        }
+    }
+
+    private static boolean containsPath(List<Path> paths, Path path)
+    {
+        for (Path candidate : paths)
+        {
+            if (pathsEqual(candidate, path))
+            {
+                return true;
+            }
+        }
+
+        return false;
     }
 
     private static Path semanticTrackingDescriptorFile(Path repositoryDirectory)
@@ -1168,18 +1589,28 @@ public final class LvcTrackingOverlayService
     {
         private boolean matches(OverlayTarget target)
         {
-            return this.commitId.equals(target.commitId()) &&
-                    this.siteId.equals(target.siteId()) &&
-                    this.dimension.equals(target.dimension()) &&
-                    this.cacheFile.equals(target.cacheFile().toString()) &&
-                    this.overlayName.equals(target.overlayName());
+            Path descriptorCacheFile = this.cacheFilePath();
+            return Objects.equals(this.commitId, target.commitId()) &&
+                    Objects.equals(this.siteId, target.siteId()) &&
+                    Objects.equals(this.dimension, target.dimension()) &&
+                    descriptorCacheFile != null &&
+                    pathsEqual(target.cacheFile(), descriptorCacheFile) &&
+                    Objects.equals(this.overlayName, target.overlayName());
         }
 
         private boolean matchesPlacement(Path repositoryDirectory, SchematicPlacement placement)
         {
-            return this.cacheFile.equals(semanticTrackingCacheFile(repositoryDirectory).toString()) &&
-                    this.overlayName.equals(placement.getName()) &&
-                    pathsEqual(semanticTrackingCacheFile(repositoryDirectory), placement.getSchematicFile());
+            Path descriptorCacheFile = this.cacheFilePath();
+            return descriptorCacheFile != null &&
+                    isTrackingCacheForRepository(repositoryDirectory, descriptorCacheFile) &&
+                    Objects.equals(this.overlayName, placement.getName()) &&
+                    pathsEqual(descriptorCacheFile, placement.getSchematicFile());
+        }
+
+        @Nullable
+        private Path cacheFilePath()
+        {
+            return this.cacheFile == null ? null : Path.of(this.cacheFile).toAbsolutePath().normalize();
         }
     }
 }

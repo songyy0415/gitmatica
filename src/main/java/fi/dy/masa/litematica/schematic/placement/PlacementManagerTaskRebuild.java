@@ -1,6 +1,8 @@
 package fi.dy.masa.litematica.schematic.placement;
 
+import java.util.ArrayList;
 import java.util.Collection;
+import java.util.List;
 import java.util.function.Supplier;
 
 import net.minecraft.client.Minecraft;
@@ -44,11 +46,12 @@ public class PlacementManagerTaskRebuild extends PlacementManagerTask
 				return;
 			}
 
-			if (manager.getAllSchematicsTouchingChunk(this.pos()).isEmpty())
+			if (this.getActivePlacementsTouchingChunk(manager).isEmpty())
 			{
 //				manager.removePendingRebuildFor(this.pos());
 				PlacementManagerDaemonHandler.INSTANCE.removeAllTasksFor(this.cx(), this.cz());
 //				manager.markChunkForUnload(this.cx(), this.cz());
+				worldSchematic.unloadEntitiesByChunk(this.cx(), this.cz());
 				worldSchematic.getChunkSource().unloadChunk(this.cx(), this.cz());
 				return;
 			}
@@ -69,7 +72,7 @@ public class PlacementManagerTaskRebuild extends PlacementManagerTask
 			if (worldSchematic.getChunkSource().hasChunk(this.cx(), this.cz()))
 			{
 				ProtoChunkSchematic protoChunk = new ProtoChunkSchematic(new ChunkSchematic(worldSchematic, this.pos()));
-				Collection<SchematicPlacement> placements = manager.getAllSchematicsTouchingChunk(this.pos());
+				List<SchematicPlacement> placements = this.getActivePlacementsTouchingChunk(manager);
 
 				protoChunk.setState(ChunkSchematicState.PROTO);
 
@@ -77,10 +80,27 @@ public class PlacementManagerTaskRebuild extends PlacementManagerTask
 				{
 					for (SchematicPlacement placement : placements)
 					{
-						if (placement.isEnabled())
+						WorldPlacingUtils.placeToProtoChunk(protoChunk, this.pos(), placement);
+					}
+
+					List<SchematicPlacement> currentPlacements = this.getActivePlacementsTouchingChunk(manager);
+
+					if (!this.hasSamePlacements(placements, currentPlacements))
+					{
+						protoChunk.clear();
+
+						if (currentPlacements.isEmpty())
 						{
-							WorldPlacingUtils.placeToProtoChunk(protoChunk, this.pos(), placement);
+							PlacementManagerDaemonHandler.INSTANCE.removeAllTasksFor(this.cx(), this.cz());
+							worldSchematic.unloadEntitiesByChunk(this.cx(), this.cz());
+							worldSchematic.getChunkSource().unloadChunk(this.cx(), this.cz());
 						}
+						else
+						{
+							manager.markChunkForRebuild(this.cx(), this.cz());
+						}
+
+						return;
 					}
 
 					// Load Real Chunk and spawn the entities
@@ -98,5 +118,36 @@ public class PlacementManagerTaskRebuild extends PlacementManagerTask
 				manager.setVisibleSubChunksNeedsUpdate();
 			}
 		};
+	}
+
+	private List<SchematicPlacement> getActivePlacementsTouchingChunk(SchematicPlacementManager manager)
+	{
+		List<SchematicPlacement> touchingPlacements = manager.getAllSchematicsTouchingChunk(this.pos());
+
+		if (touchingPlacements.isEmpty())
+		{
+			return List.of();
+		}
+
+		List<SchematicPlacement> allPlacements = manager.getAllSchematicsPlacements();
+		List<SchematicPlacement> activePlacements = new ArrayList<>(touchingPlacements.size());
+
+		for (SchematicPlacement placement : touchingPlacements)
+		{
+			if (placement.isEnabled() && allPlacements.contains(placement))
+			{
+				activePlacements.add(placement);
+			}
+		}
+
+		return activePlacements;
+	}
+
+	private boolean hasSamePlacements(Collection<SchematicPlacement> expectedPlacements,
+									  Collection<SchematicPlacement> currentPlacements)
+	{
+		return expectedPlacements.size() == currentPlacements.size() &&
+				expectedPlacements.containsAll(currentPlacements) &&
+				currentPlacements.containsAll(expectedPlacements);
 	}
 }
