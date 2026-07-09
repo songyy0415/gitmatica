@@ -34,6 +34,7 @@ import me.niicide.lvc.overlay.LvcTrackingOverlayService;
 import me.niicide.lvc.semantic.LvcSemanticWorldApplier;
 import me.niicide.lvc.semantic.LvcTrackedBlockCursor;
 import me.niicide.lvc.storage.LvcCanonicalNbt;
+import me.niicide.lvc.storage.LvcChunkCodec;
 import me.niicide.lvc.storage.LvcChunkStore;
 import me.niicide.lvc.storage.LvcRepository;
 import me.niicide.lvc.storage.LvcSemanticRepository;
@@ -344,7 +345,7 @@ public final class LvcSemanticCheckoutTask
 
                             dirtyChunk = true;
                         }
-                        else if (detectBlockEntityOnlyChanges && blockEntityBytes != null && !blockEntityMatchesStoredPayload(checkout.world, block.blockPos(), blockEntityBytes))
+                        else if (detectBlockEntityOnlyChanges && !blockEntityMatchesStoredPayload(checkout.world, block.blockPos(), blockEntityBytes))
                         {
                             stats.blockEntityMismatches++;
                             stats.addSample(new PreflightMismatchSample(
@@ -352,7 +353,7 @@ public final class LvcSemanticCheckoutTask
                                     "block-entity",
                                     chunkKey,
                                     block.blockPos(),
-                                    LvcChunkStore.objectId(blockEntityBytes),
+                                    blockEntityPayloadId(blockEntityBytes),
                                     blockEntityPayloadId(checkout.world, block.blockPos())));
                             dirtyChunk = true;
                         }
@@ -825,17 +826,19 @@ public final class LvcSemanticCheckoutTask
         return List.copyOf(keys);
     }
 
-    private static boolean blockEntityMatchesStoredPayload(Level world, BlockPos blockPos, byte[] expectedNbt) throws IOException
+    private static boolean blockEntityMatchesStoredPayload(Level world, BlockPos blockPos, @Nullable byte[] expectedNbt) throws IOException
     {
+        byte[] expectedTrackedNbt = expectedNbt == null ? null : LvcChunkCodec.encodeTrackedBlockEntityContent(expectedNbt);
         BlockEntity blockEntity = world.getBlockEntity(blockPos);
 
         if (blockEntity == null)
         {
-            return false;
+            return expectedTrackedNbt == null;
         }
 
         byte[] currentNbt = LvcCanonicalNbt.encodeBlockEntity(blockEntity.saveWithFullMetadata(world.registryAccess()));
-        return Arrays.equals(currentNbt, expectedNbt);
+        byte[] currentTrackedNbt = LvcChunkCodec.encodeTrackedBlockEntityContent(currentNbt);
+        return Arrays.equals(currentTrackedNbt, expectedTrackedNbt);
     }
 
     private static String blockEntityPayloadId(Level world, BlockPos blockPos) throws IOException
@@ -848,7 +851,19 @@ public final class LvcSemanticCheckoutTask
         }
 
         byte[] currentNbt = LvcCanonicalNbt.encodeBlockEntity(blockEntity.saveWithFullMetadata(world.registryAccess()));
-        return LvcChunkStore.objectId(currentNbt);
+        byte[] currentTrackedNbt = LvcChunkCodec.encodeTrackedBlockEntityContent(currentNbt);
+        return currentTrackedNbt == null ? "<no tracked inventory>" : LvcChunkStore.objectId(currentTrackedNbt);
+    }
+
+    private static String blockEntityPayloadId(@Nullable byte[] canonicalNbt) throws IOException
+    {
+        if (canonicalNbt == null)
+        {
+            return "<no tracked inventory>";
+        }
+
+        byte[] trackedNbt = LvcChunkCodec.encodeTrackedBlockEntityContent(canonicalNbt);
+        return trackedNbt == null ? "<no tracked inventory>" : LvcChunkStore.objectId(trackedNbt);
     }
 
     private static IOException withChunkContext(String action, String chunkKey, String objectId, String commitId,

@@ -431,7 +431,7 @@ Required behavior:
 - Display remote URL and current branch.
 - Show per-ref push status.
 - Show pull result details: fast-forward, merge, already up to date, conflict, failed.
-- Rework GitHub account/auth connection for JGit into an explicit MVP flow instead of relying on raw remote URL prompts and opaque SSH failures.
+- Rework GitHub account/auth connection for JGit into an explicit MVP flow instead of relying on raw remote URL prompts and opaque auth failures.
 - Add a connection/setup UI that can guide GitHub remote auth, validate credentials/keys, and test JGit push/pull before the user depends on it.
 - Consider a remote settings button instead of only prompting on first push.
 
@@ -440,25 +440,24 @@ Relevant file:
 - `src/main/java/me/niicide/lvc/LvcProjectService.java`
 - `src/main/java/me/niicide/lvc/gui/GuiLvcProjectManager.java`
 
-### Replace Current SSH Key Handling And Remove EdDSA Crypto Dependency
+### Design Remote Authentication
 
 Current state:
 
-- SSH push/pull uses JGit with Apache SSHD.
-- Remote Git commands are isolated in `LvcGitRemoteOps`; SSH transport setup and default key discovery are isolated in `LvcSshTransportFactory`.
-- The direct `net.i2p.crypto:eddsa:0.3.0` shadow dependency has been removed from `build.gradle`; JGit's SSH Apache artifact now owns any transitive crypto needs.
+- SSH remotes are intentionally unsupported in the alpha build.
+- Remote Git commands are isolated in `LvcGitRemoteOps`.
+- JGit core and JavaEWAH are bundled as nested runtime jars; Apache SSHD is not bundled.
 
 Required behavior:
 
-- Prefer and document a supported MVP SSH path based on key formats supported by the shaded JGit SSH Apache stack.
-- Document the MVP GitHub setup around RSA/OpenSSH-compatible keys.
-- Replace the SSH setup UX before broader release: local-only SSH key path config, clear connection test, and passphrase handling if needed.
+- Decide whether post-alpha remote auth should use HTTPS tokens, SSH keys, or both.
+- Add explicit setup UI for the supported auth path: local-only credential/key config, clear connection test, and useful push/pull failure messages.
+- Keep unsupported remote URL types rejected at save time instead of failing later during push/pull.
 
 Relevant files:
 
 - `build.gradle`
 - `src/main/java/me/niicide/lvc/git/LvcGitRemoteOps.java`
-- `src/main/java/me/niicide/lvc/git/LvcSshTransportFactory.java`
 
 ### Open Newly Created Project Directly With Tracking State
 

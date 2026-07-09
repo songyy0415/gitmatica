@@ -42,6 +42,11 @@ public final class LvcGitRemoteOps
             throw new IllegalArgumentException("Remote Git URL must not be blank");
         }
 
+        if (isSshRemoteUrl(normalizedRemoteUrl))
+        {
+            throw new IllegalArgumentException("SSH remotes are not supported in this Gitmatica build. Use an HTTPS or local file remote.");
+        }
+
         try (Git git = Git.open(repositoryDirectory.toFile()))
         {
             StoredConfig config = git.getRepository().getConfig();
@@ -60,8 +65,7 @@ public final class LvcGitRemoteOps
         {
             String branch = LvcGitBranchOps.pushBranchRef(git.getRepository());
 
-            for (PushResult result : git.push().setRemote("origin").add(branch)
-                    .setTransportConfigCallback(LvcSshTransportFactory.transportConfigCallback()).call())
+            for (PushResult result : git.push().setRemote("origin").add(branch).call())
             {
                 result.getRemoteUpdates().forEach(update ->
                         statuses.add(update.getRemoteName() + ": " + update.getStatus()));
@@ -76,8 +80,7 @@ public final class LvcGitRemoteOps
         try (Git git = Git.open(repositoryDirectory.toFile()))
         {
             LvcGitBranchOps.currentBranch(git.getRepository());
-            PullResult result = git.pull().setRemote("origin")
-                    .setTransportConfigCallback(LvcSshTransportFactory.transportConfigCallback()).call();
+            PullResult result = git.pull().setRemote("origin").call();
             return result.isSuccessful() ? "OK" : "FAILED";
         }
     }
@@ -88,27 +91,37 @@ public final class LvcGitRemoteOps
         String fullMessage = collectThrowableMessages(throwable);
         String displayMessage = message != null ? message : throwable.getClass().getSimpleName();
 
-        if (fullMessage.contains("no keys to try"))
+        if (fullMessage.contains("not authorized") || fullMessage.contains("CredentialsProvider has been registered"))
         {
-            return displayMessage + " " + LvcSshTransportFactory.sshIdentityDiagnostic();
+            return displayMessage + " HTTPS private remotes need a Git credential/token flow, which Gitmatica does not support yet. Use a public HTTPS remote or local file remote.";
         }
 
-        if (fullMessage.contains("Server key did not validate"))
+        if (fullMessage.contains("ssh") || fullMessage.contains("SSH"))
         {
-            return displayMessage + " Trust GitHub's SSH host key once with: ssh -T git@github.com";
-        }
-
-        if (fullMessage.contains("Permission denied (publickey)"))
-        {
-            return displayMessage + " GitHub rejected the SSH key. Add your public key to GitHub and verify with: ssh -T git@github.com";
-        }
-
-        if (fullMessage.contains("CredentialsProvider has been registered"))
-        {
-            return displayMessage + " HTTPS private remotes need a GitHub token, which LVC does not support yet. Use an SSH remote such as git@github.com:user/repo.git.";
+            return displayMessage + " SSH remotes are not supported in this Gitmatica build. Use an HTTPS or local file remote.";
         }
 
         return displayMessage;
+    }
+
+    private static boolean isSshRemoteUrl(String remoteUrl)
+    {
+        String lowerUrl = remoteUrl.toLowerCase();
+
+        if (lowerUrl.startsWith("ssh://") || lowerUrl.startsWith("git+ssh://"))
+        {
+            return true;
+        }
+
+        if (remoteUrl.contains("://"))
+        {
+            return false;
+        }
+
+        int atIndex = remoteUrl.indexOf('@');
+        int colonIndex = remoteUrl.indexOf(':');
+        int slashIndex = remoteUrl.indexOf('/');
+        return atIndex > 0 && colonIndex > atIndex && (slashIndex < 0 || colonIndex < slashIndex);
     }
 
     private static String collectThrowableMessages(Throwable throwable)

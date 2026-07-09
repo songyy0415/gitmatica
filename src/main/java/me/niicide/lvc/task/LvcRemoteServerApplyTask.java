@@ -9,7 +9,6 @@ import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.Objects;
-import java.util.Set;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CompletionException;
 import javax.annotation.Nullable;
@@ -1344,16 +1343,9 @@ public final class LvcRemoteServerApplyTask extends LvcChunkedTaskBase<LvcRemote
     {
         BlockPos siteOrigin = this.requireOrigin();
         int commands = 0;
-        Set<String> sparseAffectedRegionIds = this.sparseTargetPlanner == null ? Set.of() :
-                this.sparseTargetPlanner.affectedRegionIds();
 
         for (LvcManifest.Region region : this.requireManifest().site(this.requireSiteId()).regions())
         {
-            if (this.shouldBuildSparseTargetSchematic() && !sparseAffectedRegionIds.contains(region.id()))
-            {
-                continue;
-            }
-
             BlockPos min = siteOrigin.offset(LvcProjectPositions.blockPosFromList(region.min()));
             BlockPos size = LvcProjectPositions.blockPosFromList(region.size());
             int holdX = min.getX() + Math.max(0, size.getX() - 1) / 2;

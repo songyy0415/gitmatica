@@ -9,6 +9,7 @@ import java.util.HashSet;
 import java.util.List;
 import java.util.Objects;
 import java.util.Set;
+import javax.annotation.Nullable;
 import net.minecraft.core.BlockPos;
 import net.minecraft.world.level.block.state.BlockState;
 import me.niicide.lvc.capture.LvcWorldReader;
@@ -72,20 +73,26 @@ public final class LvcRemoteSparseTargetPlanner
             return false;
         }
 
-        if (targetBlockEntity != null)
+        if (!blockEntityMatchesTrackedPayload(block.worldPos(), targetBlockEntity))
         {
-            byte[] currentBlockEntity = this.reader.blockEntityNbtAt(block.worldPos());
-
-            if (!Arrays.equals(currentBlockEntity, targetBlockEntity))
-            {
-                this.blockEntityMismatches++;
-                this.addFurnaceXpCleanupCandidateIfNeeded(currentBlockState, block.blockPos());
-                this.addAffectedRegions(block.projectPos());
-                return true;
-            }
+            this.blockEntityMismatches++;
+            this.addFurnaceXpCleanupCandidateIfNeeded(currentBlockState, block.blockPos());
+            this.addAffectedRegions(block.projectPos());
+            return true;
         }
 
         return false;
+    }
+
+    private boolean blockEntityMatchesTrackedPayload(LvcIntPosition worldPos, @Nullable byte[] targetBlockEntity) throws IOException
+    {
+        byte[] targetTrackedNbt = targetBlockEntity == null ? null :
+                LvcChunkCodec.encodeTrackedBlockEntityContent(targetBlockEntity);
+        byte[] currentBlockEntity = this.reader.blockEntityNbtAt(worldPos);
+        byte[] currentTrackedNbt = currentBlockEntity == null ? null :
+                LvcChunkCodec.encodeTrackedBlockEntityContent(currentBlockEntity);
+
+        return Arrays.equals(currentTrackedNbt, targetTrackedNbt);
     }
 
     public int scannedBlocks()

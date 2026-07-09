@@ -12,6 +12,11 @@ import java.util.Arrays;
 import java.util.BitSet;
 import java.util.List;
 import java.util.Objects;
+import java.util.TreeMap;
+import javax.annotation.Nullable;
+import net.minecraft.nbt.CompoundTag;
+import net.minecraft.nbt.ListTag;
+import net.minecraft.nbt.Tag;
 import me.niicide.lvc.model.LvcChunk;
 
 public final class LvcChunkCodec
@@ -104,8 +109,161 @@ public final class LvcChunkCodec
                 chunk.sizeZ(),
                 chunk.trackedMask(),
                 trackedBlockStates,
-                includeBlockEntities ? chunk.blockEntities() : List.of()
+                includeBlockEntities ? trackedBlockEntities(chunk.blockEntities()) : List.of()
         ));
+    }
+
+    private static List<LvcChunk.BlockEntityRecord> trackedBlockEntities(List<LvcChunk.BlockEntityRecord> blockEntities)
+            throws IOException
+    {
+        List<LvcChunk.BlockEntityRecord> tracked = new ArrayList<>();
+
+        for (LvcChunk.BlockEntityRecord blockEntity : blockEntities)
+        {
+            byte[] trackedNbt = encodeTrackedBlockEntityContent(blockEntity.canonicalNbt());
+
+            if (trackedNbt != null)
+            {
+                tracked.add(new LvcChunk.BlockEntityRecord(blockEntity.index(), trackedNbt));
+            }
+        }
+
+        return tracked;
+    }
+
+    @Nullable
+    public static byte[] encodeTrackedBlockEntityContent(byte[] canonicalNbt) throws IOException
+    {
+        CompoundTag blockEntity = LvcCanonicalNbt.decodeUnnamedCompound(canonicalNbt);
+        ListTag items = trackedInventoryItems(blockEntity);
+
+        if (items.isEmpty())
+        {
+            return null;
+        }
+
+        CompoundTag tracked = new CompoundTag();
+        tracked.put("Items", items);
+        return LvcCanonicalNbt.encodeUnnamed(tracked);
+    }
+
+    private static ListTag trackedInventoryItems(CompoundTag blockEntity)
+    {
+        List<ProjectedItem> items = blockEntity.contains("Items") ?
+                projectedItemsFromLegacyItems(blockEntity.getListOrEmpty("Items")) :
+                projectedItemsFromComponents(blockEntity);
+        ListTag trackedItems = new ListTag();
+
+        for (ProjectedItem item : items)
+        {
+            CompoundTag tag = new CompoundTag();
+            tag.putInt("slot", item.slot());
+            tag.putString("id", item.id());
+            tag.putInt("count", item.count());
+            trackedItems.add(tag);
+        }
+
+        return trackedItems;
+    }
+
+    private static List<ProjectedItem> projectedItemsFromLegacyItems(ListTag itemTags)
+    {
+        TreeMap<Integer, ProjectedItem> items = new TreeMap<>();
+
+        for (int i = 0; i < itemTags.size(); i++)
+        {
+            CompoundTag tag = itemTags.getCompoundOrEmpty(i);
+            ProjectedItem item = projectedItem(tag, slot(tag, "Slot"));
+
+            if (item != null)
+            {
+                items.put(item.slot(), item);
+            }
+        }
+
+        return List.copyOf(items.values());
+    }
+
+    private static List<ProjectedItem> projectedItemsFromComponents(CompoundTag blockEntity)
+    {
+        if (!blockEntity.contains("components"))
+        {
+            return List.of();
+        }
+
+        CompoundTag components = blockEntity.getCompoundOrEmpty("components");
+        Tag containerTag = components.get("minecraft:container");
+
+        if (containerTag == null)
+        {
+            containerTag = components.get("container");
+        }
+
+        if (!(containerTag instanceof ListTag containerSlots))
+        {
+            return List.of();
+        }
+
+        TreeMap<Integer, ProjectedItem> items = new TreeMap<>();
+
+        for (int i = 0; i < containerSlots.size(); i++)
+        {
+            CompoundTag slotTag = containerSlots.getCompoundOrEmpty(i);
+            int slot = slotTag.getIntOr("slot", -1);
+            ProjectedItem item = projectedComponentItem(slotTag.get("item"), slot);
+
+            if (item != null)
+            {
+                items.put(item.slot(), item);
+            }
+        }
+
+        return List.copyOf(items.values());
+    }
+
+    @Nullable
+    private static ProjectedItem projectedComponentItem(@Nullable Tag itemTag, int slot)
+    {
+        if (itemTag instanceof CompoundTag compoundTag)
+        {
+            return projectedItem(compoundTag, slot);
+        }
+
+        String id = itemTag != null ? itemTag.asString().orElse("") : "";
+        return projectedItem(slot, id, 1);
+    }
+
+    @Nullable
+    private static ProjectedItem projectedItem(CompoundTag item, int slot)
+    {
+        String id = item.getStringOr("id", "");
+        int count = item.contains("count") ? item.getIntOr("count", 1) : item.getIntOr("Count", 1);
+        return projectedItem(slot, id, count);
+    }
+
+    @Nullable
+    private static ProjectedItem projectedItem(int slot, String id, int count)
+    {
+        if (slot < 0 || id.isBlank() || id.equals("minecraft:air") || count <= 0)
+        {
+            return null;
+        }
+
+        return new ProjectedItem(slot, id, count);
+    }
+
+    private static int slot(CompoundTag tag, String key)
+    {
+        if (!tag.contains(key))
+        {
+            return -1;
+        }
+
+        return Byte.toUnsignedInt(tag.getByteOr(key, (byte) -1));
+    }
+
+    private record ProjectedItem(int slot, String id, int count)
+    {
     }
 
     public static String canonicalTrackedBlockState(String blockState)

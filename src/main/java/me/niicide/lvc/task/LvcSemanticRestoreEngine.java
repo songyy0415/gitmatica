@@ -30,6 +30,7 @@ import me.niicide.lvc.model.LvcManifest;
 import me.niicide.lvc.semantic.LvcSemanticWorldApplier;
 import me.niicide.lvc.semantic.LvcTrackedBlockCursor;
 import me.niicide.lvc.storage.LvcCanonicalNbt;
+import me.niicide.lvc.storage.LvcChunkCodec;
 import me.niicide.lvc.storage.LvcChunkStore;
 
 public final class LvcSemanticRestoreEngine
@@ -324,7 +325,7 @@ public final class LvcSemanticRestoreEngine
                     boolean blockEntityMatches = true;
 
                     if (stateMatches && this.targetMode == TargetMode.RESTORE &&
-                        this.restoreBlockEntityOnlyChanges && target.blockEntityBytes() != null)
+                        this.restoreBlockEntityOnlyChanges)
                     {
                         blockEntityMatches = blockEntityMatchesStoredPayload(this.world, target.blockPos(), target.blockEntityBytes());
                     }
@@ -542,9 +543,9 @@ public final class LvcSemanticRestoreEngine
         }
 
         String kind = stateMatches && !blockEntityMatches ? "block-entity" : "block-state";
-        String actual = stateMatches ? blockEntityPayloadDescription(this.world, target.blockPos()) : currentState.toString();
-        String expected = stateMatches && target.blockEntityBytes() != null ?
-                blockEntityPayloadDescription(target.blockEntityBytes()) : target.blockState();
+        String actual = stateMatches ? trackedBlockEntityPayloadDescription(this.world, target.blockPos()) : currentState.toString();
+        String expected = stateMatches ?
+                trackedBlockEntityPayloadDescription(target.blockEntityBytes()) : target.blockState();
         String summary = kind + " chunk " + chunkKey + " at " +
                 target.blockPos().getX() + "," + target.blockPos().getY() + "," + target.blockPos().getZ() +
                 ": expected " + expected + ", server " + actual;
@@ -592,20 +593,33 @@ public final class LvcSemanticRestoreEngine
         return (int) key + "," + (int) (key >> 32);
     }
 
-    private static boolean blockEntityMatchesStoredPayload(Level world, BlockPos blockPos, byte[] expectedNbt) throws IOException
+    private static boolean blockEntityMatchesStoredPayload(Level world, BlockPos blockPos, @Nullable byte[] expectedNbt) throws IOException
     {
+        byte[] expectedTrackedNbt = expectedNbt == null ? null : LvcChunkCodec.encodeTrackedBlockEntityContent(expectedNbt);
         BlockEntity blockEntity = world.getBlockEntity(blockPos);
 
         if (blockEntity == null)
         {
-            return false;
+            return expectedTrackedNbt == null;
         }
 
         byte[] currentNbt = LvcCanonicalNbt.encodeBlockEntity(blockEntity.saveWithFullMetadata(world.registryAccess()));
-        return Arrays.equals(currentNbt, expectedNbt);
+        byte[] currentTrackedNbt = LvcChunkCodec.encodeTrackedBlockEntityContent(currentNbt);
+        return Arrays.equals(currentTrackedNbt, expectedTrackedNbt);
     }
 
-    private static String blockEntityPayloadId(Level world, BlockPos blockPos) throws IOException
+    private static String trackedBlockEntityPayloadDescription(@Nullable byte[] canonicalNbt) throws IOException
+    {
+        if (canonicalNbt == null)
+        {
+            return "<no tracked inventory>";
+        }
+
+        byte[] trackedNbt = LvcChunkCodec.encodeTrackedBlockEntityContent(canonicalNbt);
+        return trackedNbt == null ? "<no tracked inventory>" : LvcChunkStore.objectId(trackedNbt);
+    }
+
+    private static String trackedBlockEntityPayloadDescription(Level world, BlockPos blockPos) throws IOException
     {
         BlockEntity blockEntity = world.getBlockEntity(blockPos);
 
@@ -615,27 +629,7 @@ public final class LvcSemanticRestoreEngine
         }
 
         byte[] currentNbt = LvcCanonicalNbt.encodeBlockEntity(blockEntity.saveWithFullMetadata(world.registryAccess()));
-        return LvcChunkStore.objectId(currentNbt);
-    }
-
-    private static String blockEntityPayloadDescription(byte[] canonicalNbt) throws IOException
-    {
-        CompoundTag tag = LvcCanonicalNbt.decodeUnnamedCompound(canonicalNbt);
-        return LvcChunkStore.objectId(canonicalNbt) + " id=" + tag.getStringOr("id", "<missing>");
-    }
-
-    private static String blockEntityPayloadDescription(Level world, BlockPos blockPos) throws IOException
-    {
-        BlockEntity blockEntity = world.getBlockEntity(blockPos);
-
-        if (blockEntity == null)
-        {
-            return "<missing block entity>";
-        }
-
-        CompoundTag tag = blockEntity.saveWithFullMetadata(world.registryAccess());
-        byte[] currentNbt = LvcCanonicalNbt.encodeBlockEntity(tag);
-        return LvcChunkStore.objectId(currentNbt) + " id=" + tag.getStringOr("id", "<missing>");
+        return trackedBlockEntityPayloadDescription(currentNbt);
     }
 
     @FunctionalInterface

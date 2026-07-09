@@ -1,6 +1,5 @@
 plugins {
 	id 'net.fabricmc.fabric-loom' version '1.17.+'
-	id 'com.gradleup.shadow' version '9.4.1'
 	id 'maven-publish'
 }
 
@@ -22,19 +21,15 @@ repositories {
 //	maven { url = 'https://api.modrinth.com/maven' }
 }
 
-configurations {
-	shadow
-	implementation.extendsFrom shadow
-}
-
 ext.gitmaticaLoaderVersion = "${project.litematica_base_version}-gitmatica.${project.gitmatica_version}"
 
 dependencies {
 	minecraft "com.mojang:minecraft:${project.minecraft_version}"
 	implementation "net.fabricmc:fabric-loader:${project.fabric_loader_version}"
 	implementation "com.google.code.findbugs:jsr305:3.0.2"
-	shadow "org.eclipse.jgit:org.eclipse.jgit:7.6.0.202603022253-r"
-	shadow "org.eclipse.jgit:org.eclipse.jgit.ssh.apache:7.6.0.202603022253-r"
+	implementation "org.eclipse.jgit:org.eclipse.jgit:7.6.0.202603022253-r"
+	include "org.eclipse.jgit:org.eclipse.jgit:7.6.0.202603022253-r"
+	include "com.googlecode.javaewah:JavaEWAH:1.2.3"
 
 	implementation "fi.dy.masa.malilib:malilib-fabric-${project.minecraft_version_out}:${project.malilib_version}"
 //	implementation "com.github.sakura-ryoko:malilib:${project.malilib_version}"
@@ -157,28 +152,13 @@ jar {
 	}
 }
 
-tasks.named('shadowJar') {
-	enabled = false
-	archiveClassifier.set('shadow')
-	configurations = project.configurations.named('shadow').map { [it] }
-	mergeServiceFiles()
-	from("LICENSE.txt") {
-		rename { "${it}_${base.archivesName.get()}"}
-	}
-	from("NOTICE.md") {
-		rename { "${it}_${base.archivesName.get()}"}
-	}
-}
-
-tasks.register('releaseJar', com.github.jengelman.gradle.plugins.shadow.tasks.ShadowJar) {
+tasks.register('releaseJar', Jar) {
 	group = 'build'
-	description = 'Creates the installable mod jar with Loom includes and shaded libraries.'
+	description = 'Creates the installable mod jar with Loom nested libraries.'
 	archiveClassifier.set('')
 	dependsOn tasks.named('jar')
 	from({ zipTree(tasks.named('jar').get().archiveFile.get().asFile) })
-	configurations = project.configurations.named('shadow').map { [it] }
 	exclude 'META-INF/*.SF', 'META-INF/*.DSA', 'META-INF/*.RSA', 'META-INF/*.EC', 'META-INF/INDEX.LIST'
-	mergeServiceFiles()
 }
 
 tasks.named('assemble') {
