@@ -62,6 +62,19 @@ final class LvcServuxBulkRequestPlanner
         return this.rangesByColumn.size();
     }
 
+    int completedColumns()
+    {
+        return this.completedColumns.size();
+    }
+
+    boolean ensureAllReady(LvcOperationHandle handle, String phaseName)
+    {
+        EntityDataManager entityDataManager = EntityDataManager.getInstance();
+        this.consumeCompletedColumns(entityDataManager, handle, phaseName);
+        this.requestMoreColumns(entityDataManager, handle, phaseName);
+        return this.completedColumns.size() >= this.totalColumns();
+    }
+
     boolean ensureReadyForCurrentChunk(LvcCaptureSession session, LvcOperationHandle handle, String phaseName)
     {
         LvcSiteWorkPlan.ChunkWork work = session.currentChunkWork();

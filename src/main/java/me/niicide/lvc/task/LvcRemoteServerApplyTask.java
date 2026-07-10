@@ -113,6 +113,7 @@ public final class LvcRemoteServerApplyTask extends LvcChunkedTaskBase<LvcRemote
     @Nullable private LitematicaSchematic commandSchematic;
     @Nullable private LvcWorldReader sparseTargetReader;
     @Nullable private LvcRemoteSparseTargetPlanner sparseTargetPlanner;
+    @Nullable private LvcServuxBulkRequestPlanner servuxRequests;
     @Nullable private CompletableFuture<ServuxPastePayload> servuxPastePayloadFuture;
     @Nullable private ServuxPastePayload servuxPastePayload;
     @Nullable private ClientSchematicShadowSync clientShadowSync;
@@ -253,7 +254,12 @@ public final class LvcRemoteServerApplyTask extends LvcChunkedTaskBase<LvcRemote
                 this.manifest = LvcSemanticRepository.readCommitManifest(repository, this.targetCommit);
                 this.siteId = LvcSemanticRepository.defaultSiteId(this.manifest);
                 this.preparePlacementState();
-                this.sparseTargetReader = this.shouldBuildSparseTargetSchematic() ? this.requireBackend().createReader(this.world) : null;
+                LvcSiteWorkPlan sparsePlan = this.shouldBuildSparseTargetSchematic() ?
+                        LvcSiteWorkPlan.create(this.requireManifest().site(this.requireSiteId()), this.requirePlacement()) : null;
+                this.servuxRequests = sparsePlan != null && this.requireBackend() == LvcWorldBackend.SERVUX ?
+                        LvcServuxBulkRequestPlanner.create(sparsePlan) : null;
+                this.sparseTargetReader = sparsePlan == null ? null :
+                        this.requireBackend().createReader(this.world, this.requireBackend() == LvcWorldBackend.SERVUX);
                 this.sparseTargetPlanner = this.sparseTargetReader == null ? null :
                         new LvcRemoteSparseTargetPlanner(this.requireBackend(), this.sparseTargetReader,
                                 this.requireManifest().site(this.requireSiteId()));
@@ -265,17 +271,17 @@ public final class LvcRemoteServerApplyTask extends LvcChunkedTaskBase<LvcRemote
                         null,
                         this.sparseTargetPlanner == null ? null : this.sparseTargetPlanner::include
                 );
-                this.phase = Phase.BUILD;
+                this.phase = this.servuxRequests == null ? Phase.BUILD : Phase.REQUEST_SERVUX_DATA;
             }
 
             LvcDiagnostics.debug(this.handle(),
-                    "remote server apply initialized mode={} backend={} lossy={} site={} target={} branch='{}' regions={} chunks={} dimension={} origin={} sparseTarget={}",
+                    "remote server apply initialized mode={} backend={} lossy={} site={} target={} branch='{}' regions={} chunks={} dimension={} origin={} sparseTarget={} servuxColumns={}",
                     this.mode.name(), this.backend.id(), this.backend.lossy(), this.siteId,
                     this.targetCommit == null ? "<none>" : this.targetCommit.getName(),
                     this.targetBranchName == null ? "<none>" : this.targetBranchName,
                     this.regionCount, this.buildSession == null ? 0 : this.buildSession.totalChunks(),
                     this.requirePlacement().dimension(), this.requirePlacement().origin(),
-                    this.sparseTargetReader != null);
+                    this.sparseTargetReader != null, this.servuxRequests == null ? 0 : this.servuxRequests.totalColumns());
             this.updateProgressHud();
         }
         catch (Exception e)
@@ -287,6 +293,19 @@ public final class LvcRemoteServerApplyTask extends LvcChunkedTaskBase<LvcRemote
     @Override
     protected boolean step() throws Exception
     {
+        if (this.phase == Phase.REQUEST_SERVUX_DATA)
+        {
+            LvcServuxBulkRequestPlanner requests = Objects.requireNonNull(this.servuxRequests, "servuxRequests");
+
+            if (!requests.ensureAllReady(this.handle(), "remote server apply"))
+            {
+                return false;
+            }
+
+            this.phase = Phase.BUILD;
+            return false;
+        }
+
         if (this.phase == Phase.BUILD)
         {
             LvcSemanticSchematicBuilder.BuildSession session = this.requireBuildSession();
@@ -488,7 +507,12 @@ public final class LvcRemoteServerApplyTask extends LvcChunkedTaskBase<LvcRemote
         this.infoHudLines.add("Backend: " + (this.backend == null ? "unknown" : this.backend.id()));
         this.infoHudLines.add("Phase: " + this.phase.label);
 
-        if (this.phase == Phase.BUILD && this.buildSession != null)
+        if (this.phase == Phase.REQUEST_SERVUX_DATA && this.servuxRequests != null)
+        {
+            this.infoHudLines.add(String.format(Locale.ROOT, "Servux columns: %d / %d",
+                    this.servuxRequests.completedColumns(), this.servuxRequests.totalColumns()));
+        }
+        else if (this.phase == Phase.BUILD && this.buildSession != null)
         {
             this.infoHudLines.add(String.format(Locale.ROOT, "Chunks: %d / %d",
                     this.buildSession.processedChunks(), this.buildSession.totalChunks()));
@@ -1910,6 +1934,7 @@ public final class LvcRemoteServerApplyTask extends LvcChunkedTaskBase<LvcRemote
 
     private enum Phase
     {
+        REQUEST_SERVUX_DATA("read server data"),
         BUILD("build target"),
         PREPARE_SERVUX_PAYLOAD("prepare servux payload"),
         WRITE_JOURNAL("prepare Git"),

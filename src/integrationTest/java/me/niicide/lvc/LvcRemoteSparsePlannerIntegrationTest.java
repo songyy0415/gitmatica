@@ -14,12 +14,14 @@ import java.util.List;
 import java.util.Set;
 import net.minecraft.core.BlockPos;
 import net.minecraft.nbt.CompoundTag;
+import net.minecraft.nbt.ListTag;
 import net.minecraft.world.level.block.Blocks;
 import me.niicide.lvc.capture.LvcMinecraftWorldReader;
 import me.niicide.lvc.model.LvcChunkCoordinate;
 import me.niicide.lvc.model.LvcIntPosition;
 import me.niicide.lvc.model.LvcManifest;
 import me.niicide.lvc.semantic.LvcSemanticSchematicBuilder;
+import me.niicide.lvc.storage.LvcCanonicalNbt;
 import me.niicide.lvc.storage.LvcChunkStore;
 import me.niicide.lvc.storage.LvcSemanticRepository;
 import me.niicide.lvc.task.LvcRemoteSparseTargetPlanner;
@@ -34,6 +36,7 @@ final class LvcRemoteSparsePlannerIntegrationTest
     static void runAll() throws Exception
     {
         IntegrationTestSupport.run("remote Servux sparse planner tracks verifier-visible block entity inventory", LvcRemoteSparsePlannerIntegrationTest::remoteServuxSparsePlannerTracksVerifierVisibleBlockEntityInventory);
+        IntegrationTestSupport.run("remote Servux sparse planner requires authoritative inventory after reconnect", LvcRemoteSparsePlannerIntegrationTest::remoteServuxSparsePlannerRequiresAuthoritativeInventoryAfterReconnect);
         IntegrationTestSupport.run("remote command sparse planner builds block state only schematic", LvcRemoteSparsePlannerIntegrationTest::remoteCommandSparsePlannerBuildsBlockStateOnlySchematic);
         IntegrationTestSupport.run("remote command sparse planner skips untracked gaps", LvcRemoteSparsePlannerIntegrationTest::remoteCommandSparsePlannerSkipsUntrackedGaps);
         IntegrationTestSupport.run("remote command sparse planner rejects unreadable blocks", LvcRemoteSparsePlannerIntegrationTest::remoteCommandSparsePlannerRejectsUnreadableBlocks);
@@ -96,6 +99,45 @@ final class LvcRemoteSparsePlannerIntegrationTest
         IntegrationTestSupport.assertEquals(4, liveReader.blockEntityReadCount(), "Servux sparse should read live BE NBT for tracked inventory comparison");
         IntegrationTestSupport.assertEquals(3, session.includedBlocks(), "Servux sparse included BE-dirty blocks");
         IntegrationTestSupport.assertEquals(1, session.structureVoidBlocks(), "Servux sparse skipped non-visible BE drift");
+    }
+
+    private static void remoteServuxSparsePlannerRequiresAuthoritativeInventoryAfterReconnect() throws Exception
+    {
+        bootstrapMinecraft();
+
+        String furnace = LvcMinecraftWorldReader.blockStateString(Blocks.FURNACE.defaultBlockState());
+        CompoundTag emptyInventory = new CompoundTag();
+        emptyInventory.putString("id", "minecraft:furnace");
+        emptyInventory.put("Items", new ListTag());
+        LvcSemanticSchematicBuilder.TargetBlock target = new LvcSemanticSchematicBuilder.TargetBlock(
+                new LvcChunkCoordinate(0, 0, 0),
+                0,
+                new LvcIntPosition(0, 0, 0),
+                new LvcIntPosition(0, 0, 0),
+                BlockPos.ZERO,
+                furnace,
+                LvcCanonicalNbt.encodeBlockEntity(emptyInventory)
+        );
+
+        FakeWorldReader unavailableAfterReconnect = new FakeWorldReader("minecraft:stone");
+        unavailableAfterReconnect.setBlock(new LvcIntPosition(0, 0, 0), furnace);
+        LvcRemoteSparseTargetPlanner stalePlanner = new LvcRemoteSparseTargetPlanner(
+                LvcWorldBackend.SERVUX, unavailableAfterReconnect, singleLineSite());
+
+        IntegrationTestSupport.assertTrue(!stalePlanner.include(target, Blocks.FURNACE.defaultBlockState()),
+                "missing post-reconnect inventory is indistinguishable from an empty target");
+
+        FakeWorldReader authoritativeReader = new FakeWorldReader("minecraft:stone");
+        authoritativeReader.setBlock(new LvcIntPosition(0, 0, 0), furnace);
+        authoritativeReader.setBlockEntity(new LvcIntPosition(0, 0, 0),
+                inventoryBlockEntity("minecraft:diamond", "Server Inventory"));
+        LvcRemoteSparseTargetPlanner authoritativePlanner = new LvcRemoteSparseTargetPlanner(
+                LvcWorldBackend.SERVUX, authoritativeReader, singleLineSite());
+
+        IntegrationTestSupport.assertTrue(authoritativePlanner.include(target, Blocks.FURNACE.defaultBlockState()),
+                "fresh Servux inventory should include the dirty container in the sparse paste");
+        IntegrationTestSupport.assertEquals(1, authoritativePlanner.blockEntityMismatches(),
+                "fresh Servux inventory mismatch count");
     }
 
     private static void remoteCommandSparsePlannerBuildsBlockStateOnlySchematic() throws Exception
