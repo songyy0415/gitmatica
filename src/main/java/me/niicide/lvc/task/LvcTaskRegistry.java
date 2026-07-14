@@ -14,6 +14,8 @@ public final class LvcTaskRegistry
     private static LvcOperationHandle activeOperation;
     private static Runnable activeAbortCleanup;
     private static final Map<BackgroundOperationKey, LvcOperationHandle> activeBackgroundOperations = new HashMap<>();
+    private static long worldEpoch;
+    private static boolean worldUnloadInProgress;
 
     private LvcTaskRegistry()
     {
@@ -24,7 +26,7 @@ public final class LvcTaskRegistry
         Objects.requireNonNull(name, "name");
         Objects.requireNonNull(repositoryDirectory, "repositoryDirectory");
 
-        if (activeOperation != null)
+        if (worldUnloadInProgress || activeOperation != null || activeBackgroundOperations.isEmpty() == false)
         {
             return Optional.empty();
         }
@@ -42,7 +44,7 @@ public final class LvcTaskRegistry
 
         BackgroundOperationKey key = BackgroundOperationKey.of(name, repositoryDirectory);
 
-        if (activeBackgroundOperations.containsKey(key))
+        if (worldUnloadInProgress || activeOperation != null || activeBackgroundOperations.isEmpty() == false)
         {
             return Optional.empty();
         }
@@ -93,78 +95,104 @@ public final class LvcTaskRegistry
         LvcOperationHandle handle;
         Runnable cleanup;
         int backgroundOperationCount;
+        long nextWorldEpoch;
 
         synchronized (LvcTaskRegistry.class)
         {
+            worldUnloadInProgress = true;
+            nextWorldEpoch = ++worldEpoch;
             handle = activeOperation;
             cleanup = activeAbortCleanup;
+            activeOperation = null;
             activeAbortCleanup = null;
             backgroundOperationCount = activeBackgroundOperations.size();
+            activeBackgroundOperations.clear();
         }
 
-        if (handle == null && backgroundOperationCount == 0)
+        try
         {
-            return;
-        }
+            if (handle != null)
+            {
+                LvcDiagnostics.info(handle, "aborting active operation because the world is unloading epoch={}", nextWorldEpoch);
+            }
+            else if (backgroundOperationCount > 0)
+            {
+                LvcDiagnostics.debug("aborting {} background LVC operation(s) because the world is unloading epoch={}",
+                        backgroundOperationCount, nextWorldEpoch);
+            }
 
-        if (handle != null)
-        {
-            LvcDiagnostics.debug(handle, "aborting active operation because the world is unloading");
-        }
-        else
-        {
-            LvcDiagnostics.debug("aborting {} background LVC operation(s) because the world is unloading",
-                    backgroundOperationCount);
-        }
+            if (handle != null && cleanup != null)
+            {
+                try
+                {
+                    cleanup.run();
+                }
+                catch (Exception e)
+                {
+                    LvcDiagnostics.debug(handle, "active operation abort cleanup failed: {}", e.getMessage());
+                }
+            }
 
-        if (handle != null && cleanup != null)
-        {
             try
             {
-                cleanup.run();
+                TaskScheduler.getInstanceClient().removeTasksIf(LvcTaskRegistry::isLvcTask);
             }
-            catch (Exception e)
+            finally
             {
-                LvcDiagnostics.debug(handle, "active operation abort cleanup failed: {}", e.getMessage());
+                TaskScheduler.getInstanceServer().removeTasksIf(LvcTaskRegistry::isLvcTask);
             }
         }
-
-        boolean removedClientTask = TaskScheduler.getInstanceClient().removeTasksIf(LvcTaskRegistry::isLvcTask);
-        boolean removedServerTask = TaskScheduler.getInstanceServer().removeTasksIf(LvcTaskRegistry::isLvcTask);
-
-        if (handle != null && !removedClientTask && !removedServerTask)
+        finally
         {
-            release(handle);
+            synchronized (LvcTaskRegistry.class)
+            {
+                worldUnloadInProgress = false;
+            }
         }
-
-        clearBackgroundOperationsForWorldUnload();
     }
 
-    private static synchronized void clearBackgroundOperationsForWorldUnload()
+    static synchronized long currentWorldEpoch()
     {
-        if (activeBackgroundOperations.isEmpty())
-        {
-            return;
-        }
+        return worldEpoch;
+    }
 
-        LvcDiagnostics.debug("clearing {} background LVC operation handle(s) after world unload task removal",
-                activeBackgroundOperations.size());
-        activeBackgroundOperations.clear();
+    static synchronized boolean isCurrentWorldEpoch(long epoch)
+    {
+        return epoch == worldEpoch;
     }
 
     private static boolean isLvcTask(Object task)
     {
-        return task instanceof LvcTaskBase<?> || task instanceof LvcAuthoritativeClientSyncTask;
+        return task instanceof LvcWorldTask;
     }
 
     public static synchronized boolean hasActiveOperation()
     {
-        return activeOperation != null;
+        return worldUnloadInProgress || activeOperation != null || activeBackgroundOperations.isEmpty() == false;
     }
 
     public static synchronized String activeOperationName()
     {
-        return activeOperation != null ? activeOperation.name() : "";
+        if (activeOperation != null)
+        {
+            return displayOperationName(activeOperation.name());
+        }
+
+        if (worldUnloadInProgress)
+        {
+            return "World unload";
+        }
+
+        return activeBackgroundOperations.values().stream()
+                .findFirst()
+                .map(LvcOperationHandle::name)
+                .map(LvcTaskRegistry::displayOperationName)
+                .orElse("");
+    }
+
+    private static String displayOperationName(String name)
+    {
+        return name.startsWith("LVC ") ? name.substring(4) : name;
     }
 
     public static synchronized Optional<LvcOperationHandle> activeOperation()

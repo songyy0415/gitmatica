@@ -1,5 +1,6 @@
 package me.niicide.lvc.gui;
 
+import java.io.IOException;
 import java.util.Optional;
 import net.minecraft.client.Minecraft;
 import net.minecraft.world.entity.player.Player;
@@ -228,7 +229,7 @@ final class LvcMergeWorkflow
     }
 
     private static void scheduleMergeRestore(GuiLvcProjectController controller, LvcOperationHandle handle,
-                                             Level restoreWorld, LvcProjectService.BranchMergeResult merge)
+                                             Level restoreWorld, LvcProjectService.BranchMergeResult merge) throws IOException
     {
         if (LvcWorldBackend.resolve(restoreWorld) != LvcWorldBackend.DIRECT)
         {
@@ -250,20 +251,12 @@ final class LvcMergeWorkflow
                             controller.gui.focusHistoryCommitAfterNextRefresh(merge.commitId());
                             controller.gui.refreshHistory();
                             controller.gui.initGui();
-                            if (result.postOperationDiffs().detected())
-                            {
-                                LvcOperationCoordinator.showPostOperationDiffsNotice(controller, "LVC Merge Branch",
-                                        result.postOperationDiffs());
-                            }
-                            else
-                            {
-                                LvcGuiMessages.show(MessageType.SUCCESS,
-                                        merge.status() == LvcProjectService.BranchMergeStatus.FAST_FORWARD ?
-                                                "litematica.message.lvc_project.merge_branch_fast_forward" :
-                                                "litematica.message.lvc_project.merge_branch_merged",
-                                        merge.sourceBranch(), merge.targetBranch(),
-                                        LvcOperationCoordinator.regionCountText(result.restoredRegionCount()));
-                            }
+                            LvcGuiMessages.show(MessageType.SUCCESS,
+                                    merge.status() == LvcProjectService.BranchMergeStatus.FAST_FORWARD ?
+                                            "litematica.message.lvc_project.merge_branch_fast_forward" :
+                                            "litematica.message.lvc_project.merge_branch_merged",
+                                    merge.sourceBranch(), merge.targetBranch(),
+                                    LvcOperationCoordinator.regionCountText(result.restoredRegionCount()));
                         },
                         e -> LvcGuiMessages.showTaskError(Operation.MERGE_BRANCH,
                                 "litematica.error.lvc_project.merge_branch_failed", e, true),

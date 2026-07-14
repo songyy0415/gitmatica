@@ -179,28 +179,12 @@ final class LvcAreaWorkflow
 
                             if (result.restoredRegionCount() > 0)
                             {
-                                if (result.postOperationDiffs().detected())
-                                {
-                                    LvcOperationCoordinator.showPostOperationDiffsNotice(controller, "LVC Discard Changes",
-                                            result.postOperationDiffs());
-                                }
-                                else
-                                {
-                                    LvcGuiMessages.show(MessageType.SUCCESS, "litematica.message.lvc_project.discarded_changes",
-                                            LvcOperationCoordinator.regionCountText(result.restoredRegionCount()));
-                                }
+                                LvcGuiMessages.show(MessageType.SUCCESS, "litematica.message.lvc_project.discarded_changes",
+                                        LvcOperationCoordinator.regionCountText(result.restoredRegionCount()));
                             }
                             else
                             {
-                                if (result.postOperationDiffs().detected())
-                                {
-                                    LvcOperationCoordinator.showPostOperationDiffsNotice(controller, "LVC Discard Changes",
-                                            result.postOperationDiffs());
-                                }
-                                else
-                                {
-                                    LvcGuiMessages.show(MessageType.SUCCESS, "litematica.message.lvc_project.discarded_changes_no_regions");
-                                }
+                                LvcGuiMessages.show(MessageType.SUCCESS, "litematica.message.lvc_project.discarded_changes_no_regions");
                             }
                         },
                         e -> LvcGuiMessages.showTaskError(Operation.DISCARD_CHANGES, "litematica.error.lvc_project.discard_failed", e, true),

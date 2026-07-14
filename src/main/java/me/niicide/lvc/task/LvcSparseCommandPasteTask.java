@@ -1,6 +1,7 @@
 package me.niicide.lvc.task;
 
 import java.util.Collection;
+import javax.annotation.Nullable;
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.Direction;
 import net.minecraft.world.level.block.Blocks;
@@ -9,17 +10,32 @@ import net.minecraft.world.level.chunk.ChunkAccess;
 import net.minecraft.world.level.chunk.LevelChunk;
 import fi.dy.masa.malilib.util.position.IntBoundingBox;
 import fi.dy.masa.malilib.util.position.LayerRange;
+import fi.dy.masa.malilib.interfaces.ICompletionListener;
 import fi.dy.masa.litematica.config.Configs;
 import fi.dy.masa.litematica.schematic.placement.SchematicPlacement;
 import fi.dy.masa.litematica.scheduler.tasks.TaskPasteSchematicPerChunkCommand;
 import fi.dy.masa.litematica.util.ReplaceBehavior;
 import fi.dy.masa.litematica.world.ChunkSchematic;
 
-final class LvcSparseCommandPasteTask extends TaskPasteSchematicPerChunkCommand
+final class LvcSparseCommandPasteTask extends TaskPasteSchematicPerChunkCommand implements LvcWorldTask
 {
+    private final LvcTaskEpoch taskEpoch = LvcTaskEpoch.capture();
+
     LvcSparseCommandPasteTask(Collection<SchematicPlacement> placements, LayerRange range, boolean changedBlocksOnly)
     {
         super(placements, range, changedBlocksOnly);
+    }
+
+    @Override
+    public boolean shouldRemove()
+    {
+        return !this.taskEpoch.isCurrent() || super.shouldRemove();
+    }
+
+    @Override
+    public void setCompletionListener(@Nullable ICompletionListener listener)
+    {
+        super.setCompletionListener(this.taskEpoch.guard(listener));
     }
 
     @Override

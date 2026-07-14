@@ -3,6 +3,7 @@ package me.niicide.lvc.task;
 import it.unimi.dsi.fastutil.longs.LongIterator;
 import it.unimi.dsi.fastutil.longs.LongOpenHashSet;
 import it.unimi.dsi.fastutil.longs.LongArrays;
+import javax.annotation.Nullable;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.multiplayer.ClientLevel;
 import net.minecraft.core.BlockPos;
@@ -18,7 +19,7 @@ import me.niicide.lvc.semantic.LvcSemanticWorldApplier;
 import fi.dy.masa.litematica.scheduler.tasks.TaskBase;
 import fi.dy.masa.malilib.interfaces.ICompletionListener;
 
-public final class LvcAuthoritativeClientSyncTask extends TaskBase
+public final class LvcAuthoritativeClientSyncTask extends TaskBase implements LvcWorldTask
 {
     private static final long MAX_SYNC_WORK_NANOS = 10_000_000L;
     private static final long MAX_TOTAL_TICK_NANOS = 50_000_000L;
@@ -26,6 +27,7 @@ public final class LvcAuthoritativeClientSyncTask extends TaskBase
     private final ServerLevel world;
     private final long[] positions;
     private final long[] renderSections;
+    private final LvcTaskEpoch taskEpoch = LvcTaskEpoch.capture();
     private int nextPosition;
 
     LvcAuthoritativeClientSyncTask(ServerLevel world, LongOpenHashSet positions)
@@ -54,6 +56,12 @@ public final class LvcAuthoritativeClientSyncTask extends TaskBase
         }
 
         return false;
+    }
+
+    @Override
+    public void setCompletionListener(@Nullable ICompletionListener listener)
+    {
+        super.setCompletionListener(this.taskEpoch.guard(listener));
     }
 
     @Override
@@ -116,7 +124,7 @@ public final class LvcAuthoritativeClientSyncTask extends TaskBase
     @Override
     public boolean shouldRemove()
     {
-        return this.finished || super.shouldRemove();
+        return !this.taskEpoch.isCurrent() || this.finished || super.shouldRemove();
     }
 
     private static long[] toArray(LongOpenHashSet positions)
@@ -169,7 +177,13 @@ public final class LvcAuthoritativeClientSyncTask extends TaskBase
         long[] sections = this.renderSections.clone();
         Minecraft minecraft = Minecraft.getInstance();
 
-        minecraft.execute(() -> refreshClientRenderSections(minecraft, dimension, sections));
+        minecraft.execute(() ->
+        {
+            if (this.taskEpoch.isCurrent())
+            {
+                refreshClientRenderSections(minecraft, dimension, sections);
+            }
+        });
         LvcDiagnostics.debug("LVC authoritative client render refresh queued dimension='{}' sections={}",
                 dimension.identifier(), sections.length);
     }

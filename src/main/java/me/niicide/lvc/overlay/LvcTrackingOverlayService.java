@@ -45,6 +45,7 @@ import me.niicide.lvc.storage.LvcRepository;
 import me.niicide.lvc.storage.LvcSemanticRepository;
 import me.niicide.lvc.semantic.LvcSemanticSchematicBuilder;
 import me.niicide.lvc.project.LvcProjectPositions;
+import me.niicide.lvc.task.LvcRefreshMarker;
 import me.niicide.lvc.world.LvcWorldAccess;
 
 import fi.dy.masa.litematica.data.DataManager;
@@ -127,8 +128,9 @@ public final class LvcTrackingOverlayService
         return overlay;
     }
 
-    public static void removeTrackingOverlay(Path repositoryDirectory)
+    public static void removeTrackingOverlay(Path repositoryDirectory) throws IOException
     {
+        LvcRefreshMarker.write(repositoryDirectory, "overlay_reload", null);
         removeTrackingOverlay(repositoryDirectory, true);
     }
 
@@ -218,8 +220,8 @@ public final class LvcTrackingOverlayService
         {
             if (isMatchingTrackingPlacement(overlay.placement(), cacheFile, expectedName))
             {
+                // Reusing an overlay must not change the user's current Litematica placement selection.
                 attachCompletionListener(overlay, completionListener);
-                focusTrackingOverlayInternal(repositoryDirectory, overlay.placement());
                 LvcDiagnostics.debug("LvcTrackingOverlayService: reused active tracking overlay for '{}'", repositoryDirectory);
                 return overlay;
             }
@@ -238,7 +240,6 @@ public final class LvcTrackingOverlayService
         trackOverlay(repositoryDirectory, restoredOverlay, currentOverlayDescriptor(repositoryDirectory, siteId, currentPlacementDimension(site),
                 restoredPlacement.getSchematicFile(), expectedName));
         attachCompletionListener(restoredOverlay, completionListener);
-        focusTrackingOverlayInternal(repositoryDirectory, restoredPlacement);
         LvcDiagnostics.debug("LvcTrackingOverlayService: attached restart-persisted tracking overlay for '{}'", repositoryDirectory);
         return restoredOverlay;
     }

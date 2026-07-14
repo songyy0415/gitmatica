@@ -59,8 +59,8 @@ public final class LvcSemanticClearTask extends LvcChunkedTaskBase<LvcProjectSer
                     this::writeJournalIfNeeded,
                     projectPos -> { },
                     LvcSemanticRestoreEngine.Options.clear());
-            LvcDiagnostics.debug(this.handle(), "semantic clear initialized site={} dimension={} origin={} chunks={} oneVerifyRestore={}",
-                    project.siteId(), project.placement().dimension(), project.placement().origin(), chunkRefs.size(), true);
+            LvcDiagnostics.debug(this.handle(), "semantic clear initialized site={} dimension={} origin={} chunks={}",
+                    project.siteId(), project.placement().dimension(), project.placement().origin(), chunkRefs.size());
             this.updateProgressHud();
         }
         catch (Exception e)
@@ -100,11 +100,9 @@ public final class LvcSemanticClearTask extends LvcChunkedTaskBase<LvcProjectSer
     {
         LvcSemanticRestoreEngine engine = this.requireRestoreEngine();
         LvcProjectService.SemanticWorldClearResult result =
-                new LvcProjectService.SemanticWorldClearResult(this.regionCount, engine.restoredBlocks(), engine.postOperationDiffs());
-        LvcDiagnostics.debug(this.handle(), "semantic clear complete regions={} clearedBlocks={} clearedEntities={} changedChunks={} postOperationDiffs={} dirtySubchunks={} mismatches={}",
-                result.regionCount(), result.clearedBlocks(), engine.clearedEntities(), engine.changedChunks(),
-                result.postOperationDiffs().detected(),
-                result.postOperationDiffs().dirtySubchunks(), result.postOperationDiffs().mismatches());
+                new LvcProjectService.SemanticWorldClearResult(this.regionCount, engine.restoredBlocks());
+        LvcDiagnostics.debug(this.handle(), "semantic clear complete regions={} clearedBlocks={} clearedEntities={} changedChunks={}",
+                result.regionCount(), result.clearedBlocks(), engine.clearedEntities(), engine.changedChunks());
         LvcRefreshMarker.write(this.repositoryDirectory, "clear", null);
         LvcOperationJournal.delete(this.repositoryDirectory);
         return result;

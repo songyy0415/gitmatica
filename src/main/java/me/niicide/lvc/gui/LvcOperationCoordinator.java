@@ -6,7 +6,6 @@ import net.minecraft.client.gui.screens.Screen;
 import net.minecraft.world.level.Level;
 import me.niicide.lvc.LvcDiagnostics;
 import me.niicide.lvc.task.LvcOperationHandle;
-import me.niicide.lvc.task.LvcSemanticRestoreEngine;
 import me.niicide.lvc.task.LvcTaskRegistry;
 import me.niicide.lvc.task.LvcTaskScheduling;
 import fi.dy.masa.litematica.scheduler.ITask;
@@ -21,7 +20,6 @@ final class LvcOperationCoordinator
     private static final int UNSAVED_CHANGES_TEXT_COLOR = 0xFFB0B0B0;
     private static final int UNSAVED_CHANGES_DIALOG_WIDTH = 250;
     private static final int UNSAVED_CHANGES_DIALOG_PADDING = 8;
-    private static final int POST_OPERATION_DIFFS_TEXT_COLOR = 0xFFB0B0B0;
 
     private LvcOperationCoordinator()
     {
@@ -30,7 +28,6 @@ final class LvcOperationCoordinator
     static Optional<LvcOperationHandle> acquire(GuiLvcProjectController controller, String name)
     {
         Path repositoryDirectory = controller.gui.repositoryDirectory;
-        controller.abortOverlayLoadForForegroundOperation(name);
         Optional<LvcOperationHandle> handle = LvcTaskRegistry.tryAcquire(name, repositoryDirectory);
 
         if (handle.isEmpty())
@@ -81,30 +78,6 @@ final class LvcOperationCoordinator
                 "litematica.gui.title.lvc_project.unsaved_changes",
                 "litematica.gui.message.lvc_project.unsaved_changes",
                 UNSAVED_CHANGES_TEXT_COLOR
-        ));
-    }
-
-    static void showPostOperationDiffsNotice(GuiLvcProjectController controller, String operationName,
-                                             LvcSemanticRestoreEngine.PostOperationDiffs diffs)
-    {
-        if (!diffs.detected())
-        {
-            return;
-        }
-
-        LvcDiagnostics.info("LVC {} completed with post-operation diffs repo='{}' dirtySubchunks={} mismatches={} stateMismatches={} blockEntityMismatches={}",
-                operationName, controller.gui.repositoryDirectory, diffs.dirtySubchunks(), diffs.mismatches(),
-                diffs.stateMismatches(), diffs.blockEntityMismatches());
-        GuiBase.openGui(new GuiLvcNoticeDialog(
-                confirmParent(controller),
-                UNSAVED_CHANGES_DIALOG_WIDTH,
-                UNSAVED_CHANGES_DIALOG_PADDING,
-                "litematica.gui.title.lvc_project.post_operation_diffs",
-                "litematica.gui.message.lvc_project.post_operation_diffs",
-                POST_OPERATION_DIFFS_TEXT_COLOR,
-                diffs.mismatches(),
-                diffs.dirtySubchunks(),
-                diffs.dirtySubchunks() == 1 ? "" : "s"
         ));
     }
 

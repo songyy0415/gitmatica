@@ -6,6 +6,7 @@ import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.UUID;
+import me.niicide.lvc.overlay.LvcTrackingOverlayService;
 import me.niicide.lvc.storage.LvcChunkStagingStore;
 import me.niicide.lvc.storage.LvcChunkStore;
 import me.niicide.lvc.task.LvcOperationHandle;
@@ -31,6 +32,7 @@ final class LvcOperationRecoveryIntegrationTest
         IntegrationTestSupport.run("operation journal delete clears active backup temp and legacy locations", LvcOperationRecoveryIntegrationTest::operationJournalDeleteClearsActiveBackupTempAndLegacyLocations);
         IntegrationTestSupport.run("interrupted staging cleanup preserves published objects", LvcOperationRecoveryIntegrationTest::interruptedStagingCleanupPreservesPublishedObjects);
         IntegrationTestSupport.run("refresh marker survives until overlay cleanup", LvcOperationRecoveryIntegrationTest::refreshMarkerSurvivesUntilOverlayCleanup);
+        IntegrationTestSupport.run("transient overlay removal records refresh intent", LvcOperationRecoveryIntegrationTest::transientOverlayRemovalRecordsRefreshIntent);
     }
 
     private static void operationJournalWritesPrimaryBackupAndNoTemp() throws Exception
@@ -240,6 +242,22 @@ final class LvcOperationRecoveryIntegrationTest
         LvcRefreshMarker.delete(repoDir);
 
         IntegrationTestSupport.assertTrue(!LvcRefreshMarker.exists(repoDir), "refresh marker should be removed after successful overlay refresh");
+    }
+
+    private static void transientOverlayRemovalRecordsRefreshIntent() throws Exception
+    {
+        Path repoDir = createGitRepositoryDirectory("lvc-overlay-removal-marker-");
+
+        LvcTrackingOverlayService.closeTrackingOverlay(repoDir);
+        IntegrationTestSupport.assertTrue(!LvcRefreshMarker.exists(repoDir),
+                "explicit project close must not request an automatic overlay reload");
+
+        LvcTrackingOverlayService.removeTrackingOverlay(repoDir);
+
+        IntegrationTestSupport.assertTrue(LvcRefreshMarker.exists(repoDir),
+                "transient overlay removal must survive logout until the overlay is restored");
+        IntegrationTestSupport.assertEquals("overlay_reload", LvcRefreshMarker.read(repoDir).reason(),
+                "transient overlay removal refresh reason");
     }
 
     private static Path createGitRepositoryDirectory(String prefix) throws Exception

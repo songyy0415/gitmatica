@@ -1,5 +1,6 @@
 package me.niicide.lvc.gui;
 
+import java.io.IOException;
 import java.util.List;
 import java.util.Optional;
 import javax.annotation.Nullable;
@@ -25,8 +26,6 @@ import me.niicide.lvc.world.LvcWorldBackend;
 
 import fi.dy.masa.litematica.data.DataManager;
 import fi.dy.masa.litematica.gui.GuiMainMenu;
-import fi.dy.masa.litematica.scheduler.ITask;
-import fi.dy.masa.litematica.scheduler.TaskScheduler;
 import fi.dy.masa.litematica.selection.AreaSelection;
 import fi.dy.masa.malilib.gui.GuiBase;
 import fi.dy.masa.malilib.gui.Message.MessageType;
@@ -108,7 +107,6 @@ final class GuiLvcProjectController
 
         if (this.gui.initialOverlayAttempted || !this.gui.hasHistory())
         {
-            this.focusTrackingOverlay();
             return;
         }
 
@@ -268,16 +266,8 @@ final class GuiLvcProjectController
                             result ->
                             {
                                 this.refreshAfterLatestVersionDelete();
-                                if (result.postOperationDiffs().detected())
-                                {
-                                    LvcOperationCoordinator.showPostOperationDiffsNotice(this, "LVC Delete Version",
-                                            result.postOperationDiffs());
-                                }
-                                else
-                                {
-                                    LvcGuiMessages.show(MessageType.SUCCESS, "litematica.message.lvc_project.deleted_version_delete_changes",
-                                            commit.shortId(), LvcOperationCoordinator.regionCountText(result.regionCount()));
-                                }
+                                LvcGuiMessages.show(MessageType.SUCCESS, "litematica.message.lvc_project.deleted_version_delete_changes",
+                                        commit.shortId(), LvcOperationCoordinator.regionCountText(result.regionCount()));
                             },
                             e -> LvcGuiMessages.showTaskError(Operation.DELETE_VERSION,
                                     "litematica.error.lvc_project.delete_version_failed", e, true),
@@ -900,7 +890,7 @@ final class GuiLvcProjectController
         LvcGuiMessages.show(MessageType.INFO, "litematica.message.lvc_project.full_release_feature");
     }
 
-    void removeTrackingOverlay()
+    void removeTrackingOverlay() throws IOException
     {
         LvcProjectService.removeTrackingOverlay(this.gui.repositoryDirectory);
         this.gui.trackingOverlay = null;
@@ -1114,28 +1104,6 @@ final class GuiLvcProjectController
         return LvcTaskRegistry.hasActiveBackgroundOperation(LOAD_OVERLAY_OPERATION, this.gui.repositoryDirectory);
     }
 
-    void abortOverlayLoadForForegroundOperation(String reason)
-    {
-        if (this.isOverlayLoadActiveForThisRepo() == false)
-        {
-            return;
-        }
-
-        boolean removedClientTask = TaskScheduler.getInstanceClient().removeTasksIf(this::isOverlayLoadTaskForThisRepo);
-        boolean removedServerTask = TaskScheduler.getInstanceServer().removeTasksIf(this::isOverlayLoadTaskForThisRepo);
-
-        if (removedClientTask || removedServerTask)
-        {
-            LvcDiagnostics.debug("GuiLvcProjectManager: aborted overlay load before foreground operation repo='{}' reason='{}'",
-                    this.gui.repositoryDirectory, reason);
-        }
-    }
-
-    private boolean isOverlayLoadTaskForThisRepo(ITask task)
-    {
-        return task instanceof LvcSemanticOverlayTask overlayTask && overlayTask.isForRepository(this.gui.repositoryDirectory);
-    }
-
     private void clearRefreshMarkerAfterOverlay()
     {
         try
@@ -1234,11 +1202,6 @@ final class GuiLvcProjectController
 
     void handleButton(GuiLvcProjectButtonType type)
     {
-        if (type != GuiLvcProjectButtonType.LITEMATICA_MENU)
-        {
-            this.abortOverlayLoadForForegroundOperation(type.name());
-        }
-
         if (type != GuiLvcProjectButtonType.LITEMATICA_MENU && LvcTaskRegistry.hasActiveOperation())
         {
             LvcGuiMessages.show(MessageType.ERROR, "litematica.error.lvc_project.operation_running", LvcTaskRegistry.activeOperationName());

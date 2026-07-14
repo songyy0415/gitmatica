@@ -389,15 +389,7 @@ final class LvcCheckoutWorkflow
                                 }
 
                                 controller.gui.initGui();
-                                if (result.postOperationDiffs().detected())
-                                {
-                                    LvcOperationCoordinator.showPostOperationDiffsNotice(controller, target.taskName(),
-                                            result.postOperationDiffs());
-                                }
-                                else
-                                {
-                                    target.showSuccess(result.regionCount());
-                                }
+                                target.showSuccess(result.regionCount());
                             },
                             e ->
                             {

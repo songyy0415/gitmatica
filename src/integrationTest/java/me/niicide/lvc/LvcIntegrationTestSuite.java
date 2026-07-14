@@ -10,6 +10,7 @@ final class LvcIntegrationTestSuite
     {
         LvcRepositoryIntegrationTest.runAll();
         LvcFriendlyErrorsIntegrationTest.runAll();
+        LvcTaskRegistryIntegrationTest.runAll();
         LvcOperationRecoveryIntegrationTest.runAll();
         LvcSemanticStorageIntegrationTest.runAll();
     }

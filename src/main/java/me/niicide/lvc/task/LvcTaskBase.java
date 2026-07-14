@@ -7,11 +7,12 @@ import me.niicide.lvc.LvcDiagnostics;
 import fi.dy.masa.litematica.render.infohud.InfoHud;
 import fi.dy.masa.litematica.scheduler.tasks.TaskBase;
 
-public abstract class LvcTaskBase<T> extends TaskBase
+public abstract class LvcTaskBase<T> extends TaskBase implements LvcWorldTask
 {
     private final LvcOperationHandle handle;
     private final LvcTaskCallbacks<T> callbacks;
     private final boolean releaseLockOnSuccess;
+    private final LvcTaskEpoch taskEpoch;
     private boolean callbackDelivered;
     @Nullable private T result;
     @Nullable private Exception failure;
@@ -24,6 +25,7 @@ public abstract class LvcTaskBase<T> extends TaskBase
         this.name = Objects.requireNonNull(displayName, "displayName");
         this.callbacks = Objects.requireNonNull(callbacks, "callbacks");
         this.releaseLockOnSuccess = releaseLockOnSuccess;
+        this.taskEpoch = LvcTaskEpoch.capture();
         InfoHud.getInstance().addInfoHudRenderer(this, true);
         LvcDiagnostics.taskCreated(handle, displayName);
     }
@@ -36,7 +38,7 @@ public abstract class LvcTaskBase<T> extends TaskBase
     @Override
     public boolean shouldRemove()
     {
-        return this.finished || super.shouldRemove();
+        return !this.taskEpoch.isCurrent() || this.finished || super.shouldRemove();
     }
 
     protected boolean complete(T result)
@@ -63,12 +65,7 @@ public abstract class LvcTaskBase<T> extends TaskBase
 
         try
         {
-            if (shouldRelease)
-            {
-                LvcTaskRegistry.release(this.handle);
-            }
-
-            this.deliverCallback();
+            this.deliverCallback(shouldRelease);
             super.stop();
         }
         finally
@@ -77,7 +74,7 @@ public abstract class LvcTaskBase<T> extends TaskBase
         }
     }
 
-    private void deliverCallback()
+    private void deliverCallback(boolean shouldRelease)
     {
         if (this.callbackDelivered)
         {
@@ -87,6 +84,17 @@ public abstract class LvcTaskBase<T> extends TaskBase
         this.callbackDelivered = true;
         Minecraft.getInstance().execute(() ->
         {
+            if (!this.taskEpoch.isCurrent())
+            {
+                LvcDiagnostics.debug(this.handle, "suppressing stale task callback after world unload task={}", this.name);
+                return;
+            }
+
+            if (shouldRelease)
+            {
+                LvcTaskRegistry.release(this.handle);
+            }
+
             if (this.failure != null)
             {
                 this.callbacks.failure().accept(this.failure);

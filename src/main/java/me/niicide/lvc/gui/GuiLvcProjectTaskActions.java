@@ -1,5 +1,6 @@
 package me.niicide.lvc.gui;
 
+import java.io.IOException;
 import java.util.Optional;
 import java.nio.file.Path;
 import javax.annotation.Nullable;
@@ -840,15 +841,7 @@ final class GuiLvcProjectTaskActions
                             {
                                 controller.loadTrackingOverlay();
                                 controller.gui.initGui();
-                                if (result.postOperationDiffs().detected())
-                                {
-                                    LvcOperationCoordinator.showPostOperationDiffsNotice(controller, displayName,
-                                            result.postOperationDiffs());
-                                }
-                                else
-                                {
-                                    LvcGuiMessages.show(MessageType.SUCCESS, successMessageKey, successMessageArgs);
-                                }
+                                LvcGuiMessages.show(MessageType.SUCCESS, successMessageKey, successMessageArgs);
                             },
                             e -> LvcGuiMessages.showTaskError(Operation.RECOVERY, "litematica.error.lvc_project.recovery_failed", e, true),
                             () -> LvcGuiMessages.show(MessageType.INFO, "litematica.message.lvc_project.task_aborted", "LVC Recovery")
@@ -865,7 +858,7 @@ final class GuiLvcProjectTaskActions
     }
 
     private static void scheduleRecoveryDiscard(GuiLvcProjectController controller, LvcOperationHandle handle,
-                                                Level restoreWorld, String targetCommit)
+                                                Level restoreWorld, String targetCommit) throws IOException
     {
         scheduleRecoveryDiscard(controller, handle, restoreWorld, targetCommit,
                 "litematica.message.lvc_project.recovery_completed");
@@ -873,7 +866,7 @@ final class GuiLvcProjectTaskActions
 
     private static void scheduleRecoveryDiscard(GuiLvcProjectController controller, LvcOperationHandle handle,
                                                 Level restoreWorld, String targetCommit,
-                                                String successMessageKey, Object... successMessageArgs)
+                                                String successMessageKey, Object... successMessageArgs) throws IOException
     {
         controller.removeTrackingOverlay();
         LvcSemanticDiscardTask task = new LvcSemanticDiscardTask(
@@ -886,15 +879,7 @@ final class GuiLvcProjectTaskActions
                         {
                             controller.loadTrackingOverlay();
                             controller.gui.initGui();
-                            if (result.postOperationDiffs().detected())
-                            {
-                                LvcOperationCoordinator.showPostOperationDiffsNotice(controller, "LVC Recovery",
-                                        result.postOperationDiffs());
-                            }
-                            else
-                            {
-                                LvcGuiMessages.show(MessageType.SUCCESS, successMessageKey, successMessageArgs);
-                            }
+                            LvcGuiMessages.show(MessageType.SUCCESS, successMessageKey, successMessageArgs);
                         },
                         e -> LvcGuiMessages.showTaskError(Operation.RECOVERY, "litematica.error.lvc_project.recovery_failed", e, true),
                         () -> LvcGuiMessages.show(MessageType.INFO, "litematica.message.lvc_project.task_aborted", "LVC Recovery")
@@ -915,7 +900,7 @@ final class GuiLvcProjectTaskActions
                                                      Level restoreWorld, String targetCommit,
                                                      @Nullable String targetBranch, @Nullable String sourceBranch,
                                                      @Nullable String previousHead, String successMessageKey,
-                                                     Object... successMessageArgs)
+                                                     Object... successMessageArgs) throws IOException
     {
         if (LvcWorldBackend.resolve(restoreWorld) != LvcWorldBackend.DIRECT)
         {
@@ -935,15 +920,7 @@ final class GuiLvcProjectTaskActions
                         {
                             controller.loadTrackingOverlay();
                             controller.gui.initGui();
-                            if (result.postOperationDiffs().detected())
-                            {
-                                LvcOperationCoordinator.showPostOperationDiffsNotice(controller, "LVC Recovery",
-                                        result.postOperationDiffs());
-                            }
-                            else
-                            {
-                                LvcGuiMessages.show(MessageType.SUCCESS, successMessageKey, successMessageArgs);
-                            }
+                            LvcGuiMessages.show(MessageType.SUCCESS, successMessageKey, successMessageArgs);
                         },
                         e -> LvcGuiMessages.showTaskError(Operation.RECOVERY, "litematica.error.lvc_project.recovery_failed", e, true),
                         () -> LvcGuiMessages.show(MessageType.INFO, "litematica.message.lvc_project.task_aborted", "LVC Recovery")

@@ -125,9 +125,9 @@ public final class LvcSemanticDiscardTask extends LvcChunkedTaskBase<LvcSemantic
                     this::markOperationWillDiscard,
                     this::markAffectedRegions,
                     LvcSemanticRestoreEngine.Options.discard(this.requestedCommitId));
-            LvcDiagnostics.debug(this.handle(), "semantic discard initialized site={} commit={} dimension={} origin={} chunks={} trackedBlocks={} gitDirty={} oneVerifyRestore={}",
+            LvcDiagnostics.debug(this.handle(), "semantic discard initialized site={} commit={} dimension={} origin={} chunks={} trackedBlocks={} gitDirty={}",
                     siteId, this.requestedCommitId, this.placement.dimension(), this.placement.origin(),
-                    this.chunkRefs.size(), this.workPlan.blockCount(), this.hasGitChanges, true);
+                    this.chunkRefs.size(), this.workPlan.blockCount(), this.hasGitChanges);
             this.updateProgressHud();
         }
         catch (Exception e)
@@ -182,18 +182,15 @@ public final class LvcSemanticDiscardTask extends LvcChunkedTaskBase<LvcSemantic
         LvcSemanticRestoreEngine engine = this.requireRestoreEngine();
         int restoredRegionCount = this.affectedRegionIds.isEmpty() && engine.changedEntities() > 0 ?
                 this.requireSite().regions().size() : this.affectedRegionIds.size();
-        LvcSemanticRestoreEngine.PostOperationDiffs postOperationDiffs = engine.postOperationDiffs();
         LvcDiagnostics.debug(this.handle(),
-                "semantic discard complete commit={} restoredBlocks={} changedChunks={} affectedRegions={} totalRegions={} blockEntityRewrites={} clearedEntities={} spawnedEntities={} discarded={} postOperationDiffs={} dirtySubchunks={} mismatches={} chunkCacheCommitHits={} chunkCacheObjectHits={} chunkCacheMisses={} chunkCacheCommitEntries={} chunkCacheObjectEntries={}",
+                "semantic discard complete commit={} restoredBlocks={} changedChunks={} affectedRegions={} totalRegions={} blockEntityRewrites={} clearedEntities={} spawnedEntities={} discarded={} chunkCacheCommitHits={} chunkCacheObjectHits={} chunkCacheMisses={} chunkCacheCommitEntries={} chunkCacheObjectEntries={}",
                 this.requireCommitId(), engine.restoredBlocks(), engine.changedChunks(), restoredRegionCount,
                 this.requireSite().regions().size(), engine.blockEntityRewrites(), engine.clearedEntities(),
                 engine.spawnedEntities(), this.hasGitChanges || this.operationWillDiscard,
-                postOperationDiffs.detected(), postOperationDiffs.dirtySubchunks(), postOperationDiffs.mismatches(),
                 cacheStats.commitHits(), cacheStats.objectHits(), cacheStats.misses(),
                 cacheStats.commitEntries(), cacheStats.objectEntries());
         return new Result(this.requireCommitId(), restoredRegionCount, engine.restoredBlocks(),
-                engine.blockEntityRewrites(), this.hasGitChanges || this.operationWillDiscard,
-                postOperationDiffs);
+                engine.blockEntityRewrites(), this.hasGitChanges || this.operationWillDiscard);
     }
 
     @Override
@@ -337,7 +334,7 @@ public final class LvcSemanticDiscardTask extends LvcChunkedTaskBase<LvcSemantic
     }
 
     public record Result(String commitId, int restoredRegionCount, int restoredBlocks, int blockEntityRewrites,
-                         boolean discarded, LvcSemanticRestoreEngine.PostOperationDiffs postOperationDiffs)
+                         boolean discarded)
     {
     }
 

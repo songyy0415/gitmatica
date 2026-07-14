@@ -225,8 +225,7 @@ public final class LvcSemanticProjectOperations
             {
             }
 
-            return new LvcProjectService.SemanticWorldClearResult(project.site().regions().size(), engine.restoredBlocks(),
-                    engine.postOperationDiffs());
+            return new LvcProjectService.SemanticWorldClearResult(project.site().regions().size(), engine.restoredBlocks());
         });
     }
 

@@ -43,7 +43,6 @@ import me.niicide.lvc.capture.LvcCaptureEngine;
 import me.niicide.lvc.model.LvcManifest;
 import me.niicide.lvc.model.LvcSitePlacement;
 import me.niicide.lvc.storage.LvcSemanticRepository;
-import me.niicide.lvc.task.LvcSemanticRestoreEngine;
 import me.niicide.lvc.project.LvcProjectPaths;
 import me.niicide.lvc.project.LvcProjectSelectionStorage;
 
@@ -382,7 +381,7 @@ public final class LvcProjectService
         return LvcTrackingOverlayService.refreshVerifierIfCurrent(repositoryDirectory, clientLevel, completionListener);
     }
 
-    public static void removeTrackingOverlay(Path repositoryDirectory)
+    public static void removeTrackingOverlay(Path repositoryDirectory) throws IOException
     {
         LvcTrackingOverlayService.removeTrackingOverlay(repositoryDirectory);
     }
@@ -768,13 +767,8 @@ public final class LvcProjectService
     {
     }
 
-    public record SemanticWorldClearResult(int regionCount, int clearedBlocks,
-                                           LvcSemanticRestoreEngine.PostOperationDiffs postOperationDiffs)
+    public record SemanticWorldClearResult(int regionCount, int clearedBlocks)
     {
-        public SemanticWorldClearResult(int regionCount, int clearedBlocks)
-        {
-            this(regionCount, clearedBlocks, LvcSemanticRestoreEngine.PostOperationDiffs.clean());
-        }
     }
 
     public record UpdateAreasResult(@Nullable RevCommit commit, int regionCount)
