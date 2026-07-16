@@ -31,6 +31,7 @@ import fi.dy.masa.malilib.gui.interfaces.ISelectionListener;
 import fi.dy.masa.malilib.gui.interfaces.ITextFieldListener;
 import fi.dy.masa.malilib.render.GuiContext;
 import fi.dy.masa.malilib.render.RenderUtils;
+import fi.dy.masa.malilib.util.GuiUtils;
 import fi.dy.masa.malilib.util.StringUtils;
 
 public class GuiLvcProjectEditor extends GuiListBase<LvcManifest.Region, WidgetLvcProjectSubRegion, WidgetLvcProjectSubRegionList>
@@ -55,6 +56,9 @@ public class GuiLvcProjectEditor extends GuiListBase<LvcManifest.Region, WidgetL
     private static final int COORDINATE_TOP_Y = TOP - COORDINATE_TITLE_TEXT_OFFSET;
     private static final int COORDINATE_GROUP_WIDTH = 168;
     private static final int COORDINATE_GROUP_LEFT_GAP = 16;
+    private static final int TITLE_COLUMN_GAP = 8;
+    private static final int TITLE_TOOLTIP_MAX_WIDTH = 220;
+    private static final int TITLE_TOOLTIP_SCREEN_PADDING = 32;
     private static final int PROJECT_NAME_FIELD_WIDTH = 286;
     private static final int PROJECT_NAME_TOP_GAP = 4;
     private static final int ACTION_BUTTON_TOP_GAP = 4;
@@ -131,6 +135,47 @@ public class GuiLvcProjectEditor extends GuiListBase<LvcManifest.Region, WidgetL
         this.drawEmptySubRegionMessage(ctx);
         super.drawContents(ctx, mouseX, mouseY, partialTicks);
         this.drawStatus(ctx);
+    }
+
+    @Override
+    protected void drawTitle(GuiContext ctx, int mouseX, int mouseY, float partialTicks)
+    {
+        ctx.drawString(ctx.fontRenderer(), this.getRenderedScreenTitle(), LEFT, TOP, COLOR_WHITE, false);
+    }
+
+    @Override
+    protected void drawHoveredWidget(GuiContext ctx, int mouseX, int mouseY)
+    {
+        super.drawHoveredWidget(ctx, mouseX, mouseY);
+
+        String fullTitle = this.getTitleString();
+        String renderedTitle = this.getRenderedScreenTitle();
+
+        if (!renderedTitle.isEmpty() && !renderedTitle.equals(fullTitle) &&
+                GuiBase.isMouseOver(mouseX, mouseY, LEFT, TOP, this.getStringWidth(renderedTitle), this.fontHeight))
+        {
+            int availableWidth = GuiUtils.getScaledWindowWidth() - TITLE_TOOLTIP_SCREEN_PADDING;
+            int maxWidth = Math.max(80, Math.min(TITLE_TOOLTIP_MAX_WIDTH, availableWidth));
+            RenderUtils.drawHoverText(ctx, mouseX, mouseY,
+                    LvcGuiText.wrapTextToWidth(fullTitle, maxWidth, this::getStringWidth));
+        }
+    }
+
+    private String getRenderedScreenTitle()
+    {
+        return this.ellipsizeToWidth(this.getTitleString(), this.getScreenTitleMaxWidth());
+    }
+
+    private int getScreenTitleMaxWidth()
+    {
+        int maxWidth = this.getScreenWidth() - LEFT - MARGIN;
+
+        if (this.state != null && this.worldOriginFitsProjectRow())
+        {
+            maxWidth = Math.min(maxWidth, this.getOriginGroupX() - LEFT - TITLE_COLUMN_GAP);
+        }
+
+        return Math.max(0, maxWidth);
     }
 
     private void refreshState()
@@ -238,9 +283,16 @@ public class GuiLvcProjectEditor extends GuiListBase<LvcManifest.Region, WidgetL
     {
         this.createButton(MARGIN, this.getBottomButtonY(), ButtonType.ANALYZE_AREA);
 
-        int width = this.getLitematicaMenuButtonWidth();
-        String label = StringUtils.translate("litematica.gui.button.lvc_project.litematica_menu");
-        this.addButton(new ButtonGeneric(this.getScreenWidth() - width - MARGIN, this.getBottomButtonY(), width, BUTTON_HEIGHT, label), (button, mouseButton) -> GuiBase.openGui(new GuiMainMenu()));
+        int rightX = this.getScreenWidth() - MARGIN;
+        int menuWidth = this.createRightAlignedBottomButton(rightX, ButtonType.LITEMATICA_MENU);
+        this.createRightAlignedBottomButton(rightX - menuWidth - BUTTON_GROUP_GAP, ButtonType.PROJECT_MANAGER);
+    }
+
+    private int createRightAlignedBottomButton(int rightX, ButtonType type)
+    {
+        int width = this.getBottomNavigationButtonWidth(type);
+        this.createButton(rightX - width, this.getBottomButtonY(), width, type);
+        return width;
     }
 
     private int createButton(int x, int y, ButtonType type)
@@ -279,7 +331,9 @@ public class GuiLvcProjectEditor extends GuiListBase<LvcManifest.Region, WidgetL
 
     private void drawCoordinateGroup(GuiContext ctx, int x, int y, String title, BlockPos pos, boolean editable)
     {
-        ctx.drawString(ctx.fontRenderer(), title, x, y + COORDINATE_TITLE_TEXT_OFFSET, editable ? 0xFFFFFFFF : 0xFFAAAAAA, false);
+        int titleMaxWidth = Math.max(0, Math.min(COORDINATE_GROUP_WIDTH, this.getScreenWidth() - MARGIN - x));
+        ctx.drawString(ctx.fontRenderer(), this.ellipsizeToWidth(title, titleMaxWidth), x, y + COORDINATE_TITLE_TEXT_OFFSET,
+                editable ? 0xFFFFFFFF : 0xFFAAAAAA, false);
 
         int fieldY = this.getCoordinateFieldY();
         this.drawCoordinateLabel(ctx, x, fieldY, "X:");
@@ -327,9 +381,21 @@ public class GuiLvcProjectEditor extends GuiListBase<LvcManifest.Region, WidgetL
     {
         if (!this.statusText.isBlank())
         {
-            int maxWidth = Math.max(40, this.getScreenWidth() - this.getLitematicaMenuButtonWidth() - MARGIN * 3 - this.getStringWidth(StringUtils.translate("litematica.gui.button.area_editor.analyze_area")));
+            int maxWidth = Math.max(40,
+                    this.getScreenWidth() - this.getBottomNavigationWidth() - MARGIN * 3 -
+                            this.getStringWidth(StringUtils.translate("litematica.gui.button.area_editor.analyze_area")));
             ctx.drawString(ctx.fontRenderer(), this.ellipsizeToWidth(this.statusText, maxWidth), MARGIN, this.getBottomButtonY() + 6, this.statusColor, false);
         }
+    }
+
+    private void openProjectManager()
+    {
+        GuiBase.openGui(new GuiLvcProjectManager(this.repositoryDirectory, this.projectName));
+    }
+
+    private void openLitematicaMenu()
+    {
+        GuiBase.openGui(new GuiMainMenu());
     }
 
     private void updateIntegerField(FieldKind kind, String value)
@@ -543,9 +609,15 @@ public class GuiLvcProjectEditor extends GuiListBase<LvcManifest.Region, WidgetL
         return this.getSubRegionLabelY() + 9;
     }
 
-    private int getLitematicaMenuButtonWidth()
+    private int getBottomNavigationButtonWidth(ButtonType type)
     {
-        return this.getStringWidth(StringUtils.translate("litematica.gui.button.lvc_project.litematica_menu")) + 20;
+        return this.getStringWidth(type.getDisplayName()) + 20;
+    }
+
+    private int getBottomNavigationWidth()
+    {
+        return this.getBottomNavigationButtonWidth(ButtonType.PROJECT_MANAGER) + BUTTON_GROUP_GAP +
+                this.getBottomNavigationButtonWidth(ButtonType.LITEMATICA_MENU);
     }
 
     private int getProjectNameFieldWidth()
@@ -639,6 +711,11 @@ public class GuiLvcProjectEditor extends GuiListBase<LvcManifest.Region, WidgetL
         String suffix = "...";
         int suffixWidth = this.getStringWidth(suffix);
 
+        if (suffixWidth > maxWidth)
+        {
+            return "";
+        }
+
         for (int length = text.length(); length > 0; length--)
         {
             String candidate = text.substring(0, length);
@@ -660,7 +737,9 @@ public class GuiLvcProjectEditor extends GuiListBase<LvcManifest.Region, WidgetL
         SAVE_VERSION("litematica.gui.button.lvc_project.save_version"),
         MANUAL_ORIGIN("litematica.gui.button.lvc_project_editor.manual_origin"),
         SET_ORIGIN_TO_PLAYER("litematica.gui.button.move_to_player"),
-        ANALYZE_AREA("litematica.gui.button.area_editor.analyze_area");
+        ANALYZE_AREA("litematica.gui.button.area_editor.analyze_area"),
+        PROJECT_MANAGER("litematica.gui.button.lvc_project.back_to_manager"),
+        LITEMATICA_MENU("litematica.gui.button.lvc_project.litematica_menu");
 
         private final String translationKey;
 
@@ -691,7 +770,11 @@ public class GuiLvcProjectEditor extends GuiListBase<LvcManifest.Region, WidgetL
 
         private boolean isEnabled()
         {
-            return this != CHANGE_SELECTION_MODE && this != CHANGE_CORNER_MODE && this != NEW_SUB_REGION;
+            return this != CHANGE_SELECTION_MODE &&
+                    this != CHANGE_CORNER_MODE &&
+                    this != NEW_SUB_REGION &&
+                    this != SAVE_VERSION &&
+                    this != ANALYZE_AREA;
         }
     }
 
@@ -707,13 +790,15 @@ public class GuiLvcProjectEditor extends GuiListBase<LvcManifest.Region, WidgetL
         @Override
         public void actionPerformedWithButton(ButtonBase button, int mouseButton)
         {
-            if (this.type == ButtonType.SET_ORIGIN_TO_PLAYER)
+            switch (this.type)
             {
-                this.gui.setOriginToPlayer();
-            }
-            else if (this.type == ButtonType.MANUAL_ORIGIN)
-            {
-                this.gui.setSavedStatus("litematica.message.lvc_project_editor.metadata_locked");
+                case SET_ORIGIN_TO_PLAYER -> this.gui.setOriginToPlayer();
+                case MANUAL_ORIGIN -> this.gui.setSavedStatus("litematica.message.lvc_project_editor.metadata_locked");
+                case PROJECT_MANAGER -> this.gui.openProjectManager();
+                case LITEMATICA_MENU -> this.gui.openLitematicaMenu();
+                default ->
+                {
+                }
             }
         }
     }

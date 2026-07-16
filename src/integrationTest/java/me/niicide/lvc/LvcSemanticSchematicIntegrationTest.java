@@ -32,10 +32,34 @@ final class LvcSemanticSchematicIntegrationTest
     static void runAll() throws Exception
     {
         IntegrationTestSupport.run("semantic working tree schematic loads full hashes", LvcSemanticSchematicIntegrationTest::semanticWorkingTreeSchematicLoadsFullHashes);
+        IntegrationTestSupport.run("semantic air schematic preserves commit regions", LvcSemanticSchematicIntegrationTest::semanticAirSchematicPreservesCommitRegions);
         IntegrationTestSupport.run("semantic sparse schematic uses structure void for skipped blocks", LvcSemanticSchematicIntegrationTest::semanticSparseSchematicUsesStructureVoidForSkippedBlocks);
         IntegrationTestSupport.run("semantic working tree schematic loads block entity NBT", LvcSemanticSchematicIntegrationTest::semanticWorkingTreeSchematicLoadsBlockEntityNbt);
         IntegrationTestSupport.run("semantic working tree schematic promotes container components", LvcSemanticSchematicIntegrationTest::semanticWorkingTreeSchematicPromotesContainerComponents);
         IntegrationTestSupport.run("semantic commit export uses selected commit", LvcSemanticSchematicIntegrationTest::semanticCommitExportUsesSelectedCommit);
+    }
+
+    private static void semanticAirSchematicPreservesCommitRegions() throws Exception
+    {
+        bootstrapMinecraft();
+
+        Path repoDir = Files.createTempDirectory("lvc-semantic-air-schematic-");
+        LvcSemanticRepository.CommitResult init = LvcSemanticRepository.initProject(
+                repoDir, "Semantic Air Schematic", singleLineSite(2), placementAt(4, 5, 6),
+                new FakeWorldReader("minecraft:stone"), player("SemanticAirSchematic"));
+        fi.dy.masa.litematica.schematic.LitematicaSchematic air = LvcSemanticSchematicBuilder.buildAirSchematic(
+                init.manifest(), "main", placementAt(4, 5, 6));
+        fi.dy.masa.litematica.schematic.container.LitematicaBlockStateContainer container =
+                air.getSubRegionContainer("Line");
+
+        IntegrationTestSupport.assertEquals(1, air.getSubRegionCount(), "air schematic region count");
+        IntegrationTestSupport.assertNotNull(container, "air schematic should preserve the commit region");
+        IntegrationTestSupport.assertEquals(List.of(0, 0, 0), blockPosToList(air.getSubRegionPosition("Line")),
+                "air schematic region offset");
+        IntegrationTestSupport.assertEquals(Blocks.AIR.defaultBlockState(), container.get(0, 0, 0),
+                "air schematic first block");
+        IntegrationTestSupport.assertEquals(Blocks.AIR.defaultBlockState(), container.get(1, 0, 0),
+                "air schematic second block");
     }
 
     private static void semanticWorkingTreeSchematicLoadsFullHashes() throws Exception

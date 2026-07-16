@@ -362,6 +362,8 @@ public class WidgetSchematicVerificationResult extends WidgetListEntrySortable<B
         private final String blockRegistrynameFound;
         private final String nameExpected;
         private final String nameFound;
+        private final String headerExpectedKey;
+        private final String headerFoundKey;
         private final int totalWidth;
         private final int totalHeight;
         private final int columnWidthExpected;
@@ -369,8 +371,16 @@ public class WidgetSchematicVerificationResult extends WidgetListEntrySortable<B
 
         public BlockMismatchInfo(BlockState stateExpected, BlockState stateFound)
         {
+            this(stateExpected, stateFound, HEADER_EXPECTED, HEADER_FOUND);
+        }
+
+        public BlockMismatchInfo(BlockState stateExpected, BlockState stateFound,
+                                 String headerExpectedKey, String headerFoundKey)
+        {
             this.stateExpected = stateExpected;
             this.stateFound = stateFound;
+            this.headerExpectedKey = headerExpectedKey;
+            this.headerFoundKey = headerFoundKey;
 
             this.stackExpected = ItemUtils.getItemForState(this.stateExpected);
             this.stackFound = ItemUtils.getItemForState(this.stateFound);
@@ -440,8 +450,8 @@ public class WidgetSchematicVerificationResult extends WidgetListEntrySortable<B
                 y += 4;
 
                 String pre = GuiBase.TXT_WHITE + GuiBase.TXT_BOLD;
-                String strExpected = pre + StringUtils.translate("litematica.gui.label.schematic_verifier.expected") + GuiBase.TXT_RST;
-                String strFound =    pre + StringUtils.translate("litematica.gui.label.schematic_verifier.found") + GuiBase.TXT_RST;
+                String strExpected = pre + StringUtils.translate(this.headerExpectedKey) + GuiBase.TXT_RST;
+                String strFound =    pre + StringUtils.translate(this.headerFoundKey) + GuiBase.TXT_RST;
 	            ctx.drawString(ctx.fontRenderer(), strExpected, x1, y, 0xFFFFFFFF,false);
 	            ctx.drawString(ctx.fontRenderer(), strFound,    x2, y, 0xFFFFFFFF,false);
                 y += 12;

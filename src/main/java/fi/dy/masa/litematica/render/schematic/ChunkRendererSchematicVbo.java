@@ -55,8 +55,12 @@ import fi.dy.masa.litematica.config.Configs;
 import fi.dy.masa.litematica.data.DataManager;
 import fi.dy.masa.litematica.render.IWorldSchematicRenderer;
 import fi.dy.masa.litematica.render.RenderUtils;
+import fi.dy.masa.litematica.schematic.placement.SchematicPlacement;
+import fi.dy.masa.litematica.schematic.placement.SchematicPlacementManager;
 import fi.dy.masa.litematica.schematic.placement.SchematicPlacementManager.PlacementPart;
 import fi.dy.masa.litematica.schematic.verifier.SchematicVerifier;
+import fi.dy.masa.litematica.schematic.verifier.SchematicVerifier.MismatchOverlayFilter;
+import fi.dy.masa.litematica.schematic.verifier.SchematicVerifier.MismatchType;
 import fi.dy.masa.litematica.util.IgnoreBlockRegistry;
 import fi.dy.masa.litematica.util.OverlayType;
 import fi.dy.masa.litematica.util.PositionUtils;
@@ -393,6 +397,7 @@ public class ChunkRendererSchematicVbo implements AutoCloseable
 				range.intersectsBox(minX, minY, minZ, maxX, maxY, maxZ))
 			{
 				++schematicRenderChunksUpdated;
+				data.setRenderThroughFilterRevision(this.boxes.getFirst().renderThroughFilterRevision);
 
 				Vec3 cameraPos = task.getCameraPosSupplier().get();
 				float x = (float) cameraPos.x - this.position.getX();
@@ -460,7 +465,8 @@ public class ChunkRendererSchematicVbo implements AutoCloseable
 						// Block models use the VertexConsumer#quad() method, and they use the MatrixStack.
 						Vec3 offset = new Vec3(posMutable.getX() & 0xF, posMutable.getY() - bottomY, posMutable.getZ() & 0xF);
                         this.renderBlocksAndOverlay(blockRenderer, fluidRenderer, posMutable, data, chunkMeshData, pack, blockOutput, offset, visGraph,
-                                renderBox.lvcTrackingOverlay, renderBox.verifier);
+                                renderBox.lvcTrackingOverlay, renderBox.verifier, renderBox.buildFilteredOverlay,
+                                renderBox.renderThroughFilter);
                     }
                 }
 
@@ -553,7 +559,9 @@ public class ChunkRendererSchematicVbo implements AutoCloseable
 	                                      IBlockOutputSchematic blockOutput,
 	                                      Vec3 offset, VisGraph visGraph,
 	                                      boolean lvcTrackingOverlay,
-	                                      @Nullable SchematicVerifier verifier)
+	                                      @Nullable SchematicVerifier verifier,
+	                                      boolean buildFilteredOverlay,
+	                                      @Nullable MismatchOverlayFilter renderThroughFilter)
 	{
 		BlockState stateSchematic = this.schematicWorldView.getBlockState(pos);
 		BlockState stateClient = this.clientWorldView.getBlockState(pos);
@@ -633,7 +641,14 @@ public class ChunkRendererSchematicVbo implements AutoCloseable
 					return;
 				}
 
-				this.renderOverlay(type, pos, stateSchematic, missing, data, chunkMeshData, pack);
+				this.renderOverlay(type, pos, stateSchematic, missing, data, chunkMeshData, pack, false,
+                        verifier, renderThroughFilter);
+
+                if (buildFilteredOverlay && this.isIncludedInRenderThroughFilter(type, pos, verifier, renderThroughFilter))
+                {
+                    this.renderOverlay(type, pos, stateSchematic, missing, data, chunkMeshData, pack, true,
+                            verifier, renderThroughFilter);
+                }
 			}
 		}
 
@@ -681,7 +696,9 @@ public class ChunkRendererSchematicVbo implements AutoCloseable
 	protected void renderOverlay(OverlayType type, BlockPos pos, BlockState stateSchematic, boolean missing,
 	                             @Nonnull ChunkRenderDataSchematic data,
 	                             @Nonnull ChunkMeshDataSchematic chunkMeshData,
-	                             ChunkRenderDispatcherBuffers pack)
+	                             ChunkRenderDispatcherBuffers pack, boolean filtered,
+	                             @Nullable SchematicVerifier verifier,
+	                             @Nullable MismatchOverlayFilter renderThroughFilter)
 	{
 		this.getProfiler().push("render_overlay");
 		boolean useDefault = false;
@@ -692,7 +709,7 @@ public class ChunkRendererSchematicVbo implements AutoCloseable
 		if (Configs.Visuals.SCHEMATIC_OVERLAY_ENABLE_SIDES.getBooleanValue())
 		{
 			this.getProfiler().push("overlay_sides");
-			overlayType = OverlayRenderType.QUAD;
+			overlayType = filtered ? OverlayRenderType.FILTERED_QUAD : OverlayRenderType.QUAD;
 			BufferBuilder bufferOverlayQuads = this.preRenderOverlay(pack, overlayType);
 
 			if (!data.isOverlayTypeStarted(overlayType))
@@ -716,7 +733,8 @@ public class ChunkRendererSchematicVbo implements AutoCloseable
 						posMutable.set(pos.getX() + side.getStepX(), pos.getY() + side.getStepY(), pos.getZ() + side.getStepZ());
 						BlockState adjStateSchematic = this.schematicWorldView.getBlockState(posMutable);
 						BlockState adjStateClient = this.clientWorldView.getBlockState(posMutable);
-						OverlayType typeAdj = getOverlayType(adjStateSchematic, adjStateClient);
+						OverlayType typeAdj = this.getAdjacentOverlayType(adjStateSchematic, adjStateClient,
+                                posMutable, filtered, verifier, renderThroughFilter);
 						boolean fullSquareSide = Block.isFaceFull(shape, side);
 
 //                        LOGGER.warn("renderOverlay: Quad; side [{}], fullSquareSide: [{}]", side.name(), fullSquareSide);
@@ -807,7 +825,7 @@ public class ChunkRendererSchematicVbo implements AutoCloseable
 		{
 			this.getProfiler().push("overlay_outlines");
 			useDefault = false;
-			overlayType = OverlayRenderType.OUTLINE;
+			overlayType = filtered ? OverlayRenderType.FILTERED_OUTLINE : OverlayRenderType.OUTLINE;
 			BufferBuilder bufferOverlayOutlines = this.preRenderOverlay(pack, overlayType);
 
 			if (!data.isOverlayTypeStarted(overlayType))
@@ -835,7 +853,8 @@ public class ChunkRendererSchematicVbo implements AutoCloseable
 								posMutable.set(pos.getX() + x - 1, pos.getY() + y - 1, pos.getZ() + z - 1);
 								BlockState adjStateSchematic = this.schematicWorldView.getBlockState(posMutable);
 								BlockState adjStateClient = this.clientWorldView.getBlockState(posMutable);
-								adjTypes[x][y][z] = this.getOverlayType(adjStateSchematic, adjStateClient);
+								adjTypes[x][y][z] = this.getAdjacentOverlayType(adjStateSchematic, adjStateClient,
+                                        posMutable, filtered, verifier, renderThroughFilter);
 							}
 							else
 							{
@@ -853,7 +872,8 @@ public class ChunkRendererSchematicVbo implements AutoCloseable
                     posMutable.set(pos.getX() + side.getOffsetX(), pos.getY() + side.getOffsetY(), pos.getZ() + side.getOffsetZ());
                     BlockState adjStateSchematic = this.schematicWorldView.getBlockState(posMutable);
                     BlockState adjStateClient = this.clientWorldView.getBlockState(posMutable);
-                    OverlayType typeAdj = this.getOverlayType(adjStateSchematic, adjStateClient);
+                    OverlayType typeAdj = this.getAdjacentOverlayType(adjStateSchematic, adjStateClient,
+                            posMutable, filtered, verifier, renderThroughFilter);
                  */
 
 				// FIXME --> this is quite broken / laggy (Why?)
@@ -1116,6 +1136,47 @@ public class ChunkRendererSchematicVbo implements AutoCloseable
         }
 
         return this.getOverlayType(stateSchematic, stateClient);
+    }
+
+    private boolean isIncludedInRenderThroughFilter(OverlayType overlayType, BlockPos pos,
+                                                    @Nullable SchematicVerifier verifier,
+                                                    @Nullable MismatchOverlayFilter filter)
+    {
+        if (filter == null)
+        {
+            return true;
+        }
+
+        if (verifier != null && verifier.hasInventoryMismatchForOverlay(pos) &&
+            filter.includes(MismatchType.WRONG_INVENTORIES, pos))
+        {
+            return true;
+        }
+
+        MismatchType mismatchType = switch (overlayType)
+        {
+            case EXTRA -> MismatchType.EXTRA;
+            case MISSING -> MismatchType.MISSING;
+            case WRONG_BLOCK -> MismatchType.WRONG_BLOCK;
+            case WRONG_STATE -> MismatchType.WRONG_STATE;
+            case DIFF_BLOCK -> MismatchType.DIFF_BLOCK;
+            default -> null;
+        };
+        return mismatchType != null && filter.includes(mismatchType, pos);
+    }
+
+    private OverlayType getAdjacentOverlayType(BlockState stateSchematic, BlockState stateClient, BlockPos pos,
+                                               boolean filtered, @Nullable SchematicVerifier verifier,
+                                               @Nullable MismatchOverlayFilter filter)
+    {
+        if (filtered == false)
+        {
+            return this.getOverlayType(stateSchematic, stateClient);
+        }
+
+        OverlayType overlayType = this.getOverlayType(stateSchematic, stateClient, pos, verifier);
+        return this.isIncludedInRenderThroughFilter(overlayType, pos, verifier, filter) ?
+                overlayType : OverlayType.NONE;
     }
 
     @Nullable
@@ -1666,11 +1727,21 @@ public class ChunkRendererSchematicVbo implements AutoCloseable
 			int chunkX = this.position.getX() / 16;
 			int chunkZ = this.position.getZ() / 16;
 
-			for (PlacementPart part : DataManager.getSchematicPlacementManager().getPlacementPartsInChunk(chunkX, chunkZ))
+			SchematicPlacementManager placementManager = DataManager.getSchematicPlacementManager();
+			SchematicPlacement selectedPlacement = placementManager.getSelectedSchematicPlacement();
+			MismatchOverlayFilter selectedFilter = selectedPlacement != null && selectedPlacement.hasVerifier() ?
+					selectedPlacement.getSchematicVerifier().getRenderThroughMismatchFilter() : null;
+			boolean buildFilteredOverlay = selectedFilter != null && selectedFilter.active();
+			long filterRevision = buildFilteredOverlay ? selectedFilter.revision() : -1L;
+
+			for (PlacementPart part : placementManager.getPlacementPartsInChunk(chunkX, chunkZ))
 			{
 				SchematicVerifier verifier = part.placement.hasVerifier() ? part.placement.getSchematicVerifier() : null;
+				MismatchOverlayFilter renderThroughFilter = buildFilteredOverlay && part.placement == selectedPlacement ?
+						selectedFilter : null;
 				this.boxes.add(new PlacementRenderBox(part.bb,
-						LvcTrackingOverlayService.isSemanticTrackingPlacement(part.placement), verifier));
+						LvcTrackingOverlayService.isSemanticTrackingPlacement(part.placement), verifier,
+						buildFilteredOverlay, renderThroughFilter, filterRevision));
 			}
 		}
 	}
@@ -1680,12 +1751,20 @@ public class ChunkRendererSchematicVbo implements AutoCloseable
         private final IntBoundingBox box;
         private final boolean lvcTrackingOverlay;
         @Nullable private final SchematicVerifier verifier;
+        private final boolean buildFilteredOverlay;
+        @Nullable private final MismatchOverlayFilter renderThroughFilter;
+        private final long renderThroughFilterRevision;
 
-        private PlacementRenderBox(IntBoundingBox box, boolean lvcTrackingOverlay, @Nullable SchematicVerifier verifier)
+        private PlacementRenderBox(IntBoundingBox box, boolean lvcTrackingOverlay, @Nullable SchematicVerifier verifier,
+                                   boolean buildFilteredOverlay, @Nullable MismatchOverlayFilter renderThroughFilter,
+                                   long renderThroughFilterRevision)
         {
             this.box = box;
             this.lvcTrackingOverlay = lvcTrackingOverlay;
             this.verifier = verifier;
+            this.buildFilteredOverlay = buildFilteredOverlay;
+            this.renderThroughFilter = renderThroughFilter;
+            this.renderThroughFilterRevision = renderThroughFilterRevision;
         }
     }
 

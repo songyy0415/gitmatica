@@ -78,6 +78,7 @@ public class ChunkRenderDataSchematic implements AutoCloseable
 	private final Set<OverlayRenderType> overlayLayersStarted;
 	private boolean blocksEmpty;
 	private boolean overlayEmpty;
+	private long renderThroughFilterRevision;
 	private long timeBuilt;
 
 	public ChunkRenderDataSchematic()
@@ -89,6 +90,17 @@ public class ChunkRenderDataSchematic implements AutoCloseable
 		this.overlayLayersStarted = EnumSet.noneOf(OverlayRenderType.class);
 		this.blocksEmpty = true;
 		this.overlayEmpty = true;
+		this.renderThroughFilterRevision = -1L;
+	}
+
+	public long getRenderThroughFilterRevision()
+	{
+		return this.renderThroughFilterRevision;
+	}
+
+	protected void setRenderThroughFilterRevision(long revision)
+	{
+		this.renderThroughFilterRevision = revision;
 	}
 
 	public ChunkMeshDataSchematic getMeshDataCache()

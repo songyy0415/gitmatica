@@ -1,12 +1,21 @@
 package me.niicide.lvc.gui;
 
+import java.nio.file.Path;
 import java.util.ArrayList;
-import java.util.EnumMap;
+import java.util.HashMap;
+import java.util.HashSet;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
+import java.util.Optional;
+import java.util.Set;
+import java.util.WeakHashMap;
 import javax.annotation.Nullable;
+import net.minecraft.client.Minecraft;
 import net.minecraft.client.input.MouseButtonEvent;
+import net.minecraft.client.multiplayer.ClientLevel;
+import net.minecraft.core.BlockPos;
 import net.minecraft.core.registries.BuiltInRegistries;
 import net.minecraft.resources.Identifier;
 import net.minecraft.world.item.ItemStack;
@@ -15,6 +24,7 @@ import net.minecraft.world.level.block.RenderShape;
 import net.minecraft.world.level.block.state.BlockState;
 import fi.dy.masa.litematica.config.Configs;
 import fi.dy.masa.litematica.config.Hotkeys;
+import fi.dy.masa.litematica.data.DataManager;
 import fi.dy.masa.litematica.gui.GuiMainMenu.ButtonListenerChangeMenu;
 import fi.dy.masa.litematica.gui.Icons;
 import fi.dy.masa.litematica.gui.widgets.WidgetSchematicVerificationResult;
@@ -24,8 +34,8 @@ import fi.dy.masa.litematica.schematic.placement.SchematicPlacement;
 import fi.dy.masa.litematica.schematic.verifier.SchematicVerifier;
 import fi.dy.masa.litematica.schematic.verifier.SchematicVerifier.BlockMismatch;
 import fi.dy.masa.litematica.schematic.verifier.SchematicVerifier.MismatchType;
+import fi.dy.masa.litematica.schematic.verifier.SchematicVerifier.MismatchRenderPos;
 import fi.dy.masa.litematica.schematic.verifier.SchematicVerifier.SortCriteria;
-import fi.dy.masa.litematica.schematic.verifier.VerifierResultSorter;
 import fi.dy.masa.litematica.schematic.verifier.inventory.VerifierInventoryOverlay;
 import fi.dy.masa.litematica.schematic.verifier.inventory.VerifierInventoryPreview;
 import fi.dy.masa.litematica.util.BlockInfoListType;
@@ -47,34 +57,54 @@ import fi.dy.masa.malilib.util.InfoUtils;
 import fi.dy.masa.malilib.util.StringUtils;
 import fi.dy.masa.malilib.util.game.BlockUtils;
 import me.niicide.lvc.LvcDiagnostics;
+import me.niicide.lvc.LvcFriendlyErrors.Operation;
+import me.niicide.lvc.LvcProjectService;
+import me.niicide.lvc.diff.LvcSpatialDiffGroups.Group;
+import me.niicide.lvc.diff.LvcSpatialDiffGroups.Kind;
+import me.niicide.lvc.diff.LvcVerifierDiffGroups;
+import me.niicide.lvc.diff.LvcVerifierDiffGroups.Entry;
+import me.niicide.lvc.overlay.LvcTrackingOverlayService;
+import me.niicide.lvc.overlay.LvcTrackingOverlayService.TrackingOverlayRevision;
+import me.niicide.lvc.task.LvcOperationHandle;
+import me.niicide.lvc.task.LvcRefreshMarker;
+import me.niicide.lvc.task.LvcSemanticOverlayTask;
+import me.niicide.lvc.task.LvcTaskCallbacks;
+import me.niicide.lvc.task.LvcTaskRegistry;
+import me.niicide.lvc.task.LvcTaskScheduling;
 
 public class GuiLvcDiffViewer extends GuiListBase<GuiLvcDiffViewer.DiffEntry, WidgetLvcDiffViewerEntry, WidgetListLvcDiffViewerEntries>
         implements ISelectionListener<GuiLvcDiffViewer.DiffEntry>, ICompletionListener
 {
-    private static SchematicVerifier verifierLast;
-    private final SchematicPlacement placement;
-    private final SchematicVerifier verifier;
-    private final EnumMap<DiffSection, Boolean> sectionExpanded = new EnumMap<>(DiffSection.class);
-    private final EnumMap<DiffKind, Boolean> kindExpanded = new EnumMap<>(DiffKind.class);
-    private boolean kindDefaultsInitialized;
+    private static final String SWITCH_OVERLAY_OPERATION = "LVC Switch Diff Overlay";
+    private static final Map<SchematicVerifier, Set<DiffEntry>> SAVED_SELECTIONS = new WeakHashMap<>();
+    private static final Map<SchematicVerifier, ExpansionState> SAVED_EXPANSIONS = new WeakHashMap<>();
+    private static final Map<SchematicVerifier, DiffFilter> SAVED_FILTERS = new WeakHashMap<>();
+
+    private final Path repositoryDirectory;
+    private SchematicPlacement placement;
+    private SchematicVerifier verifier;
+    private final Map<BlockPos, Boolean> groupExpanded = new HashMap<>();
+    private final Map<GroupKindKey, Boolean> kindExpanded = new HashMap<>();
+    private DiffFilter filter;
+    private TrackingOverlayRevision overlayRevision;
+    private boolean overlaySwitchInProgress;
+    private boolean renderThroughFilterSynchronized;
+    private List<Group<Entry>> spatialGroups = List.of();
     @Nullable private BlockMismatch inventoryPreviewMismatch;
 
     public GuiLvcDiffViewer(SchematicPlacement placement)
     {
         super(10, 60);
-        this.title = StringUtils.translate("litematica.gui.title.lvc_diff_viewer", placement.getName());
         this.placement = placement;
         this.verifier = placement.getSchematicVerifier();
+        this.repositoryDirectory = Objects.requireNonNull(
+                LvcTrackingOverlayService.semanticTrackingRepositoryDirectory(placement.getSchematicFile()),
+                "Gitmatica tracking overlay repository");
+        this.overlayRevision = LvcTrackingOverlayService.trackingOverlayRevision(this.repositoryDirectory, placement);
+        this.filter = SAVED_FILTERS.getOrDefault(this.verifier, DiffFilter.ALL);
+        this.updateTitle();
         this.verifier.setLvcDiffInfoHud(true);
-        this.sectionExpanded.put(DiffSection.INVENTORIES, this.verifier.getWrongInventories() > 0);
-        this.sectionExpanded.put(DiffSection.BLOCKS, true);
-        this.sectionExpanded.put(DiffSection.ENTITIES, false);
-
-        if (this.verifier != verifierLast)
-        {
-            WidgetLvcDiffViewerEntry.setMaxNameLengths(this.allDiffEntries());
-            verifierLast = this.verifier;
-        }
+        this.restoreExpansionState();
     }
 
     @Override
@@ -92,7 +122,10 @@ public class GuiLvcDiffViewer extends GuiListBase<GuiLvcDiffViewer.DiffEntry, Wi
     @Override
     public void initGui()
     {
+        this.refreshSpatialGroups();
+        this.syncRenderThroughMismatchFilter();
         super.initGui();
+        this.restoreSelections();
 
         int x = 12;
         int y = 20;
@@ -104,15 +137,34 @@ public class GuiLvcDiffViewer extends GuiListBase<GuiLvcDiffViewer.DiffEntry, Wi
         x += this.createButton(x, y, -1, ButtonListener.Type.RESET_IGNORED) + 4;
         this.createButton(x, y, -1, ButtonListener.Type.TOGGLE_INFO_HUD);
 
-        y = this.getScreenHeight() - 36;
-        this.addStatusLabels(y);
+        y += 22;
+        x = 12;
+        x += this.createButton(x, y, -1, ButtonListener.Type.FILTER_ALL) + 4;
+        x += this.createButton(x, y, -1, ButtonListener.Type.FILTER_ADDED) + 4;
+        x += this.createButton(x, y, -1, ButtonListener.Type.FILTER_CHANGED) + 4;
+        x += this.createButton(x, y, -1, ButtonListener.Type.FILTER_REMOVED) + 4;
+        x += this.createButton(x, y, -1, ButtonListener.Type.FILTER_INVENTORY) + 4;
+        this.createButton(x, y, -1, ButtonListener.Type.TOGGLE_OVERLAY_REVISION);
 
+        int navigationY = this.getScreenHeight() - 24;
+        this.addStatusLabels(navigationY - 6);
+        this.addNavigationButtons(navigationY);
+    }
+
+    private void addNavigationButtons(int y)
+    {
         ButtonListenerChangeMenu.ButtonType type = ButtonListenerChangeMenu.ButtonType.MAIN_MENU;
         String label = StringUtils.translate(type.getLabelKey());
         int buttonWidth = this.getStringWidth(label) + 20;
-        x = this.getScreenWidth() - buttonWidth - 10;
-        ButtonGeneric button = new ButtonGeneric(x, y, buttonWidth, 20, label);
+        int menuX = this.getScreenWidth() - buttonWidth - 10;
+        ButtonGeneric button = new ButtonGeneric(menuX, y, buttonWidth, 20, label);
         this.addButton(button, new ButtonListenerChangeMenu(type, this.getParent()));
+
+        label = StringUtils.translate("litematica.gui.title.lvc_project_manager");
+        buttonWidth = this.getStringWidth(label) + 20;
+        button = new ButtonGeneric(menuX - buttonWidth - 4, y, buttonWidth, 20, label);
+        this.addButton(button, (ignored, ignoredMouseButton) ->
+                LvcSchematicPlacementRowActions.openProjectManager(this.placement));
     }
 
     private void addStatusLabels(int y)
@@ -129,11 +181,14 @@ public class GuiLvcDiffViewer extends GuiListBase<GuiLvcDiffViewer.DiffEntry, Wi
         {
             DiffCounts counts = this.diffCounts();
             String str = StringUtils.translate("litematica.gui.label.lvc_diff_viewer.status.blocks",
-                    counts.added(), counts.removed(), counts.changedStates(), counts.changedBlocks());
+                    counts.added(), counts.removed(), counts.changedBlocks(), counts.changedStates());
             this.addLabel(12, y, 100, 12, 0xFFF0F0F0, str);
-            str = StringUtils.translate("litematica.gui.label.schematic_verifier.status.done_correct_total",
-                    this.verifier.getCorrectStatesCount(), this.verifier.getSchematicTotalBlocks());
+            str = StringUtils.translate("litematica.gui.label.lvc_diff_viewer.status.inventories");
             this.addLabel(12, y + 14, 100, 12, 0xFFF0F0F0, str);
+            int changedX = 12 + this.getStringWidth(str) + 4;
+            str = StringUtils.translate("litematica.gui.label.lvc_diff_viewer.status.inventories_changed",
+                    counts.changedInventories());
+            this.addLabel(changedX, y + 14, 100, 12, kindTextColor(Kind.INVENTORIES_CHANGED), str);
         }
     }
 
@@ -169,14 +224,45 @@ public class GuiLvcDiffViewer extends GuiListBase<GuiLvcDiffViewer.DiffEntry, Wi
                         this.placement.getSchematicVerifierType().getDisplayName());
                 break;
             case RESET_IGNORED:
-                label = StringUtils.translate("litematica.gui.button.schematic_verifier.reset_ignored");
-                enabled = this.verifier.getIgnoredMismatches().size() > 0;
+                label = StringUtils.translate("litematica.gui.button.lvc_diff_viewer.reset_hidden");
+                enabled = this.verifier.hasIgnoredStateMismatches();
                 break;
             case TOGGLE_INFO_HUD:
                 boolean val = InfoHud.getInstance().isEnabled() && this.verifier.getShouldRenderText(RenderPhase.POST);
                 String str = (val ? TXT_GREEN : TXT_RED) + StringUtils.translate("litematica.message.value." + (val ? "on" : "off")) + TXT_RST;
                 label = StringUtils.translate("litematica.gui.button.schematic_verifier.toggle_info_hud", str);
                 break;
+            case FILTER_ALL:
+                label = StringUtils.translate("litematica.gui.button.lvc_diff_viewer.filter_all");
+                enabled = this.filter != DiffFilter.ALL;
+                break;
+            case FILTER_ADDED:
+                label = StringUtils.translate("litematica.gui.button.lvc_diff_viewer.filter_added");
+                enabled = this.filter != DiffFilter.ADDED;
+                break;
+            case FILTER_CHANGED:
+                label = StringUtils.translate("litematica.gui.button.lvc_diff_viewer.filter_changed");
+                enabled = this.filter != DiffFilter.CHANGED;
+                break;
+            case FILTER_REMOVED:
+                label = StringUtils.translate("litematica.gui.button.lvc_diff_viewer.filter_removed");
+                enabled = this.filter != DiffFilter.REMOVED;
+                break;
+            case FILTER_INVENTORY:
+                label = StringUtils.translate("litematica.gui.button.lvc_diff_viewer.filter_inventory");
+                enabled = this.filter != DiffFilter.INVENTORY;
+                break;
+            case TOGGLE_OVERLAY_REVISION:
+                String revision = StringUtils.translate(this.overlayRevision == TrackingOverlayRevision.CURRENT ?
+                        "litematica.gui.label.lvc_diff_viewer.overlay_current" :
+                        "litematica.gui.label.lvc_diff_viewer.overlay_parent");
+                label = StringUtils.translate("litematica.gui.button.lvc_diff_viewer.overlay_revision", revision);
+                break;
+        }
+
+        if (this.overlaySwitchInProgress)
+        {
+            enabled = false;
         }
 
         if (width == -1)
@@ -195,111 +281,219 @@ public class GuiLvcDiffViewer extends GuiListBase<GuiLvcDiffViewer.DiffEntry, Wi
         return this.placement;
     }
 
-    public boolean isSectionExpanded(DiffSection section)
+    private void updateTitle()
     {
-        return this.sectionExpanded.getOrDefault(section, false);
+        this.title = StringUtils.translate("litematica.gui.title.lvc_diff_viewer", this.placement.getName());
     }
 
-    public boolean isKindExpanded(DiffKind kind)
+    private void switchOverlayRevision()
     {
-        return this.kindExpanded.getOrDefault(kind, false);
-    }
-
-    public void initializeKindDefaults(Map<DiffKind, Integer> counts)
-    {
-        if (this.kindDefaultsInitialized)
+        if (this.overlaySwitchInProgress)
         {
             return;
         }
 
-        for (DiffKind kind : DiffKind.values())
+        ClientLevel clientLevel = Minecraft.getInstance().level;
+
+        if (clientLevel == null)
         {
-            this.kindExpanded.put(kind, counts.getOrDefault(kind, 0) > 0);
+            LvcGuiMessages.show(MessageType.ERROR, "litematica.error.lvc_project.no_world");
+            return;
         }
 
-        this.kindDefaultsInitialized = true;
+        Optional<LvcOperationHandle> handle = LvcTaskRegistry.tryAcquireBackground(
+                SWITCH_OVERLAY_OPERATION, this.repositoryDirectory);
+
+        if (handle.isEmpty())
+        {
+            LvcGuiMessages.show(MessageType.ERROR, "litematica.error.lvc_project.operation_running",
+                    LvcTaskRegistry.activeOperationName());
+            return;
+        }
+
+        TrackingOverlayRevision targetRevision = this.overlayRevision == TrackingOverlayRevision.CURRENT ?
+                TrackingOverlayRevision.PARENT : TrackingOverlayRevision.CURRENT;
+        this.overlaySwitchInProgress = true;
+
+        try
+        {
+            LvcSemanticOverlayTask task = new LvcSemanticOverlayTask(
+                    handle.get(),
+                    this.repositoryDirectory,
+                    this.placement.getName(),
+                    clientLevel,
+                    this,
+                    true,
+                    targetRevision,
+                    LvcTaskCallbacks.of(
+                            overlay -> this.finishOverlaySwitch(overlay, targetRevision),
+                            this::failOverlaySwitch,
+                            this::abortOverlaySwitch
+                    )
+            );
+            LvcTaskScheduling.scheduleForWorld(clientLevel, task);
+        }
+        catch (Exception e)
+        {
+            LvcTaskRegistry.release(handle.get());
+            this.failOverlaySwitch(e);
+        }
     }
 
-    public EnumMap<DiffKind, List<BlockMismatch>> blockDiffsByKind()
+    private void finishOverlaySwitch(LvcProjectService.TrackingOverlay overlay,
+                                     TrackingOverlayRevision targetRevision)
     {
-        EnumMap<DiffKind, List<BlockMismatch>> result = new EnumMap<>(DiffKind.class);
+        this.placement = overlay.placement();
+        this.verifier = overlay.verifier();
+        this.overlayRevision = targetRevision;
+        this.overlaySwitchInProgress = false;
+        this.inventoryPreviewMismatch = null;
+        this.spatialGroups = List.of();
+        this.renderThroughFilterSynchronized = false;
+        SAVED_FILTERS.put(this.verifier, this.filter);
+        this.saveExpansionState();
+        this.verifier.setLvcDiffInfoHud(true);
+        this.updateTitle();
+        this.clearRefreshMarkerAfterOverlaySwitch();
+        this.reinitializeIfOpen();
+    }
 
-        for (DiffKind kind : DiffKind.values())
+    private void failOverlaySwitch(Exception exception)
+    {
+        this.overlaySwitchInProgress = false;
+        LvcGuiMessages.showTaskError(Operation.LOAD_OVERLAY,
+                "litematica.error.lvc_project.tracking_failed", exception);
+        this.reinitializeIfOpen();
+    }
+
+    private void abortOverlaySwitch()
+    {
+        this.overlaySwitchInProgress = false;
+        LvcDiagnostics.debug("diff viewer overlay switch aborted repo='{}'", this.repositoryDirectory);
+        this.reinitializeIfOpen();
+    }
+
+    private void clearRefreshMarkerAfterOverlaySwitch()
+    {
+        try
         {
-            result.put(kind, new ArrayList<>());
+            LvcRefreshMarker.delete(this.repositoryDirectory);
         }
-
-        result.get(DiffKind.ADDED).addAll(this.verifier.getMismatchOverviewFor(MismatchType.EXTRA));
-        result.get(DiffKind.REMOVED).addAll(this.verifier.getMismatchOverviewFor(MismatchType.MISSING));
-
-        for (BlockMismatch mismatch : this.verifier.getMismatchOverviewFor(MismatchType.WRONG_STATE))
+        catch (Exception e)
         {
-            if (mismatch.stateExpected.getBlock() == mismatch.stateFound.getBlock())
+            LvcDiagnostics.warn("Failed to clear diff-viewer overlay refresh marker repo='{}' error='{}'",
+                    this.repositoryDirectory, e.getMessage());
+        }
+    }
+
+    private void reinitializeIfOpen()
+    {
+        if (GuiUtils.getCurrentScreen() == this)
+        {
+            this.initGui();
+        }
+    }
+
+    public boolean isGroupExpanded(BlockPos groupAnchor)
+    {
+        return this.groupExpanded.getOrDefault(groupAnchor, true);
+    }
+
+    public boolean isKindExpanded(BlockPos groupAnchor, Kind kind)
+    {
+        return this.kindExpanded.getOrDefault(new GroupKindKey(groupAnchor, kind), false);
+    }
+
+    public boolean isKindVisible(Kind kind)
+    {
+        return this.filter.includes(kind);
+    }
+
+    public boolean isGroupVisible(Group<Entry> group)
+    {
+        for (Kind kind : Kind.values())
+        {
+            if (this.isKindVisible(kind) && !group.entries(kind).isEmpty())
             {
-                result.get(DiffKind.CHANGED_STATES).add(mismatch);
+                return true;
             }
-            else
+        }
+
+        return false;
+    }
+
+    private void setFilter(DiffFilter filter)
+    {
+        this.filter = filter;
+        SAVED_FILTERS.put(this.verifier, filter);
+        this.syncSelectedMismatchPositions();
+        this.syncRenderThroughMismatchFilter();
+    }
+
+    public List<Group<Entry>> spatialGroups()
+    {
+        return this.spatialGroups;
+    }
+
+    private void refreshSpatialGroups()
+    {
+        this.spatialGroups = LvcVerifierDiffGroups.build(this.verifier);
+
+        for (Group<Entry> group : this.spatialGroups)
+        {
+            this.groupExpanded.putIfAbsent(group.anchor(), true);
+
+            for (Kind kind : Kind.values())
             {
-                result.get(DiffKind.CHANGED_BLOCKS).add(mismatch);
+                this.kindExpanded.putIfAbsent(new GroupKindKey(group.anchor(), kind), mismatchCount(group, kind) > 0);
             }
         }
 
-        result.get(DiffKind.CHANGED_BLOCKS).addAll(this.verifier.getMismatchOverviewFor(MismatchType.WRONG_BLOCK));
-        result.get(DiffKind.CHANGED_BLOCKS).addAll(this.verifier.getMismatchOverviewFor(MismatchType.DIFF_BLOCK));
-        VerifierResultSorter sorter = new VerifierResultSorter(this.verifier);
-
-        for (List<BlockMismatch> list : result.values())
-        {
-            list.sort(sorter);
-        }
-
-        return result;
-    }
-
-    public List<BlockMismatch> inventoryDiffEntries()
-    {
-        List<BlockMismatch> entries = new ArrayList<>(this.verifier.getMismatchOverviewFor(MismatchType.WRONG_INVENTORIES));
-        entries.sort(new VerifierResultSorter(this.verifier));
-        return entries;
-    }
-
-    private List<BlockMismatch> blockDiffEntries()
-    {
-        List<BlockMismatch> entries = new ArrayList<>();
-
-        for (List<BlockMismatch> list : this.blockDiffsByKind().values())
-        {
-            entries.addAll(list);
-        }
-
-        return entries;
+        WidgetLvcDiffViewerEntry.setMaxNameLengths(this.allDiffEntries());
     }
 
     private List<BlockMismatch> allDiffEntries()
     {
-        List<BlockMismatch> entries = new ArrayList<>(this.inventoryDiffEntries());
-        entries.addAll(this.blockDiffEntries());
+        List<BlockMismatch> entries = new ArrayList<>();
+
+        for (Group<Entry> group : this.spatialGroups)
+        {
+            group.allEntries().stream().map(Entry::mismatch).forEach(entries::add);
+        }
+
         return entries;
+    }
+
+    private static int mismatchCount(Group<Entry> group, Kind kind)
+    {
+        int count = 0;
+
+        for (Entry entry : group.entries(kind))
+        {
+            count += entry.mismatch().count;
+        }
+
+        return count;
     }
 
     private DiffCounts diffCounts()
     {
-        EnumMap<DiffKind, List<BlockMismatch>> diffs = this.blockDiffsByKind();
         return new DiffCounts(
-                count(diffs.get(DiffKind.ADDED)),
-                count(diffs.get(DiffKind.REMOVED)),
-                count(diffs.get(DiffKind.CHANGED_STATES)),
-                count(diffs.get(DiffKind.CHANGED_BLOCKS))
+                this.count(Kind.BLOCKS_ADDED),
+                this.count(Kind.BLOCKS_REMOVED),
+                this.count(Kind.BLOCKSTATE_CHANGED),
+                this.count(Kind.BLOCKS_CHANGED),
+                this.count(Kind.INVENTORIES_CHANGED)
         );
     }
 
-    private static int count(List<BlockMismatch> mismatches)
+    private int count(Kind kind)
     {
         int count = 0;
 
-        for (BlockMismatch mismatch : mismatches)
+        for (Group<Entry> group : this.spatialGroups)
         {
-            count += mismatch.count;
+            count += mismatchCount(group, kind);
         }
 
         return count;
@@ -310,17 +504,9 @@ public class GuiLvcDiffViewer extends GuiListBase<GuiLvcDiffViewer.DiffEntry, Wi
     {
         if (GuiUtils.getCurrentScreen() == this)
         {
-            List<BlockMismatch> inventoryEntries = this.inventoryDiffEntries();
-
-            if (inventoryEntries.isEmpty() == false)
-            {
-                this.sectionExpanded.put(DiffSection.INVENTORIES, true);
-            }
-
-            WidgetLvcDiffViewerEntry.setMaxNameLengths(this.allDiffEntries());
-            LvcDiagnostics.debug("diff viewer verifier completed placement={} inventoryRows={} blockRows={}",
-                    this.placement.getName(), inventoryEntries.size(), this.blockDiffEntries().size());
             this.initGui();
+            LvcDiagnostics.debug("diff viewer verifier completed placement={} spatialGroups={} rows={}",
+                    this.placement.getName(), this.spatialGroups.size(), this.allDiffEntries().size());
         }
     }
 
@@ -343,23 +529,12 @@ public class GuiLvcDiffViewer extends GuiListBase<GuiLvcDiffViewer.DiffEntry, Wi
             return;
         }
 
-        if (entry.type() == DiffEntry.Type.SECTION && entry.section() != null)
+        if (entry.type() == DiffEntry.Type.GROUP || entry.type() == DiffEntry.Type.KIND ||
+            entry.type() == DiffEntry.Type.DATA)
         {
-            this.sectionExpanded.put(entry.section(), !this.isSectionExpanded(entry.section()));
-            this.getListWidget().refreshEntries();
-            return;
-        }
-
-        if (entry.type() == DiffEntry.Type.KIND && entry.kind() != null)
-        {
-            this.kindExpanded.put(entry.kind(), !this.isKindExpanded(entry.kind()));
-            this.getListWidget().refreshEntries();
-            return;
-        }
-
-        if (entry.type() == DiffEntry.Type.DATA && entry.mismatch() != null)
-        {
-            this.verifier.toggleMismatchEntrySelected(entry.mismatch());
+            this.normalizeSelectionHierarchy(entry);
+            this.saveSelections();
+            this.syncSelectedMismatchPositions();
 
             if (!Configs.InfoOverlays.VERIFIER_OVERLAY_ENABLED.getBooleanValue())
             {
@@ -370,6 +545,268 @@ public class GuiLvcDiffViewer extends GuiListBase<GuiLvcDiffViewer.DiffEntry, Wi
                         "litematica.message.warn.schematic_verifier.overlay_disabled", name, hotkeyName, hotkeyVal);
             }
         }
+    }
+
+    private void normalizeSelectionHierarchy(DiffEntry selectedEntry)
+    {
+        Set<DiffEntry> selections = this.getListWidget().getSelectedEntries();
+        boolean selected = selections.contains(selectedEntry);
+
+        switch (selectedEntry.type())
+        {
+            case GROUP -> this.updateGroupDescendantSelections(selectedEntry, selections, selected);
+            case KIND ->
+            {
+                this.removeSelectedGroupAncestor(selectedEntry, selections);
+                this.updateKindDescendantSelections(selectedEntry, selections, selected);
+            }
+            case DATA ->
+            {
+                this.removeSelectedGroupAncestor(selectedEntry, selections);
+                this.removeSelectedKindAncestor(selectedEntry, selections);
+            }
+            default ->
+            {
+            }
+        }
+    }
+
+    private void updateGroupDescendantSelections(DiffEntry groupEntry, Set<DiffEntry> selections, boolean selected)
+    {
+        Group<Entry> group = this.groupFor(groupEntry.groupAnchor());
+
+        if (group == null)
+        {
+            return;
+        }
+
+        for (Kind kind : Kind.values())
+        {
+            if (group.entries(kind).isEmpty())
+            {
+                continue;
+            }
+
+            DiffEntry kindEntry = DiffEntry.kind(group, groupEntry.groupNumber(), kind);
+            this.updateSelection(selections, kindEntry, selected);
+
+            for (Entry data : group.entries(kind))
+            {
+                this.updateSelection(selections,
+                        DiffEntry.data(group, groupEntry.groupNumber(), kind, data), selected);
+            }
+        }
+    }
+
+    private void updateKindDescendantSelections(DiffEntry kindEntry, Set<DiffEntry> selections, boolean selected)
+    {
+        Group<Entry> group = this.groupFor(kindEntry.groupAnchor());
+
+        if (group == null || kindEntry.kind() == null)
+        {
+            return;
+        }
+
+        for (Entry data : group.entries(kindEntry.kind()))
+        {
+            this.updateSelection(selections,
+                    DiffEntry.data(group, kindEntry.groupNumber(), kindEntry.kind(), data), selected);
+        }
+    }
+
+    private void removeSelectedGroupAncestor(DiffEntry entry, Set<DiffEntry> selections)
+    {
+        selections.removeIf(candidate -> candidate.type() == DiffEntry.Type.GROUP &&
+                Objects.equals(candidate.groupAnchor(), entry.groupAnchor()));
+    }
+
+    private void removeSelectedKindAncestor(DiffEntry entry, Set<DiffEntry> selections)
+    {
+        selections.removeIf(candidate -> candidate.type() == DiffEntry.Type.KIND &&
+                candidate.kind() == entry.kind() &&
+                Objects.equals(candidate.groupAnchor(), entry.groupAnchor()));
+    }
+
+    private void updateSelection(Set<DiffEntry> selections, DiffEntry entry, boolean selected)
+    {
+        if (selected)
+        {
+            selections.add(entry);
+        }
+        else
+        {
+            selections.remove(entry);
+        }
+    }
+
+    private void saveSelections()
+    {
+        SAVED_SELECTIONS.put(this.verifier, Set.copyOf(this.getListWidget().getSelectedEntries()));
+    }
+
+    private void restoreSelections()
+    {
+        Set<DiffEntry> saved = SAVED_SELECTIONS.get(this.verifier);
+
+        if (saved == null)
+        {
+            return;
+        }
+
+        Set<DiffEntry> restored = new HashSet<>();
+
+        for (DiffEntry entry : saved)
+        {
+            if (this.selectionStillExists(entry))
+            {
+                restored.add(entry);
+            }
+        }
+
+        Set<DiffEntry> selections = this.getListWidget().getSelectedEntries();
+        selections.clear();
+        selections.addAll(restored);
+        this.saveSelections();
+        this.syncSelectedMismatchPositions();
+    }
+
+    private boolean selectionStillExists(DiffEntry selection)
+    {
+        Group<Entry> group = this.groupFor(selection.groupAnchor());
+
+        if (group == null)
+        {
+            return false;
+        }
+
+        return switch (selection.type())
+        {
+            case GROUP -> true;
+            case KIND -> selection.kind() != null && !group.entries(selection.kind()).isEmpty();
+            case DATA -> selection.kind() != null && selection.data() != null &&
+                    group.entries(selection.kind()).contains(selection.data());
+            default -> false;
+        };
+    }
+
+    void toggleExpanded(DiffEntry entry)
+    {
+        if (entry.type() == DiffEntry.Type.GROUP && entry.groupAnchor() != null)
+        {
+            this.groupExpanded.put(entry.groupAnchor(), !this.isGroupExpanded(entry.groupAnchor()));
+            this.saveExpansionState();
+            this.getListWidget().refreshEntries();
+        }
+        else if (entry.type() == DiffEntry.Type.KIND && entry.groupAnchor() != null && entry.kind() != null)
+        {
+            GroupKindKey key = new GroupKindKey(entry.groupAnchor(), entry.kind());
+            this.kindExpanded.put(key, !this.isKindExpanded(entry.groupAnchor(), entry.kind()));
+            this.saveExpansionState();
+            this.getListWidget().refreshEntries();
+        }
+    }
+
+    private void restoreExpansionState()
+    {
+        ExpansionState saved = SAVED_EXPANSIONS.get(this.verifier);
+
+        if (saved != null)
+        {
+            this.groupExpanded.putAll(saved.groups());
+            this.kindExpanded.putAll(saved.kinds());
+        }
+    }
+
+    private void saveExpansionState()
+    {
+        SAVED_EXPANSIONS.put(this.verifier, new ExpansionState(this.groupExpanded, this.kindExpanded));
+    }
+
+    private void syncSelectedMismatchPositions()
+    {
+        Map<SelectedPosition, MismatchRenderPos> positions = new LinkedHashMap<>();
+
+        for (DiffEntry selected : this.getListWidget().getSelectedEntries())
+        {
+            for (Entry data : this.entriesSelectedBy(selected))
+            {
+                for (BlockPos position : data.positions())
+                {
+                    MismatchType type = data.mismatch().mismatchType;
+                    positions.putIfAbsent(new SelectedPosition(position, type), new MismatchRenderPos(type, position));
+                }
+            }
+        }
+
+        this.verifier.setMismatchPositionsSelected(positions.values());
+    }
+
+    private void syncRenderThroughMismatchFilter()
+    {
+        boolean changed;
+        boolean needsInitialRebuild = this.renderThroughFilterSynchronized == false && this.filter != DiffFilter.ALL;
+
+        if (this.filter == DiffFilter.ALL)
+        {
+            changed = this.verifier.clearRenderThroughMismatchFilter();
+        }
+        else
+        {
+            Map<SelectedPosition, MismatchRenderPos> positions = new LinkedHashMap<>();
+
+            for (Group<Entry> group : this.spatialGroups)
+            {
+                for (Entry entry : group.allEntries(this::isKindVisible))
+                {
+                    for (BlockPos position : entry.positions())
+                    {
+                        MismatchType type = entry.mismatch().mismatchType;
+                        positions.putIfAbsent(new SelectedPosition(position, type), new MismatchRenderPos(type, position));
+                    }
+                }
+            }
+
+            changed = this.verifier.setRenderThroughMismatchFilter(positions.values());
+        }
+
+        this.renderThroughFilterSynchronized = true;
+
+        if (changed || needsInitialRebuild)
+        {
+            DataManager.getSchematicPlacementManager().markChunksForRebuild(this.placement);
+        }
+    }
+
+    private List<Entry> entriesSelectedBy(DiffEntry selected)
+    {
+        if (selected.type() == DiffEntry.Type.DATA && selected.data() != null &&
+            selected.kind() != null && this.isKindVisible(selected.kind()))
+        {
+            return List.of(selected.data());
+        }
+
+        Group<Entry> group = this.groupFor(selected.groupAnchor());
+
+        if (group == null)
+        {
+            return List.of();
+        }
+
+        if (selected.type() == DiffEntry.Type.KIND && selected.kind() != null && this.isKindVisible(selected.kind()))
+        {
+            return group.entries(selected.kind());
+        }
+
+        return selected.type() == DiffEntry.Type.GROUP ? group.allEntries(this::isKindVisible) : List.of();
+    }
+
+    @Nullable
+    private Group<Entry> groupFor(@Nullable BlockPos anchor)
+    {
+        return this.spatialGroups.stream()
+                .filter(candidate -> Objects.equals(candidate.anchor(), anchor))
+                .findFirst()
+                .orElse(null);
     }
 
     @Override
@@ -384,97 +821,122 @@ public class GuiLvcDiffViewer extends GuiListBase<GuiLvcDiffViewer.DiffEntry, Wi
         return new WidgetListLvcDiffViewerEntries(listX, listY, this.getBrowserWidth(), this.getBrowserHeight(), this);
     }
 
-    public enum DiffSection
+    static String kindDisplayName(Kind kind)
     {
-        INVENTORIES("litematica.gui.label.lvc_diff_viewer.inventories"),
-        BLOCKS("litematica.gui.label.lvc_diff_viewer.blocks"),
-        ENTITIES("litematica.gui.label.lvc_diff_viewer.entities");
-
-        private final String translationKey;
-
-        DiffSection(String translationKey)
+        String translationKey = switch (kind)
         {
-            this.translationKey = translationKey;
-        }
-
-        public String displayName()
-        {
-            return StringUtils.translate(this.translationKey);
-        }
+            case INVENTORIES_CHANGED -> "litematica.gui.label.lvc_diff_viewer.inventories";
+            case BLOCKS_ADDED -> "litematica.gui.label.lvc_diff_viewer.added";
+            case BLOCKS_REMOVED -> "litematica.gui.label.lvc_diff_viewer.removed";
+            case BLOCKS_CHANGED -> "litematica.gui.label.lvc_diff_viewer.changed_blocks";
+            case BLOCKSTATE_CHANGED -> "litematica.gui.label.lvc_diff_viewer.changed_states";
+        };
+        return StringUtils.translate(translationKey);
     }
 
-    public enum DiffKind
+    static int kindTextColor(Kind kind)
     {
-        ADDED("litematica.gui.label.lvc_diff_viewer.added", GuiBase.TXT_GREEN),
-        REMOVED("litematica.gui.label.lvc_diff_viewer.removed", GuiBase.TXT_RED),
-        CHANGED_STATES("litematica.gui.label.lvc_diff_viewer.changed_states", GuiBase.TXT_YELLOW),
-        CHANGED_BLOCKS("litematica.gui.label.lvc_diff_viewer.changed_blocks", GuiBase.TXT_GOLD);
-
-        private final String translationKey;
-        private final String colorCode;
-
-        DiffKind(String translationKey, String colorCode)
+        MismatchType mismatchType = switch (kind)
         {
-            this.translationKey = translationKey;
-            this.colorCode = colorCode;
-        }
-
-        public String displayName()
-        {
-            return StringUtils.translate(this.translationKey);
-        }
-
-        public String formattedDisplayName()
-        {
-            return this.colorCode + this.displayName() + GuiBase.TXT_RST;
-        }
+            case INVENTORIES_CHANGED -> MismatchType.WRONG_INVENTORIES;
+            case BLOCKS_ADDED -> MismatchType.EXTRA;
+            case BLOCKS_REMOVED -> MismatchType.MISSING;
+            case BLOCKS_CHANGED -> MismatchType.WRONG_BLOCK;
+            case BLOCKSTATE_CHANGED -> MismatchType.WRONG_STATE;
+        };
+        return LvcTrackingOverlayService.semanticTrackingMismatchColor(mismatchType).intValue | 0xFF000000;
     }
 
-    public record DiffEntry(Type type, @Nullable DiffSection section, @Nullable DiffKind kind,
-                            @Nullable BlockMismatch mismatch, @Nullable String label, int count)
+    public record DiffEntry(Type type, @Nullable BlockPos groupAnchor, int groupNumber, @Nullable Kind kind,
+                            @Nullable Entry data, @Nullable String label, int count)
     {
-        public static DiffEntry section(DiffSection section, int count)
+        public static DiffEntry group(Group<Entry> group, int groupNumber)
         {
-            return new DiffEntry(Type.SECTION, section, null, null, section.displayName(), count);
+            String label = StringUtils.translate("litematica.gui.label.lvc_diff_viewer.group", groupNumber);
+            return new DiffEntry(Type.GROUP, group.anchor(), groupNumber, null, null, label, 0);
         }
 
-        public static DiffEntry kind(DiffKind kind, int count)
+        public static DiffEntry kind(Group<Entry> group, int groupNumber, Kind kind)
         {
-            return new DiffEntry(Type.KIND, null, kind, null, kind.formattedDisplayName(), count);
+            return new DiffEntry(Type.KIND, group.anchor(), groupNumber, kind, null,
+                    kindDisplayName(kind), mismatchCount(group, kind));
         }
 
-        public static DiffEntry data(DiffKind kind, BlockMismatch mismatch)
+        public static DiffEntry data(Group<Entry> group, int groupNumber, Kind kind, Entry data)
         {
-            return new DiffEntry(Type.DATA, null, kind, mismatch, null, mismatch.count);
-        }
-
-        public static DiffEntry inventory(BlockMismatch mismatch)
-        {
-            return new DiffEntry(Type.DATA, null, null, mismatch, null, mismatch.count);
+            return new DiffEntry(Type.DATA, group.anchor(), groupNumber, kind, data, null, data.mismatch().count);
         }
 
         public static DiffEntry empty(String label)
         {
-            return new DiffEntry(Type.EMPTY, null, null, null, label, 0);
+            return new DiffEntry(Type.EMPTY, null, 0, null, null, label, 0);
         }
 
         public static DiffEntry header()
         {
-            return new DiffEntry(Type.HEADER, null, null, null, null, 0);
+            return new DiffEntry(Type.HEADER, null, 0, null, null, null, 0);
+        }
+
+        @Nullable
+        public BlockMismatch mismatch()
+        {
+            return this.data != null ? this.data.mismatch() : null;
         }
 
         public enum Type
         {
             HEADER,
-            SECTION,
+            GROUP,
             KIND,
             DATA,
             EMPTY
         }
     }
 
-    private record DiffCounts(int added, int removed, int changedStates, int changedBlocks)
+    private record GroupKindKey(BlockPos groupAnchor, Kind kind)
     {
+    }
+
+    private record ExpansionState(Map<BlockPos, Boolean> groups, Map<GroupKindKey, Boolean> kinds)
+    {
+        private ExpansionState
+        {
+            groups = Map.copyOf(groups);
+            kinds = Map.copyOf(kinds);
+        }
+    }
+
+    private record SelectedPosition(BlockPos position, MismatchType type)
+    {
+        private SelectedPosition
+        {
+            position = position.immutable();
+        }
+    }
+
+    private record DiffCounts(int added, int removed, int changedStates, int changedBlocks, int changedInventories)
+    {
+    }
+
+    private enum DiffFilter
+    {
+        ALL,
+        ADDED,
+        CHANGED,
+        REMOVED,
+        INVENTORY;
+
+        private boolean includes(Kind kind)
+        {
+            return switch (this)
+            {
+                case ALL -> true;
+                case ADDED -> kind == Kind.BLOCKS_ADDED;
+                case CHANGED -> kind == Kind.BLOCKS_CHANGED || kind == Kind.BLOCKSTATE_CHANGED;
+                case REMOVED -> kind == Kind.BLOCKS_REMOVED;
+                case INVENTORY -> kind == Kind.INVENTORIES_CHANGED;
+            };
+        }
     }
 
     private record ButtonListener(Type type, GuiLvcDiffViewer parent) implements IButtonActionListener
@@ -523,6 +985,24 @@ public class GuiLvcDiffViewer extends GuiListBase<GuiLvcDiffViewer.DiffEntry, Wi
                         InfoHud.getInstance().removeInfoHudRenderer(verifier, false);
                     }
                     break;
+                case FILTER_ALL:
+                    this.parent.setFilter(DiffFilter.ALL);
+                    break;
+                case FILTER_ADDED:
+                    this.parent.setFilter(DiffFilter.ADDED);
+                    break;
+                case FILTER_CHANGED:
+                    this.parent.setFilter(DiffFilter.CHANGED);
+                    break;
+                case FILTER_REMOVED:
+                    this.parent.setFilter(DiffFilter.REMOVED);
+                    break;
+                case FILTER_INVENTORY:
+                    this.parent.setFilter(DiffFilter.INVENTORY);
+                    break;
+                case TOGGLE_OVERLAY_REVISION:
+                    this.parent.switchOverlayRevision();
+                    break;
             }
 
             this.parent.initGui();
@@ -535,7 +1015,13 @@ public class GuiLvcDiffViewer extends GuiListBase<GuiLvcDiffViewer.DiffEntry, Wi
             RESET_VERIFIER,
             SET_LIST_TYPE,
             RESET_IGNORED,
-            TOGGLE_INFO_HUD
+            TOGGLE_INFO_HUD,
+            FILTER_ALL,
+            FILTER_ADDED,
+            FILTER_CHANGED,
+            FILTER_REMOVED,
+            FILTER_INVENTORY,
+            TOGGLE_OVERLAY_REVISION
         }
     }
 }
@@ -590,32 +1076,30 @@ class WidgetListLvcDiffViewerEntries extends WidgetListBase<GuiLvcDiffViewer.Dif
     }
 
     @Override
-    public void refreshEntries()
-    {
-        super.refreshEntries();
-    }
-
-    @Override
     protected void refreshBrowserEntries()
     {
         this.listContents.clear();
-        List<BlockMismatch> inventoryDiffs = this.parent.inventoryDiffEntries();
-        int inventoryCount = count(inventoryDiffs);
-        EnumMap<GuiLvcDiffViewer.DiffKind, List<BlockMismatch>> diffs = this.parent.blockDiffsByKind();
-        EnumMap<GuiLvcDiffViewer.DiffKind, Integer> counts = new EnumMap<>(GuiLvcDiffViewer.DiffKind.class);
-        List<BlockMismatch> allMismatches = new ArrayList<>(inventoryDiffs);
 
-        for (Map.Entry<GuiLvcDiffViewer.DiffKind, List<BlockMismatch>> entry : diffs.entrySet())
+        int groupNumber = 1;
+        boolean hasVisibleGroups = false;
+
+        for (Group<Entry> group : this.parent.spatialGroups())
         {
-            counts.put(entry.getKey(), count(entry.getValue()));
-            allMismatches.addAll(entry.getValue());
+            if (this.parent.isGroupVisible(group))
+            {
+                this.addGroup(group, groupNumber);
+                hasVisibleGroups = true;
+            }
+
+            groupNumber++;
         }
 
-        this.parent.initializeKindDefaults(counts);
-        WidgetLvcDiffViewerEntry.setMaxNameLengths(allMismatches);
-        this.addInventorySection(inventoryDiffs, inventoryCount);
-        this.addBlockSection(diffs, counts);
-        this.addSection(GuiLvcDiffViewer.DiffSection.ENTITIES, 0);
+        if (!hasVisibleGroups)
+        {
+            this.listContents.add(GuiLvcDiffViewer.DiffEntry.empty(
+                    StringUtils.translate("litematica.gui.label.lvc_diff_viewer.empty_category")));
+        }
+
         this.reCreateListEntryWidgets();
 
         if (!this.scrollbarRestored && lastScrollbarPosition <= this.scrollBar.getMaxValue())
@@ -626,88 +1110,39 @@ class WidgetListLvcDiffViewerEntries extends WidgetListBase<GuiLvcDiffViewer.Dif
         }
     }
 
-    private void addSection(GuiLvcDiffViewer.DiffSection section, int count)
+    private void addGroup(Group<Entry> group, int groupNumber)
     {
-        this.listContents.add(GuiLvcDiffViewer.DiffEntry.section(section, count));
+        this.listContents.add(GuiLvcDiffViewer.DiffEntry.group(group, groupNumber));
 
-        if (this.parent.isSectionExpanded(section))
-        {
-            this.listContents.add(GuiLvcDiffViewer.DiffEntry.empty(StringUtils.translate("litematica.gui.label.lvc_diff_viewer.empty_category")));
-        }
-    }
-
-    private void addInventorySection(List<BlockMismatch> inventories, int count)
-    {
-        this.listContents.add(GuiLvcDiffViewer.DiffEntry.section(GuiLvcDiffViewer.DiffSection.INVENTORIES, count));
-
-        if (!this.parent.isSectionExpanded(GuiLvcDiffViewer.DiffSection.INVENTORIES))
+        if (this.parent.isGroupExpanded(group.anchor()) == false)
         {
             return;
         }
 
-        if (inventories.isEmpty())
+        for (Kind kind : Kind.values())
         {
-            this.listContents.add(GuiLvcDiffViewer.DiffEntry.empty(StringUtils.translate("litematica.gui.label.lvc_diff_viewer.empty_category")));
-            return;
-        }
-
-        for (BlockMismatch mismatch : inventories)
-        {
-            this.listContents.add(GuiLvcDiffViewer.DiffEntry.inventory(mismatch));
-        }
-    }
-
-    private void addBlockSection(EnumMap<GuiLvcDiffViewer.DiffKind, List<BlockMismatch>> diffs,
-                                 EnumMap<GuiLvcDiffViewer.DiffKind, Integer> counts)
-    {
-        int total = 0;
-
-        for (Integer count : counts.values())
-        {
-            total += count;
-        }
-
-        this.listContents.add(GuiLvcDiffViewer.DiffEntry.section(GuiLvcDiffViewer.DiffSection.BLOCKS, total));
-
-        if (!this.parent.isSectionExpanded(GuiLvcDiffViewer.DiffSection.BLOCKS))
-        {
-            return;
-        }
-
-        for (GuiLvcDiffViewer.DiffKind kind : GuiLvcDiffViewer.DiffKind.values())
-        {
-            int count = counts.getOrDefault(kind, 0);
-            this.listContents.add(GuiLvcDiffViewer.DiffEntry.kind(kind, count));
-
-            if (this.parent.isKindExpanded(kind))
+            if (!this.parent.isKindVisible(kind))
             {
-                List<BlockMismatch> list = diffs.getOrDefault(kind, List.of());
+                continue;
+            }
 
-                if (list.isEmpty())
+            List<Entry> entries = group.entries(kind);
+
+            if (entries.isEmpty())
+            {
+                continue;
+            }
+
+            this.listContents.add(GuiLvcDiffViewer.DiffEntry.kind(group, groupNumber, kind));
+
+            if (this.parent.isKindExpanded(group.anchor(), kind))
+            {
+                for (Entry entry : entries)
                 {
-                    this.listContents.add(GuiLvcDiffViewer.DiffEntry.empty(StringUtils.translate("litematica.gui.label.lvc_diff_viewer.empty_category")));
-                }
-                else
-                {
-                    for (BlockMismatch mismatch : list)
-                    {
-                        this.listContents.add(GuiLvcDiffViewer.DiffEntry.data(kind, mismatch));
-                    }
+                    this.listContents.add(GuiLvcDiffViewer.DiffEntry.data(group, groupNumber, kind, entry));
                 }
             }
         }
-    }
-
-    private static int count(List<BlockMismatch> mismatches)
-    {
-        int count = 0;
-
-        for (BlockMismatch mismatch : mismatches)
-        {
-            count += mismatch.count;
-        }
-
-        return count;
     }
 
     @Override
@@ -721,6 +1156,17 @@ class WidgetListLvcDiffViewerEntries extends WidgetListBase<GuiLvcDiffViewer.Dif
 class WidgetLvcDiffViewerEntry extends WidgetListEntrySortable<GuiLvcDiffViewer.DiffEntry>
 {
     private static final int RIGHT_MOUSE_BUTTON = 1;
+    private static final int DATA_INDENT = 44;
+    private static final int GROUP_INDENT = 4;
+    private static final int KIND_INDENT = 20;
+    private static final int DISCLOSURE_ICON_WIDTH = Math.max(
+            Icons.ARROW_DOWN.getWidth(), Icons.GITMATICA_ARROW_RIGHT.getWidth());
+    private static final int DISCLOSURE_ICON_HEIGHT = Math.max(
+            Icons.ARROW_DOWN.getHeight(), Icons.GITMATICA_ARROW_RIGHT.getHeight());
+    private static final int DISCLOSURE_CLICK_PADDING = 4;
+    private static final int DISCLOSURE_TEXT_GAP = 4;
+    private static final int HEADER_OUTLINE_INSET = 3;
+    private static final int STATE_COLUMN_PADDING = 40;
     private static final String HEADER_BEFORE = "litematica.gui.label.lvc_diff_viewer.before";
     private static final String HEADER_AFTER = "litematica.gui.label.lvc_diff_viewer.after";
     private static final String HEADER_COUNT = "litematica.gui.label.schematic_verifier.count";
@@ -800,9 +1246,14 @@ class WidgetLvcDiffViewerEntry extends WidgetListEntrySortable<GuiLvcDiffViewer.
     @Override
     protected int getColumnPosX(int column)
     {
-        int x1 = this.x + 4;
-        int x2 = x1 + maxNameLengthBefore + 40;
-        int x3 = x2 + maxNameLengthAfter + 40;
+        if (this.entry.type() == GuiLvcDiffViewer.DiffEntry.Type.HEADER && column == 0)
+        {
+            return this.x + HEADER_OUTLINE_INSET;
+        }
+
+        int x1 = this.x + DATA_INDENT;
+        int x2 = x1 + maxNameLengthBefore + STATE_COLUMN_PADDING;
+        int x3 = x2 + maxNameLengthAfter + STATE_COLUMN_PADDING;
 
         return switch (column)
         {
@@ -817,6 +1268,12 @@ class WidgetLvcDiffViewerEntry extends WidgetListEntrySortable<GuiLvcDiffViewer.
     @Override
     protected boolean onMouseClickedImpl(MouseButtonEvent click, boolean doubleClick)
     {
+        if (click.input() == 0 && this.isOverExpansionArrow(click))
+        {
+            this.gui.toggleExpanded(this.entry);
+            return true;
+        }
+
         if (click.input() == RIGHT_MOUSE_BUTTON && this.canShowInventoryPreview() &&
             (this.buttonIgnore == null || click.x() < this.buttonIgnore.getX()))
         {
@@ -854,7 +1311,10 @@ class WidgetLvcDiffViewerEntry extends WidgetListEntrySortable<GuiLvcDiffViewer.
     @Override
     public boolean canSelectAt(MouseButtonEvent click)
     {
-        if (this.entry.type() == GuiLvcDiffViewer.DiffEntry.Type.EMPTY)
+        if (click.input() != 0 ||
+            this.entry.type() == GuiLvcDiffViewer.DiffEntry.Type.HEADER ||
+            this.entry.type() == GuiLvcDiffViewer.DiffEntry.Type.EMPTY ||
+            this.isOverExpansionArrow(click))
         {
             return false;
         }
@@ -862,17 +1322,9 @@ class WidgetLvcDiffViewerEntry extends WidgetListEntrySortable<GuiLvcDiffViewer.
         return (this.buttonIgnore == null || click.x() < this.buttonIgnore.getX()) && super.canSelectAt(click);
     }
 
-    protected boolean shouldRenderAsSelected()
-    {
-        return this.entry.type() == GuiLvcDiffViewer.DiffEntry.Type.DATA &&
-                this.entry.mismatch() != null &&
-                this.verifier.isMismatchEntrySelected(this.entry.mismatch());
-    }
-
     @Override
     public void render(GuiContext ctx, int mouseX, int mouseY, boolean selected)
     {
-        selected = this.shouldRenderAsSelected();
         int color = 0xA0303030;
 
         if (selected)
@@ -909,12 +1361,10 @@ class WidgetLvcDiffViewerEntry extends WidgetListEntrySortable<GuiLvcDiffViewer.
                 this.drawString(ctx, x3, y, 0xFFFFFFFF, GuiBase.TXT_BOLD + StringUtils.translate(HEADER_COUNT) + GuiBase.TXT_RST);
                 this.renderColumnHeader(ctx, mouseX, mouseY, Icons.ARROW_DOWN, Icons.ARROW_UP);
             }
-            case SECTION, KIND ->
-            {
-                String marker = this.isExpanded() ? "[-] " : "[+] ";
-                this.drawString(ctx, this.x + 4, y, 0xFFFFFFFF, marker + Objects.toString(this.entry.label(), "") + " (" + this.entry.count() + ")");
-            }
-            case EMPTY -> this.drawString(ctx, this.x + 18, y, 0xFFB0B0B0, Objects.toString(this.entry.label(), ""));
+            case GROUP -> this.renderExpandableRow(ctx, GROUP_INDENT, 0xFFFFFFFF, false, x3);
+            case KIND -> this.renderExpandableRow(ctx, KIND_INDENT,
+                    this.entry.kind() != null ? GuiLvcDiffViewer.kindTextColor(this.entry.kind()) : 0xFFFFFFFF, true, x3);
+            case EMPTY -> this.drawString(ctx, this.x + DATA_INDENT + 18, y, 0xFFB0B0B0, Objects.toString(this.entry.label(), ""));
             case DATA -> this.renderDataRow(ctx, x1, x2, x3);
         }
 
@@ -923,17 +1373,53 @@ class WidgetLvcDiffViewerEntry extends WidgetListEntrySortable<GuiLvcDiffViewer.
 
     private boolean isExpanded()
     {
-        if (this.entry.section() != null)
+        if (this.entry.type() == GuiLvcDiffViewer.DiffEntry.Type.GROUP && this.entry.groupAnchor() != null)
         {
-            return this.gui.isSectionExpanded(this.entry.section());
+            return this.gui.isGroupExpanded(this.entry.groupAnchor());
         }
 
-        if (this.entry.kind() != null)
+        if (this.entry.type() == GuiLvcDiffViewer.DiffEntry.Type.KIND &&
+            this.entry.groupAnchor() != null && this.entry.kind() != null)
         {
-            return this.gui.isKindExpanded(this.entry.kind());
+            return this.gui.isKindExpanded(this.entry.groupAnchor(), this.entry.kind());
         }
 
         return false;
+    }
+
+    private void renderExpandableRow(GuiContext ctx, int indent, int color, boolean showCount, int countX)
+    {
+        Icons icon = this.isExpanded() ? Icons.ARROW_DOWN : Icons.GITMATICA_ARROW_RIGHT;
+        int iconX = this.x + indent;
+        int iconY = this.y + (this.height - icon.getHeight()) / 2;
+        icon.renderAt(ctx, iconX, iconY, 0, true, false);
+        this.drawString(ctx, this.x + indent + DISCLOSURE_ICON_WIDTH + DISCLOSURE_TEXT_GAP, this.y + 7, color,
+                Objects.toString(this.entry.label(), ""));
+
+        if (showCount)
+        {
+            this.drawString(ctx, countX, this.y + 7, 0xFFFFFFFF, String.valueOf(this.entry.count()));
+        }
+    }
+
+    private boolean isOverExpansionArrow(MouseButtonEvent click)
+    {
+        int indent = switch (this.entry.type())
+        {
+            case GROUP -> GROUP_INDENT;
+            case KIND -> KIND_INDENT;
+            default -> -1;
+        };
+
+        if (indent < 0)
+        {
+            return false;
+        }
+
+        int iconX = this.x + indent;
+        return click.x() >= iconX - DISCLOSURE_CLICK_PADDING &&
+               click.x() < iconX + DISCLOSURE_ICON_WIDTH + DISCLOSURE_CLICK_PADDING &&
+               click.y() >= this.y && click.y() < this.y + this.height;
     }
 
     private void renderDataRow(GuiContext ctx, int x1, int x2, int x3)
@@ -1126,7 +1612,7 @@ class WidgetLvcDiffViewerEntry extends WidgetListEntrySortable<GuiLvcDiffViewer.
 
         enum ButtonType
         {
-            IGNORE_MISMATCH("litematica.gui.button.schematic_verifier.ignore");
+            IGNORE_MISMATCH("litematica.gui.button.lvc_diff_viewer.hide");
 
             private final String translationKey;
 

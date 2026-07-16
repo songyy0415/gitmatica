@@ -25,6 +25,7 @@ final class LvcCommitHistoryPanel
     private static final int SCROLLBAR_TRACK_WIDTH = 4;
     private static final int UNDO_BUTTON_SIZE = 16;
     private static final int UNDO_ICON_SIZE = 12;
+    private static final int UNDO_SCROLLBAR_GAP = 1;
     private static final int UNDO_BUTTON_TEXT_GAP = 4;
     private static final int SCROLL_ROWS = 3;
 
@@ -411,7 +412,7 @@ final class LvcCommitHistoryPanel
 
     private int undoButtonX(int panelX, int panelWidth)
     {
-        return panelX + panelWidth - this.getHashRightPadding() - UNDO_BUTTON_SIZE;
+        return panelX + panelWidth - SCROLLBAR_TRACK_RIGHT_OFFSET - UNDO_SCROLLBAR_GAP - UNDO_BUTTON_SIZE;
     }
 
     private int undoButtonY(int rowY)

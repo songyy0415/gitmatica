@@ -37,6 +37,7 @@ public enum Icons implements IGuiIcon, IFileBrowserIconProvider
     SCHEMATIC_TYPE_FILE     (144,   0, 12, 12),
     GITMATICA_SCHEMATIC_TYPE_FILE(18, 1, 12, 12, true, 100, 103),
     GITMATICA_UNDO          (  1,  35, 16, 16, true, 100, 103),
+    GITMATICA_ARROW_RIGHT   ( 18,  35, 16, 16, true, 100, 103),
     GITMATICA_BRANCH        (  1,  86, 16, 16, true, 100, 103),
     GITMATICA_CHECK         (  1,  69, 16, 16, true, 100, 103),
     SCHEMATIC_TYPE_MEMORY   (186,   0, 12, 12),

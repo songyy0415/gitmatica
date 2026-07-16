@@ -220,7 +220,7 @@ public class GuiSchematicVerifier   extends GuiListBase<BlockMismatchEntry, Widg
 
             case RESET_IGNORED:
                 label = StringUtils.translate("litematica.gui.button.schematic_verifier.reset_ignored");
-                enabled = this.verifier.getIgnoredMismatches().size() > 0;
+                enabled = this.verifier.hasIgnoredStateMismatches();
                 break;
 
             case TOGGLE_INFO_HUD:

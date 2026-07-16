@@ -91,6 +91,8 @@ import fi.dy.masa.litematica.config.Hotkeys;
 import fi.dy.masa.litematica.data.DataManager;
 import fi.dy.masa.litematica.mixin.entity.IMixinEntity;
 import fi.dy.masa.litematica.render.IWorldSchematicRenderer;
+import fi.dy.masa.litematica.schematic.placement.SchematicPlacement;
+import fi.dy.masa.litematica.schematic.verifier.SchematicVerifier;
 import fi.dy.masa.litematica.util.invoker.IAvatarInvoker;
 import fi.dy.masa.litematica.util.invoker.IEntityHitboxDebugRendererInvoker;
 import fi.dy.masa.litematica.util.invoker.IEntityInvoker;
@@ -1037,11 +1039,52 @@ public class WorldRendererSchematic implements IWorldSchematicRenderer
     {
 //        LOGGER.warn("[WorldRenderer] renderBlockOverlays()");
         this.profiler = profiler;
-        this.renderBlockOverlay(OverlayRenderType.OUTLINE, camera, lineWidth, profiler);
-        this.renderBlockOverlay(OverlayRenderType.QUAD, camera, lineWidth, profiler);
+        boolean renderThrough = Configs.Visuals.SCHEMATIC_OVERLAY_RENDER_THROUGH.getBooleanValue() ||
+                Hotkeys.RENDER_OVERLAY_THROUGH_BLOCKS.getKeybind().isKeybindHeld();
+        RenderThroughMismatchFilter filter = this.getActiveRenderThroughMismatchFilter();
+
+        if (renderThrough && filter != null)
+        {
+            float normalLineWidth = (float) Configs.Visuals.SCHEMATIC_OVERLAY_OUTLINE_WIDTH.getDoubleValue();
+            this.renderBlockOverlay(OverlayRenderType.OUTLINE, camera, normalLineWidth, profiler, false, -1L,
+                    filter.chunks(), true);
+            this.renderBlockOverlay(OverlayRenderType.QUAD, camera, normalLineWidth, profiler, false, -1L,
+                    filter.chunks(), true);
+            this.renderBlockOverlay(OverlayRenderType.OUTLINE, camera, lineWidth, profiler, true, -1L,
+                    filter.chunks(), false);
+            this.renderBlockOverlay(OverlayRenderType.QUAD, camera, lineWidth, profiler, true, -1L,
+                    filter.chunks(), false);
+            this.renderBlockOverlay(OverlayRenderType.FILTERED_OUTLINE, camera, lineWidth, profiler, true,
+                    filter.filter().revision(), filter.chunks(), true);
+            this.renderBlockOverlay(OverlayRenderType.FILTERED_QUAD, camera, lineWidth, profiler, true,
+                    filter.filter().revision(), filter.chunks(), true);
+        }
+        else
+        {
+            this.renderBlockOverlay(OverlayRenderType.OUTLINE, camera, lineWidth, profiler, renderThrough, -1L,
+                    null, true);
+            this.renderBlockOverlay(OverlayRenderType.QUAD, camera, lineWidth, profiler, renderThrough, -1L,
+                    null, true);
+        }
     }
 
-    protected void renderBlockOverlay(OverlayRenderType type, Camera camera, float lineWidth, ProfilerFiller profiler)
+    @Nullable
+    private RenderThroughMismatchFilter getActiveRenderThroughMismatchFilter()
+    {
+        SchematicPlacement placement = DataManager.getSchematicPlacementManager().getSelectedSchematicPlacement();
+
+        if (placement == null || placement.hasVerifier() == false)
+        {
+            return null;
+        }
+
+        SchematicVerifier.MismatchOverlayFilter filter = placement.getSchematicVerifier().getRenderThroughMismatchFilter();
+        return filter.active() ? new RenderThroughMismatchFilter(filter, Set.copyOf(placement.getTouchedChunks())) : null;
+    }
+
+    protected void renderBlockOverlay(OverlayRenderType type, Camera camera, float lineWidth, ProfilerFiller profiler,
+                                      boolean renderThrough, long requiredFilterRevision,
+                                      @Nullable Set<ChunkPos> filteredChunks, boolean includeFilteredChunks)
     {
 //        LOGGER.warn("[WorldRenderer] renderBlockOverlay() [{}]", type.name());
         profiler.push("overlay_" + type.name());
@@ -1052,7 +1095,6 @@ public class WorldRendererSchematic implements IWorldSchematicRenderer
         double y = cameraPos.y;
         double z = cameraPos.z;
 
-        boolean renderThrough = Configs.Visuals.SCHEMATIC_OVERLAY_RENDER_THROUGH.getBooleanValue() || Hotkeys.RENDER_OVERLAY_THROUGH_BLOCKS.getKeybind().isKeybindHeld();
         RenderPipeline pipeline = renderThrough ? type.renderThrough() : type.pipeline();
 
         float[] offset = new float[]{0.3f, 0.0f, 0.6f};
@@ -1065,13 +1107,25 @@ public class WorldRendererSchematic implements IWorldSchematicRenderer
         for (int i = this.renderInfos.size() - 1; i >= 0; --i)
         {
             ChunkRendererSchematicVbo renderer = this.renderInfos.get(i);
+            final ChunkPos cp = renderer.getChunkPos();
+
+            if (filteredChunks != null && filteredChunks.contains(cp) != includeFilteredChunks)
+            {
+                continue;
+            }
 
             if (!renderer.getChunkRenderData().isEmpty() && renderer.hasOverlay())
             {
                 final ChunkRenderDataSchematic compiledChunk = renderer.getChunkRenderData();
+
+                if (requiredFilterRevision >= 0L &&
+                    compiledChunk.getRenderThroughFilterRevision() != requiredFilterRevision)
+                {
+                    continue;
+                }
+
                 final ChunkMeshDataSchematic chunkMeshData = compiledChunk.getMeshDataCache();
                 final BlockPos chunkOrigin = renderer.getOrigin();
-                final ChunkPos cp = renderer.getChunkPos();
                 ChunkRenderGpuUploader gpuUploader = this.chunkRendererGpuDispatcher.addOrGetUploader(cp.x(), cp.z());
 
                 if (!compiledChunk.isOverlayTypeEmpty(type))
@@ -1093,6 +1147,10 @@ public class WorldRendererSchematic implements IWorldSchematicRenderer
         }
 
         profiler.pop();
+    }
+
+    private record RenderThroughMismatchFilter(SchematicVerifier.MismatchOverlayFilter filter, Set<ChunkPos> chunks)
+    {
     }
 
     @Override

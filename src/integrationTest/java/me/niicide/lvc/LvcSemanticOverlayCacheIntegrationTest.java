@@ -8,9 +8,12 @@ import static me.niicide.lvc.LvcIntegrationFixtures.singleLineSite;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import com.google.gson.JsonObject;
 import org.eclipse.jgit.api.Git;
 import me.niicide.lvc.LvcProjectService;
 import me.niicide.lvc.overlay.LvcTrackingOverlayService;
+import me.niicide.lvc.overlay.LvcTrackingOverlayService.TrackingOverlayRevision;
+import me.niicide.lvc.overlay.LvcTrackingOverlayService.TrackingOverlayRevisionTarget;
 import me.niicide.lvc.storage.LvcSemanticRepository;
 
 final class LvcSemanticOverlayCacheIntegrationTest
@@ -22,8 +25,82 @@ final class LvcSemanticOverlayCacheIntegrationTest
     static void runAll() throws Exception
     {
         IntegrationTestSupport.run("tracking overlay display name includes short head commit", LvcSemanticOverlayCacheIntegrationTest::trackingOverlayDisplayNameIncludesShortHeadCommit);
+        IntegrationTestSupport.run("tracking overlay revision targets current parent and root air", LvcSemanticOverlayCacheIntegrationTest::trackingOverlayRevisionTargetsCurrentParentAndRootAir);
         IntegrationTestSupport.run("semantic tracking overlay cache is file backed", LvcSemanticOverlayCacheIntegrationTest::semanticTrackingOverlayCacheIsFileBacked);
+        IntegrationTestSupport.run("current overlay cache rejects parent preview descriptors", LvcSemanticOverlayCacheIntegrationTest::currentOverlayCacheRejectsParentPreviewDescriptors);
         IntegrationTestSupport.run("corrupt semantic tracking overlay descriptor is recoverable", LvcSemanticOverlayCacheIntegrationTest::corruptSemanticTrackingOverlayDescriptorIsRecoverable);
+    }
+
+    private static void currentOverlayCacheRejectsParentPreviewDescriptors() throws Exception
+    {
+        bootstrapMinecraft();
+
+        Path repoDir = Files.createTempDirectory("lvc-parent-overlay-cache-");
+        LvcSemanticRepository.CommitResult init = LvcSemanticRepository.initProject(
+                repoDir, "Parent Cache", singleLineSite(1), placementAt(0, 0, 0),
+                new FakeWorldReader("minecraft:stone"), player("ParentCache"));
+        String commitId = init.commit().getName();
+        String overlayName = "Parent Cache @ " + commitId.substring(0, 8);
+        Path cacheFile = LvcProjectService.writeSemanticTrackingCacheFile(
+                repoDir, init.manifest(), "main", placementAt(0, 0, 0), overlayName);
+        Path descriptor = repoDir.toAbsolutePath().normalize().resolve(".git").resolve("lvc-cache")
+                .resolve("tracking-overlay.json");
+        JsonObject json = new JsonObject();
+        json.addProperty("commitId", commitId);
+        json.addProperty("siteId", "main");
+        json.addProperty("dimension", "minecraft:overworld");
+        json.addProperty("cacheFile", cacheFile.toAbsolutePath().normalize().toString());
+        json.addProperty("overlayName", overlayName);
+        json.addProperty("revision", "current");
+        Files.writeString(descriptor, json.toString(), StandardCharsets.UTF_8);
+
+        IntegrationTestSupport.assertTrue(LvcTrackingOverlayService.isSemanticTrackingCacheCurrent(repoDir),
+                "current revision descriptor should allow current cache reuse");
+
+        json.remove("revision");
+        Files.writeString(descriptor, json.toString(), StandardCharsets.UTF_8);
+        IntegrationTestSupport.assertTrue(LvcTrackingOverlayService.isSemanticTrackingCacheCurrent(repoDir),
+                "existing current descriptors without a revision should remain reusable");
+
+        json.addProperty("revision", "parent");
+        Files.writeString(descriptor, json.toString(), StandardCharsets.UTF_8);
+        IntegrationTestSupport.assertTrue(!LvcTrackingOverlayService.isSemanticTrackingCacheCurrent(repoDir),
+                "parent revision descriptor must not allow current cache reuse");
+    }
+
+    private static void trackingOverlayRevisionTargetsCurrentParentAndRootAir() throws Exception
+    {
+        Path repoDir = Files.createTempDirectory("lvc-overlay-revisions-");
+        LvcSemanticRepository.CommitResult init = LvcSemanticRepository.initProject(
+                repoDir, "Revision Overlay", singleLineSite(1), placementAt(0, 0, 0),
+                new FakeWorldReader("minecraft:stone"), player("OverlayRevision"));
+
+        TrackingOverlayRevisionTarget currentRoot = LvcTrackingOverlayService.resolveTrackingOverlayRevisionTarget(
+                repoDir, TrackingOverlayRevision.CURRENT);
+        TrackingOverlayRevisionTarget parentRoot = LvcTrackingOverlayService.resolveTrackingOverlayRevisionTarget(
+                repoDir, TrackingOverlayRevision.PARENT);
+
+        IntegrationTestSupport.assertEquals(init.commit().getName(), currentRoot.sourceCommitId(),
+                "root current overlay source");
+        IntegrationTestSupport.assertTrue(!currentRoot.airSchematic(), "root current overlay should contain commit blocks");
+        IntegrationTestSupport.assertEquals(null, parentRoot.sourceCommitId(), "root parent overlay should not have a source commit");
+        IntegrationTestSupport.assertTrue(parentRoot.airSchematic(), "root parent overlay should be air");
+
+        LvcSemanticRepository.CommitResult update = LvcSemanticRepository.commitSite(
+                repoDir, init.manifest(), "main", placementAt(0, 0, 0),
+                new FakeWorldReader("minecraft:dirt"), player("OverlayRevision"), "change block");
+        IntegrationTestSupport.assertNotNull(update.commit(), "revision fixture update commit");
+
+        TrackingOverlayRevisionTarget current = LvcTrackingOverlayService.resolveTrackingOverlayRevisionTarget(
+                repoDir, TrackingOverlayRevision.CURRENT);
+        TrackingOverlayRevisionTarget parent = LvcTrackingOverlayService.resolveTrackingOverlayRevisionTarget(
+                repoDir, TrackingOverlayRevision.PARENT);
+
+        IntegrationTestSupport.assertEquals(update.commit().getName(), current.sourceCommitId(),
+                "current overlay source after update");
+        IntegrationTestSupport.assertEquals(init.commit().getName(), parent.sourceCommitId(),
+                "parent overlay should use first parent");
+        IntegrationTestSupport.assertTrue(!parent.airSchematic(), "non-root parent overlay should contain parent blocks");
     }
 
     private static void trackingOverlayDisplayNameIncludesShortHeadCommit() throws Exception

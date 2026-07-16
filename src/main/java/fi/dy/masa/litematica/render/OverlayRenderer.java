@@ -586,7 +586,8 @@ public class OverlayRenderer
 
                 if (mismatch != null && worldSchematic != null)
                 {
-                    BlockMismatchInfo info = new BlockMismatchInfo(mismatch.stateExpected(), mismatch.stateFound());
+                    BlockMismatchInfo info = this.createBlockMismatchInfo(
+                            placement, mismatch.stateExpected(), mismatch.stateFound());
                     BlockInfoAlignment align = (BlockInfoAlignment) Configs.InfoOverlays.BLOCK_INFO_OVERLAY_ALIGNMENT.getOptionListValue();
                     int offY = Configs.InfoOverlays.BLOCK_INFO_OVERLAY_OFFSET_Y.getIntegerValue();
                     int invHeight = RenderUtils.renderInventoryOverlays(ctx, align, offY, worldSchematic, ctx.mc().level, pos);
@@ -639,7 +640,8 @@ public class OverlayRenderer
         // Not just a missing block
         if (stateSchematic != stateClient && stateClient != air && stateSchematic != air && stateSchematic != voidAir)
         {
-            BlockMismatchInfo info = new BlockMismatchInfo(stateSchematic, stateClient);
+            SchematicPlacement placement = DataManager.getSchematicPlacementManager().getSelectedSchematicPlacement();
+            BlockMismatchInfo info = this.createBlockMismatchInfo(placement, stateSchematic, stateClient);
             this.getOverlayPosition(align, info.getTotalWidth(), info.getTotalHeight(), offY, invHeight);
             info.toggleUseBackgroundMask(true);
             info.render(ctx, this.blockInfoX, this.blockInfoY);
@@ -658,6 +660,19 @@ public class OverlayRenderer
             info.toggleUseBackgroundMask(true);
             info.render(ctx, this.blockInfoX, this.blockInfoY);
         }
+    }
+
+    private BlockMismatchInfo createBlockMismatchInfo(@Nullable SchematicPlacement placement,
+                                                      BlockState stateExpected, BlockState stateFound)
+    {
+        if (LvcTrackingOverlayService.isSemanticTrackingPlacement(placement))
+        {
+            return new BlockMismatchInfo(stateExpected, stateFound,
+                    "litematica.gui.label.lvc_diff_viewer.before",
+                    "litematica.gui.label.lvc_diff_viewer.after");
+        }
+
+        return new BlockMismatchInfo(stateExpected, stateFound);
     }
 
 //    public void requestBlockEntityAt(Level world, BlockPos pos)

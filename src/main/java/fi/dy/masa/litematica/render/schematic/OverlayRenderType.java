@@ -16,6 +16,16 @@ public enum OverlayRenderType
                  MaLiLibPipelines.POSITION_COLOR_TRANSLUCENT_NO_DEPTH_NO_CULL,
                  PrimitiveTopology.QUADS, 0, true
     ),
+    FILTERED_OUTLINE
+                (MaLiLibPipelines.DEBUG_LINES_MASA_SIMPLE_OFFSET_2,
+                 MaLiLibPipelines.DEBUG_LINES_MASA_SIMPLE_NO_DEPTH_NO_CULL,
+                 PrimitiveTopology.DEBUG_LINES, 0, false
+    ),
+    FILTERED_QUAD
+                (MaLiLibPipelines.POSITION_COLOR_TRANSLUCENT_LEQUAL_DEPTH_OFFSET_2,
+                 MaLiLibPipelines.POSITION_COLOR_TRANSLUCENT_NO_DEPTH_NO_CULL,
+                 PrimitiveTopology.QUADS, 0, true
+    ),
     ;
 
     private final RenderPipeline pipeline;

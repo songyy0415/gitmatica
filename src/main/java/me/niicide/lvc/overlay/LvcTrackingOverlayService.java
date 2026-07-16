@@ -90,6 +90,24 @@ public final class LvcTrackingOverlayService
     {
     }
 
+    public enum TrackingOverlayRevision
+    {
+        CURRENT("current"),
+        PARENT("parent");
+
+        private final String serializedName;
+
+        TrackingOverlayRevision(String serializedName)
+        {
+            this.serializedName = serializedName;
+        }
+    }
+
+    public record TrackingOverlayRevisionTarget(String headCommitId, @Nullable String sourceCommitId,
+                                                boolean airSchematic)
+    {
+    }
+
     public static LvcProjectService.TrackingOverlay loadTrackingOverlay(Path repositoryDirectory, String projectName,
                                                                  @Nullable ClientLevel clientLevel,
                                                                  @Nullable ICompletionListener completionListener) throws IOException
@@ -295,6 +313,46 @@ public final class LvcTrackingOverlayService
         return projectName;
     }
 
+    public static TrackingOverlayRevisionTarget resolveTrackingOverlayRevisionTarget(
+            Path repositoryDirectory, TrackingOverlayRevision revision) throws IOException
+    {
+        Objects.requireNonNull(repositoryDirectory, "repositoryDirectory");
+        Objects.requireNonNull(revision, "revision");
+
+        try (Git git = Git.open(repositoryDirectory.toFile());
+             RevWalk revWalk = new RevWalk(git.getRepository()))
+        {
+            RevCommit head = LvcProjectGitOps.resolveCommit(git.getRepository(), revWalk, "HEAD");
+
+            if (revision == TrackingOverlayRevision.CURRENT)
+            {
+                return new TrackingOverlayRevisionTarget(head.getName(), head.getName(), false);
+            }
+
+            if (head.getParentCount() == 0)
+            {
+                return new TrackingOverlayRevisionTarget(head.getName(), null, true);
+            }
+
+            RevCommit parent = revWalk.parseCommit(head.getParent(0).getId());
+            return new TrackingOverlayRevisionTarget(head.getName(), parent.getName(), false);
+        }
+    }
+
+    public static String trackingOverlayDisplayName(String projectName, TrackingOverlayRevisionTarget target)
+    {
+        Objects.requireNonNull(projectName, "projectName");
+        Objects.requireNonNull(target, "target");
+
+        if (target.airSchematic())
+        {
+            return projectName + " @ " + shortCommitToken(target.headCommitId()) + "^ (air)";
+        }
+
+        return trackingOverlayDisplayNameForCommit(projectName,
+                Objects.requireNonNull(target.sourceCommitId(), "sourceCommitId"));
+    }
+
     public static LitematicaSchematic writeAndReloadSemanticTrackingSchematic(Path repositoryDirectory, LvcManifest manifest,
                                                                        String siteId, LvcSitePlacement placementState,
                                                                        String overlayName) throws IOException
@@ -322,9 +380,18 @@ public final class LvcTrackingOverlayService
 
     public static boolean isSemanticTrackingCacheCurrent(Path repositoryDirectory) throws IOException
     {
+        OverlayDescriptor descriptor = readOverlayDescriptor(repositoryDirectory);
         Path cacheFile = currentSemanticTrackingCacheFile(repositoryDirectory);
 
-        if (cacheFile == null || !Files.isRegularFile(cacheFile))
+        if (descriptor == null || cacheFile == null || !Files.isRegularFile(cacheFile))
+        {
+            return false;
+        }
+
+        ObjectId head = LvcRepository.resolveHead(repositoryDirectory);
+
+        if (head == null || !head.getName().equals(descriptor.commitId()) ||
+                TrackingOverlayRevision.PARENT.serializedName.equals(descriptor.revision()))
         {
             return false;
         }
@@ -332,6 +399,12 @@ public final class LvcTrackingOverlayService
         long cacheTime = Files.getLastModifiedTime(cacheFile).toMillis();
         long manifestTime = Files.getLastModifiedTime(repositoryDirectory.resolve(LvcSemanticRepository.MANIFEST)).toMillis();
         LvcManifest manifest = LvcSemanticRepository.readManifest(repositoryDirectory);
+
+        if (!trackingOverlayDisplayNameForCommit(manifest.name(), head.getName()).equals(descriptor.overlayName()))
+        {
+            return false;
+        }
+
         long hashIndexTime = LvcSemanticRepository.hashIndexesLastModified(repositoryDirectory, manifest);
         return cacheTime >= manifestTime && cacheTime >= hashIndexTime;
     }
@@ -405,6 +478,43 @@ public final class LvcTrackingOverlayService
                                                                                @Nullable ICompletionListener completionListener,
                                                                                boolean startVerifier) throws IOException
     {
+        return addSemanticTrackingOverlay(repositoryDirectory, schematic, siteId, placementState, overlayName,
+                clientLevel, completionListener, startVerifier,
+                currentOverlayDescriptor(repositoryDirectory, siteId, placementState.dimension(),
+                        schematic.getFile(), overlayName));
+    }
+
+    public static LvcProjectService.TrackingOverlay addSemanticTrackingOverlayForRevision(
+            Path repositoryDirectory,
+            LitematicaSchematic schematic,
+            String siteId,
+            LvcSitePlacement placementState,
+            String overlayName,
+            @Nullable ClientLevel clientLevel,
+            @Nullable ICompletionListener completionListener,
+            boolean startVerifier,
+            TrackingOverlayRevision revision,
+            String descriptorCommitId) throws IOException
+    {
+        Objects.requireNonNull(revision, "revision");
+        Objects.requireNonNull(descriptorCommitId, "descriptorCommitId");
+        OverlayDescriptor descriptor = overlayDescriptor(descriptorCommitId, siteId, placementState.dimension(),
+                schematic.getFile(), overlayName, revision);
+        return addSemanticTrackingOverlay(repositoryDirectory, schematic, siteId, placementState, overlayName,
+                clientLevel, completionListener, startVerifier, descriptor);
+    }
+
+    private static LvcProjectService.TrackingOverlay addSemanticTrackingOverlay(
+            Path repositoryDirectory,
+            LitematicaSchematic schematic,
+            String siteId,
+            LvcSitePlacement placementState,
+            String overlayName,
+            @Nullable ClientLevel clientLevel,
+            @Nullable ICompletionListener completionListener,
+            boolean startVerifier,
+            @Nullable OverlayDescriptor descriptor) throws IOException
+    {
         BlockPos origin = LvcProjectPositions.blockPosFromList(placementState.origin());
         SchematicPlacement placement = SchematicPlacement.createFor(schematic, origin, overlayName, true, true);
         ClientLevel verifierWorld = clientLevel;
@@ -415,8 +525,7 @@ public final class LvcTrackingOverlayService
         }
 
         LvcProjectService.TrackingOverlay overlay = addTrackingOverlay(repositoryDirectory, placement, verifierWorld, completionListener, startVerifier);
-        trackOverlay(repositoryDirectory, overlay, currentOverlayDescriptor(repositoryDirectory, siteId, placementState.dimension(),
-                placement.getSchematicFile(), overlayName));
+        trackOverlay(repositoryDirectory, overlay, descriptor);
         return overlay;
     }
 
@@ -451,6 +560,24 @@ public final class LvcTrackingOverlayService
     public static boolean isSemanticTrackingPlacement(@Nullable SchematicPlacement placement)
     {
         return placement != null && isSemanticTrackingCachePath(placement.getSchematicFile());
+    }
+
+    public static TrackingOverlayRevision trackingOverlayRevision(Path repositoryDirectory,
+                                                                  SchematicPlacement placement)
+    {
+        Objects.requireNonNull(repositoryDirectory, "repositoryDirectory");
+        Objects.requireNonNull(placement, "placement");
+        TrackingOverlayEntry entry = ACTIVE_TRACKING_OVERLAYS.get(trackingOverlayKey(repositoryDirectory));
+        OverlayDescriptor descriptor = entry != null && entry.overlay().placement() == placement ?
+                entry.descriptor() : readOverlayDescriptor(repositoryDirectory);
+
+        if (descriptor != null && descriptor.matchesPlacement(repositoryDirectory, placement) &&
+                TrackingOverlayRevision.PARENT.serializedName.equals(descriptor.revision()))
+        {
+            return TrackingOverlayRevision.PARENT;
+        }
+
+        return TrackingOverlayRevision.CURRENT;
     }
 
     @Nullable
@@ -1227,13 +1354,22 @@ public final class LvcTrackingOverlayService
             return null;
         }
 
-        return new OverlayDescriptor(
-                head.getName(),
-                siteId,
-                dimension,
-                cacheFile.toAbsolutePath().normalize().toString(),
-                overlayName
-        );
+        return overlayDescriptor(head.getName(), siteId, dimension, cacheFile, overlayName,
+                TrackingOverlayRevision.CURRENT);
+    }
+
+    @Nullable
+    private static OverlayDescriptor overlayDescriptor(String commitId, String siteId, String dimension,
+                                                       @Nullable Path cacheFile, String overlayName,
+                                                       TrackingOverlayRevision revision)
+    {
+        if (cacheFile == null)
+        {
+            return null;
+        }
+
+        return new OverlayDescriptor(commitId, siteId, dimension,
+                cacheFile.toAbsolutePath().normalize().toString(), overlayName, revision.serializedName);
     }
 
     @Nullable
@@ -1586,7 +1722,7 @@ public final class LvcTrackingOverlayService
     }
 
     private record OverlayDescriptor(String commitId, String siteId, String dimension,
-                                     String cacheFile, String overlayName)
+                                     String cacheFile, String overlayName, @Nullable String revision)
     {
         private boolean matches(OverlayTarget target)
         {
