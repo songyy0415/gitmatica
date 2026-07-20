@@ -30,6 +30,7 @@ import fi.dy.masa.litematica.selection.AreaSelection;
 import fi.dy.masa.malilib.gui.GuiBase;
 import fi.dy.masa.malilib.gui.Message.MessageType;
 import fi.dy.masa.malilib.gui.button.IButtonActionListener;
+import fi.dy.masa.malilib.util.GuiUtils;
 import fi.dy.masa.malilib.util.StringUtils;
 
 final class GuiLvcProjectController
@@ -53,6 +54,25 @@ final class GuiLvcProjectController
     IButtonActionListener buttonListener(GuiLvcProjectButtonType type)
     {
         return new GuiLvcProjectCommandListeners.ButtonListener(type, this);
+    }
+
+    boolean prepareHotkeyAction()
+    {
+        this.refreshRepositoryState();
+
+        if (!this.recoveryAttempted)
+        {
+            this.recoveryAttempted = true;
+            var previousScreen = GuiUtils.getCurrentScreen();
+
+            if (GuiLvcProjectTaskActions.recoverInterruptedOperation(this) ||
+                    GuiUtils.getCurrentScreen() != previousScreen)
+            {
+                return false;
+            }
+        }
+
+        return true;
     }
 
     void refreshRepositoryState()
@@ -186,6 +206,26 @@ final class GuiLvcProjectController
                 () -> LvcDiagnostics.debug("GuiLvcProjectManager: delete latest version cancelled repo='{}' commit='{}'",
                         this.gui.repositoryDirectory, commit.id())
         ));
+    }
+
+    void promptDeleteLatestVersion()
+    {
+        try
+        {
+            this.gui.history = LvcProjectService.listCommits(this.gui.repositoryDirectory);
+
+            if (this.gui.history.isEmpty())
+            {
+                LvcGuiMessages.show(MessageType.ERROR, "litematica.error.lvc_project.delete_version_not_latest");
+                return;
+            }
+
+            this.promptDeleteLatestVersion(this.gui.history.get(0));
+        }
+        catch (Exception e)
+        {
+            LvcGuiMessages.showTaskError(Operation.DELETE_VERSION, "litematica.error.lvc_project.delete_version_failed", e);
+        }
     }
 
     private void deleteLatestVersionKeepChanges(LvcProjectService.CommitInfo commit)
@@ -929,7 +969,7 @@ final class GuiLvcProjectController
                 "litematica.gui.title.lvc_project.commit_message",
                 "",
                 "",
-                this.gui,
+                LvcOperationCoordinator.confirmParent(this),
                 new GuiLvcProjectCommandListeners.CommitMessageSetter(this)
         ));
     }

@@ -50,7 +50,7 @@ public class GuiLvcProjectManager extends GuiBase implements ICompletionListener
     private static final int SIDEBAR_BUTTON_HEIGHT = 20;
     private static final int SIDEBAR_BUTTON_STEP = 24;
     private static final int BRANCH_DROPDOWN_LEFT_GAP = 8;
-    private static final int BRANCH_DROPDOWN_WIDTH = 90;
+    private static final int BRANCH_DROPDOWN_WIDTH = 92;
     private static final int BRANCH_DROPDOWN_VISIBLE_ROWS = 8;
     static final int PANEL_OUTLINE_COLOR = COLOR_HORIZONTAL_BAR;
 
@@ -81,6 +81,24 @@ public class GuiLvcProjectManager extends GuiBase implements ICompletionListener
         this.repositoryDirectory = repositoryDirectory;
         this.projectName = projectName;
         this.updateTitle();
+    }
+
+    void handleHotkeyAction(GuiLvcProjectButtonType action)
+    {
+        if (this.controller.prepareHotkeyAction())
+        {
+            this.controller.focusTrackingOverlay();
+            this.controller.handleButton(action);
+        }
+    }
+
+    void handleHotkeyUndoLastSave()
+    {
+        if (this.controller.prepareHotkeyAction())
+        {
+            this.controller.focusTrackingOverlay();
+            this.controller.promptDeleteLatestVersion();
+        }
     }
 
     @Override
@@ -580,9 +598,10 @@ public class GuiLvcProjectManager extends GuiBase implements ICompletionListener
                 BRANCH_DROPDOWN_VISIBLE_ROWS,
                 this.branchNames,
                 this.currentBranchDropdownName(),
-                this.currentHeadBranchName(),
+                this.currentCheckedBranchName(),
                 this.controller::handleBranchDropdownSelection
         ));
+        this.branchDropdown.setDetachedHead(this.detachedHead, this.headPointerName);
 
         return this.branchDropdown.getWidth() + BUTTON_ROW_GAP;
     }
@@ -793,10 +812,14 @@ public class GuiLvcProjectManager extends GuiBase implements ICompletionListener
         return this.branchNames.isEmpty() ? LvcProjectService.DEFAULT_BRANCH : this.branchNames.get(0);
     }
 
-    @Nullable
-    private String currentHeadBranchName()
+    private String currentCheckedBranchName()
     {
-        return !this.detachedHead && this.branchNames.contains(this.headPointerName) ? this.headPointerName : null;
+        if (!this.detachedHead && this.branchNames.contains(this.headPointerName))
+        {
+            return this.headPointerName;
+        }
+
+        return this.currentBranchDropdownName();
     }
 
     void syncBranchDropdownSelection()
@@ -805,30 +828,30 @@ public class GuiLvcProjectManager extends GuiBase implements ICompletionListener
         {
             this.branchDropdown.setBranches(this.branchNames);
             this.branchDropdown.setSelectedBranch(this.currentBranchDropdownName());
-            this.branchDropdown.setHeadBranch(this.currentHeadBranchName());
+            this.branchDropdown.setHeadBranch(this.currentCheckedBranchName());
+            this.branchDropdown.setDetachedHead(this.detachedHead, this.headPointerName);
         }
     }
 
     void updateTitle()
     {
-        String headName = this.headPointerName == null ? "" : this.headPointerName;
-        String displayedHeadName = this.ellipsizeTitleHeadName(headName);
-        this.title = StringUtils.translate("litematica.gui.title.lvc_project", Reference.MOD_VERSION, this.projectName, displayedHeadName);
+        String displayedProjectName = this.ellipsizeTitleProjectName(this.projectName);
+        this.title = StringUtils.translate("litematica.gui.title.lvc_project", Reference.MOD_VERSION, displayedProjectName);
 
-        if (!displayedHeadName.equals(headName))
+        if (!displayedProjectName.equals(this.projectName))
         {
-            LvcDiagnostics.debug("GuiLvcProjectManager: clipped title head branch repo='{}' branch='{}' displayed='{}'",
-                    this.repositoryDirectory, headName, displayedHeadName);
+            LvcDiagnostics.debug("GuiLvcProjectManager: clipped title project name repo='{}' project='{}' displayed='{}'",
+                    this.repositoryDirectory, this.projectName, displayedProjectName);
         }
     }
 
-    private String ellipsizeTitleHeadName(String headName)
+    private String ellipsizeTitleProjectName(String projectName)
     {
         int maxTitleWidth = this.getScreenWidth() - PANEL_MARGIN * 2;
 
-        if (maxTitleWidth <= 0 || this.getStringWidth(this.projectTitle(headName)) <= maxTitleWidth)
+        if (maxTitleWidth <= 0 || this.getStringWidth(this.projectTitle(projectName)) <= maxTitleWidth)
         {
-            return headName;
+            return projectName;
         }
 
         String suffix = "...";
@@ -839,9 +862,9 @@ public class GuiLvcProjectManager extends GuiBase implements ICompletionListener
             return "";
         }
 
-        for (int length = headName.length(); length > 0; length--)
+        for (int length = projectName.length(); length > 0; length--)
         {
-            String candidate = headName.substring(0, length) + suffix;
+            String candidate = projectName.substring(0, length) + suffix;
 
             if (this.getStringWidth(this.projectTitle(candidate)) <= maxTitleWidth)
             {
@@ -852,9 +875,9 @@ public class GuiLvcProjectManager extends GuiBase implements ICompletionListener
         return suffix;
     }
 
-    private String projectTitle(String headName)
+    private String projectTitle(String projectName)
     {
-        return StringUtils.translate("litematica.gui.title.lvc_project", Reference.MOD_VERSION, this.projectName, headName);
+        return StringUtils.translate("litematica.gui.title.lvc_project", Reference.MOD_VERSION, projectName);
     }
 
     void refreshHistory()

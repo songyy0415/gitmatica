@@ -242,7 +242,7 @@ public abstract class GuiSchematicSaveBase extends GuiSchematicBrowserBase imple
         @Override
         public void actionPerformedWithButton(ButtonBase button, int mouseButton)
         {
-            LvcCreateProjectAction.createFromSaveGui(this.gui, this.gui.getTextFieldText());
+            LvcCreateProjectAction.promptFromSaveGui(this.gui);
         }
     }
 }

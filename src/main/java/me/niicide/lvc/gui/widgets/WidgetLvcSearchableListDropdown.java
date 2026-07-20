@@ -278,6 +278,11 @@ public abstract class WidgetLvcSearchableListDropdown<T> extends WidgetBase
 
     protected abstract String noSelectionText();
 
+    protected String closedLabel(@Nullable T selectedItem)
+    {
+        return selectedItem == null ? this.noSelectionText() : this.itemLabel(selectedItem);
+    }
+
     protected abstract void renderClosedIcon(GuiContext ctx, int x, int y);
 
     protected abstract void renderRowIcon(GuiContext ctx, T item, int x, int y);
@@ -297,10 +302,10 @@ public abstract class WidgetLvcSearchableListDropdown<T> extends WidgetBase
         RenderUtils.drawOutlinedBox(ctx, this.x, this.y, this.width, this.height, 0xFF101010, 0xFFC0C0C0);
 
         T selected = this.selectedItem;
-        String label = selected == null ? this.noSelectionText() : this.itemLabel(selected);
+        String label = this.closedLabel(selected);
         int textX = this.getClosedTextX();
         int textWidth = Math.max(8, this.getArrowX() - textX - ICON_TEXT_GAP);
-        int textY = this.y + (this.height - this.fontHeight) / 2;
+        int textY = this.y + (this.height - this.fontHeight + 1) / 2;
 
         if (this.open)
         {
@@ -311,8 +316,10 @@ public abstract class WidgetLvcSearchableListDropdown<T> extends WidgetBase
         }
         else
         {
+            String displayedLabel = this.ellipsizeToWidth(label, textWidth);
+
             this.renderClosedIcon(ctx, this.x + ICON_PADDING, this.y + (this.height - this.iconSize()) / 2);
-            this.drawString(ctx, textX, textY, 0xFFE0E0E0, this.ellipsizeToWidth(label, textWidth));
+            this.drawString(ctx, textX, textY, 0xFFE0E0E0, displayedLabel);
             Icons.ARROW_DOWN.renderAt(ctx, this.getArrowX(), this.y + (this.height - Icons.ARROW_DOWN.getHeight()) / 2, 0, true, false);
         }
     }

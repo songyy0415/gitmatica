@@ -1,6 +1,8 @@
 package me.niicide.lvc.gui;
 
 import java.nio.file.FileAlreadyExistsException;
+import java.nio.file.Files;
+import java.nio.file.Path;
 import java.util.Optional;
 import javax.annotation.Nullable;
 import net.minecraft.client.Minecraft;
@@ -8,6 +10,8 @@ import net.minecraft.world.entity.player.Player;
 import me.niicide.lvc.LvcDiagnostics;
 import me.niicide.lvc.LvcPlayerIdentity;
 import me.niicide.lvc.LvcProjectService;
+import me.niicide.lvc.project.LvcProjectPaths;
+import me.niicide.lvc.project.LvcProjectSelectionStorage;
 import me.niicide.lvc.task.LvcOperationHandle;
 import me.niicide.lvc.task.LvcSemanticInitProjectTask;
 import me.niicide.lvc.task.LvcTaskCallbacks;
@@ -19,6 +23,7 @@ import fi.dy.masa.litematica.gui.GuiSchematicSaveBase;
 import fi.dy.masa.litematica.selection.AreaSelection;
 import fi.dy.masa.malilib.gui.GuiBase;
 import fi.dy.masa.malilib.gui.Message.MessageType;
+import fi.dy.masa.malilib.util.StringUtils;
 
 public final class LvcCreateProjectAction
 {
@@ -26,76 +31,90 @@ public final class LvcCreateProjectAction
     {
     }
 
+    public static void promptFromSaveGui(GuiSchematicSaveBase gui)
+    {
+        CreateContext context = createContext(gui);
+
+        if (context == null)
+        {
+            return;
+        }
+
+        if (LvcTaskRegistry.hasActiveOperation())
+        {
+            gui.addMessage(MessageType.ERROR, "litematica.error.lvc_project.operation_running",
+                    LvcTaskRegistry.activeOperationName());
+            return;
+        }
+
+        Path gameRunDirectory = context.minecraft().gameDirectory.toPath();
+        GuiBase.openGui(new GuiLvcTextInputDialog(
+                256,
+                "litematica.gui.title.lvc_project_manager.create_project",
+                "",
+                gui,
+                projectName -> validateProjectName(gameRunDirectory, projectName),
+                (java.util.function.Consumer<String>) projectName -> createFromSaveGui(gui, projectName)
+        ));
+    }
+
     public static void createFromSaveGui(GuiSchematicSaveBase gui, @Nullable String repositoryName)
     {
-        Minecraft minecraft = Minecraft.getInstance();
-        Player player = minecraft.player;
+        CreateContext context = createContext(gui);
 
-        if (player == null)
+        if (context == null)
         {
-            gui.addMessage(MessageType.ERROR, "litematica.error.lvc_project.no_player");
             return;
         }
 
-        if (minecraft.level == null)
+        Minecraft minecraft = context.minecraft();
+        String projectName = repositoryName == null ? "" : repositoryName.trim();
+        String validationError = validateProjectName(minecraft.gameDirectory.toPath(), projectName);
+
+        if (validationError != null)
         {
-            gui.addMessage(MessageType.ERROR, "litematica.error.lvc_project.no_world");
+            gui.addMessage(MessageType.ERROR, "litematica.error.lvc_project.create_failed", validationError);
             return;
         }
 
-        AreaSelection selection = DataManager.getSelectionManager().getCurrentSelection();
-
-        if (selection == null || selection.getAllSubRegionBoxes().isEmpty())
-        {
-            gui.addMessage(MessageType.ERROR, "litematica.message.error.schematic_save_no_area_selected");
-            return;
-        }
-
-        int validRegionCount = LvcProjectService.countValidSelectionRegions(selection);
-
-        if (validRegionCount <= 0)
-        {
-            gui.addMessage(MessageType.ERROR, "litematica.error.lvc_project.simple_selection_required");
-            return;
-        }
-
-        if (repositoryName == null || repositoryName.isBlank())
-        {
-            gui.addMessage(MessageType.ERROR, "litematica.error.schematic_save.invalid_schematic_name", repositoryName);
-            return;
-        }
+        LvcOperationHandle handle = null;
 
         try
         {
-            LvcPlayerIdentity identity = new LvcPlayerIdentity(player.getName().getString(), player.getUUID());
-            Optional<LvcOperationHandle> handle = LvcTaskRegistry.tryAcquire("LVC Create Project",
+            LvcPlayerIdentity identity = new LvcPlayerIdentity(
+                    context.player().getName().getString(), context.player().getUUID());
+            Optional<LvcOperationHandle> acquiredHandle = LvcTaskRegistry.tryAcquire("LVC Create Project",
                     minecraft.gameDirectory.toPath());
 
-            if (handle.isEmpty())
+            if (acquiredHandle.isEmpty())
             {
                 gui.addMessage(MessageType.ERROR, "litematica.error.lvc_project.operation_running",
                         LvcTaskRegistry.activeOperationName());
                 return;
             }
 
+            handle = acquiredHandle.get();
             LvcDiagnostics.debug("LvcCreateProjectAction: scheduling create project name='{}' regions={} player='{}'",
-                    repositoryName, validRegionCount, identity.name());
+                    projectName, context.validRegionCount(), identity.name());
             var captureWorld = LvcWorldAccess.resolveSemanticCaptureWorld(minecraft.level);
             LvcSemanticInitProjectTask task = new LvcSemanticInitProjectTask(
-                    handle.get(),
+                    handle,
                     minecraft.gameDirectory.toPath(),
-                    repositoryName,
+                    projectName,
                     identity,
                     captureWorld,
-                    selection,
+                    context.selection(),
                     LvcTaskCallbacks.of(
                             result ->
                             {
-                                String projectName = result.repositoryDirectory().getFileName().toString();
-                                GuiLvcProjectManager projectGui = new GuiLvcProjectManager(result.repositoryDirectory(), projectName);
+                                String createdProjectName = result.repositoryDirectory().getFileName().toString();
+                                Path displayPath = LvcProjectPaths.minecraftDisplayPath(
+                                        minecraft.gameDirectory.toPath(), result.repositoryDirectory());
+                                GuiLvcProjectManager projectGui = new GuiLvcProjectManager(
+                                        result.repositoryDirectory(), createdProjectName);
                                 GuiBase.openGui(projectGui);
                                 projectGui.addMessage(MessageType.SUCCESS, "litematica.message.lvc_project.created",
-                                        result.repositoryDirectory(), result.commitId());
+                                        displayPath, result.commitId());
                             },
                             e ->
                             {
@@ -119,7 +138,82 @@ public final class LvcCreateProjectAction
         }
         catch (Exception e)
         {
+            if (handle != null)
+            {
+                LvcTaskRegistry.release(handle);
+            }
+
             gui.addMessage(MessageType.ERROR, "litematica.error.lvc_project.create_failed", e.getMessage());
         }
+    }
+
+    @Nullable
+    private static CreateContext createContext(GuiSchematicSaveBase gui)
+    {
+        Minecraft minecraft = Minecraft.getInstance();
+        Player player = minecraft.player;
+
+        if (player == null)
+        {
+            gui.addMessage(MessageType.ERROR, "litematica.error.lvc_project.no_player");
+            return null;
+        }
+
+        if (minecraft.level == null)
+        {
+            gui.addMessage(MessageType.ERROR, "litematica.error.lvc_project.no_world");
+            return null;
+        }
+
+        AreaSelection selection = DataManager.getSelectionManager().getCurrentSelection();
+
+        if (selection == null || selection.getAllSubRegionBoxes().isEmpty())
+        {
+            gui.addMessage(MessageType.ERROR, "litematica.message.error.schematic_save_no_area_selected");
+            return null;
+        }
+
+        int validRegionCount = LvcProjectService.countValidSelectionRegions(selection);
+
+        if (validRegionCount <= 0)
+        {
+            gui.addMessage(MessageType.ERROR, "litematica.error.lvc_project.simple_selection_required");
+            return null;
+        }
+
+        return new CreateContext(minecraft, player, selection, validRegionCount);
+    }
+
+    @Nullable
+    private static String validateProjectName(Path gameRunDirectory, @Nullable String projectName)
+    {
+        if (projectName == null || projectName.isBlank())
+        {
+            return StringUtils.translate("litematica.error.lvc_project_editor.project_name_required");
+        }
+
+        try
+        {
+            String normalizedProjectName = projectName.trim();
+            LvcProjectSelectionStorage.validateProjectName(normalizedProjectName);
+            Path repositoryDirectory = LvcProjectPaths.repositoryDirectory(gameRunDirectory, normalizedProjectName);
+
+            if (Files.exists(repositoryDirectory))
+            {
+                return StringUtils.translate("litematica.error.lvc_project_manager.project_name_used");
+            }
+
+            return null;
+        }
+        catch (IllegalArgumentException e)
+        {
+            LvcDiagnostics.debug("LvcCreateProjectAction: rejected project name input='{}' error='{}'",
+                    projectName, e.getMessage());
+            return StringUtils.translate("litematica.error.lvc_project_manager.project_name_invalid");
+        }
+    }
+
+    private record CreateContext(Minecraft minecraft, Player player, AreaSelection selection, int validRegionCount)
+    {
     }
 }

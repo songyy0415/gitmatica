@@ -14,6 +14,8 @@ public class WidgetLvcBranchDropdown extends WidgetLvcSearchableListDropdown<Str
     private static final String OPTIONS_TOOLTIP_KEY = "litematica.gui.label.lvc_project.branch_dropdown_options_hint";
 
     @Nullable private String headBranch;
+    @Nullable private String detachedCommitId;
+    private boolean detachedHead;
 
     public WidgetLvcBranchDropdown(int x, int y, int width, int height, int maxVisibleRows,
                                    List<String> branches, @Nullable String selectedBranch, @Nullable String headBranch,
@@ -36,6 +38,12 @@ public class WidgetLvcBranchDropdown extends WidgetLvcSearchableListDropdown<Str
     public void setHeadBranch(@Nullable String headBranch)
     {
         this.headBranch = headBranch;
+    }
+
+    public void setDetachedHead(boolean detachedHead, @Nullable String detachedCommitId)
+    {
+        this.detachedHead = detachedHead;
+        this.detachedCommitId = detachedCommitId;
     }
 
     @Override
@@ -63,9 +71,21 @@ public class WidgetLvcBranchDropdown extends WidgetLvcSearchableListDropdown<Str
     }
 
     @Override
+    protected String closedLabel(@Nullable String selectedBranch)
+    {
+        if (this.detachedHead && this.detachedCommitId != null && !this.detachedCommitId.isBlank())
+        {
+            return this.detachedCommitId;
+        }
+
+        return super.closedLabel(selectedBranch);
+    }
+
+    @Override
     protected void renderClosedIcon(GuiContext ctx, int x, int y)
     {
-        Icons.GITMATICA_BRANCH.renderScaledAt(ctx, x, y, BRANCH_ICON_SIZE, BRANCH_ICON_SIZE, 0);
+        Icons icon = this.detachedHead ? Icons.GITMATICA_DETACHED_HEAD : Icons.GITMATICA_BRANCH;
+        icon.renderScaledAt(ctx, x, y, BRANCH_ICON_SIZE, BRANCH_ICON_SIZE, 0);
     }
 
     @Override

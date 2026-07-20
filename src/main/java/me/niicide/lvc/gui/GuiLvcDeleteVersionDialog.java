@@ -80,6 +80,12 @@ final class GuiLvcDeleteVersionDialog extends GuiDialogBase
     }
 
     @Override
+    protected void drawTitle(GuiContext ctx, int mouseX, int mouseY, float partialTicks)
+    {
+        // The dialog title is drawn inside the centered dialog box.
+    }
+
+    @Override
     protected void drawContents(GuiContext ctx, int mouseX, int mouseY, float partialTicks)
     {
         Screen parent = this.getParent();

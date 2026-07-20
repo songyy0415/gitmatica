@@ -34,6 +34,23 @@ public final class LvcProjectPaths
         return reposDirectory(gameRunDirectory).resolve(displayName).normalize();
     }
 
+    public static Path minecraftDisplayPath(Path gameRunDirectory, Path path)
+    {
+        Path gameDirectory = Objects.requireNonNull(gameRunDirectory, "gameRunDirectory")
+                .toAbsolutePath()
+                .normalize();
+        Path target = Objects.requireNonNull(path, "path")
+                .toAbsolutePath()
+                .normalize();
+
+        if (!target.startsWith(gameDirectory))
+        {
+            throw new IllegalArgumentException("Path must be inside the Minecraft game directory: " + target);
+        }
+
+        return Path.of(".minecraft").resolve(gameDirectory.relativize(target));
+    }
+
     public static String normalizeDisplayName(String projectName)
     {
         if (projectName == null || projectName.isBlank())

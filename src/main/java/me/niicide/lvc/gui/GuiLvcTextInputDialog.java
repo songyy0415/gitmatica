@@ -89,6 +89,12 @@ class GuiLvcTextInputDialog extends GuiTextInput
     }
 
     @Override
+    protected void drawTitle(GuiContext ctx, int mouseX, int mouseY, float partialTicks)
+    {
+        // GuiTextInput already draws the title inside the dialog box.
+    }
+
+    @Override
     protected boolean applyValue(String string)
     {
         String validationError = this.validator.validate(string);

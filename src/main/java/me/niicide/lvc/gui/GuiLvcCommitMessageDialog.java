@@ -1,10 +1,10 @@
 package me.niicide.lvc.gui;
 
 import javax.annotation.Nullable;
+import net.minecraft.client.gui.screens.Screen;
 import net.minecraft.client.input.MouseButtonEvent;
 import me.niicide.lvc.util.LvcGuiTextFields;
 
-import fi.dy.masa.malilib.gui.GuiBase;
 import fi.dy.masa.malilib.gui.GuiTextInputStackedMultiLine;
 import fi.dy.masa.malilib.gui.button.ButtonGeneric;
 import fi.dy.masa.malilib.interfaces.IStringDualConsumerFeedback;
@@ -24,7 +24,7 @@ class GuiLvcCommitMessageDialog extends GuiTextInputStackedMultiLine
     private boolean errorSpaceVisible;
 
     GuiLvcCommitMessageDialog(int maxTextLength, int displayLines, int maxLines, String titleKey,
-                              String defaultText1, String defaultText2, GuiBase parent,
+                              String defaultText1, String defaultText2, @Nullable Screen parent,
                               IStringDualConsumerFeedback consumer)
     {
         super(maxTextLength, displayLines, maxLines, titleKey, defaultText1, defaultText2, parent, consumer);
@@ -85,6 +85,12 @@ class GuiLvcCommitMessageDialog extends GuiTextInputStackedMultiLine
             RenderUtils.drawOutlinedBox(ctx, errorLeft, errorTop, errorWidth, ERROR_BOX_HEIGHT, 0x80300000, 0xFFFF5555);
             ctx.drawString(ctx.fontRenderer(), this.errorMessage, errorLeft + 4, errorTop + 2, 0xFFFF5555, false);
         }
+    }
+
+    @Override
+    protected void drawTitle(GuiContext ctx, int mouseX, int mouseY, float partialTicks)
+    {
+        // GuiTextInputStackedMultiLine already draws the title inside the dialog box.
     }
 
     private int getButtonY()

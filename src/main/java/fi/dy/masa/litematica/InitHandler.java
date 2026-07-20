@@ -20,6 +20,11 @@ import fi.dy.masa.litematica.gui.GuiConfigs;
 import fi.dy.masa.litematica.render.infohud.StatusInfoRenderer;
 import fi.dy.masa.litematica.scheduler.ClientTickHandler;
 import fi.dy.masa.litematica.schematic.placement.PlacementManagerDaemonHandler;
+import me.niicide.lvc.LvcReference;
+import me.niicide.lvc.config.LvcConfigs;
+import me.niicide.lvc.config.LvcInputHandler;
+import me.niicide.lvc.config.LvcKeyCallbacks;
+import me.niicide.lvc.gui.GuiLvcConfigs;
 
 public class InitHandler implements IInitializationHandler
 {
@@ -29,6 +34,10 @@ public class InitHandler implements IInitializationHandler
         ConfigManager.getInstance().registerConfigHandler(Reference.MOD_ID, new Configs());
         Registry.CONFIG_SCREEN.registerConfigScreenFactory(
                 new ModInfo(Reference.MOD_ID, Reference.MOD_NAME, GuiConfigs::new)
+        );
+        ConfigManager.getInstance().registerConfigHandler(LvcReference.MOD_ID, new LvcConfigs());
+        Registry.CONFIG_SCREEN.registerConfigScreenFactory(
+                new ModInfo(LvcReference.MOD_ID, LvcReference.MOD_NAME, GuiLvcConfigs::new)
         );
         Configs.LANG.ifPresent(
                 i18nManager ->
@@ -43,6 +52,7 @@ public class InitHandler implements IInitializationHandler
         EntityDataManager.getInstance().onGameInit();
 
         InputEventHandler.getKeybindManager().registerKeybindProvider(InputHandler.getInstance());
+        InputEventHandler.getKeybindManager().registerKeybindProvider(LvcInputHandler.getInstance());
         InputEventHandler.getInputManager().registerKeyboardInputHandler(InputHandler.getInstance());
         InputEventHandler.getInputManager().registerMouseInputHandler(InputHandler.getInstance());
 
@@ -62,6 +72,7 @@ public class InitHandler implements IInitializationHandler
         WorldLoadHandler.getInstance().registerWorldLoadPostHandler(listener);
 
         KeyCallbacks.init(Minecraft.getInstance());
+        LvcKeyCallbacks.init();
         StatusInfoRenderer.init();
 
         ClientCommandHandler.INSTANCE.registerCommand(new PmCommand());

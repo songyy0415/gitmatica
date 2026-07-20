@@ -475,10 +475,39 @@ public class SchematicVerifier extends TaskBase implements IInfoHudRenderer
 
     public void markBlockChanged(BlockPos pos)
     {
-        if (this.finished)
+        if (this.finished && this.isPositionWithinVerificationArea(pos))
         {
             this.recheckQueue.add(pos.immutable());
         }
+    }
+
+    private boolean isPositionWithinVerificationArea(BlockPos pos)
+    {
+        if (this.schematicPlacement == null)
+        {
+            return false;
+        }
+
+        if (this.schematicPlacement.getSchematicVerifierType() == BlockInfoListType.RENDER_LAYERS &&
+            DataManager.getRenderLayerRange().isPositionWithinRange(pos) == false)
+        {
+            return false;
+        }
+
+        Map<String, IntBoundingBox> boxes = this.schematicPlacement.getBoxesWithinChunk(
+                pos.getX() >> 4, pos.getZ() >> 4);
+
+        for (IntBoundingBox box : boxes.values())
+        {
+            if (pos.getX() >= box.minX() && pos.getX() <= box.maxX() &&
+                pos.getY() >= box.minY() && pos.getY() <= box.maxY() &&
+                pos.getZ() >= box.minZ() && pos.getZ() <= box.maxZ())
+            {
+                return true;
+            }
+        }
+
+        return false;
     }
 
     private void checkChangedPositions(ProfilerFiller profiler)
@@ -491,6 +520,13 @@ public class SchematicVerifier extends TaskBase implements IInfoHudRenderer
             while (iter.hasNext())
             {
                 BlockPos pos = iter.next();
+
+                if (this.isPositionWithinVerificationArea(pos) == false)
+                {
+                    iter.remove();
+                    continue;
+                }
+
                 @SuppressWarnings("deprecation")
                 boolean isLoadedClient = this.worldClient.hasChunkAt(pos);
                 @SuppressWarnings("deprecation")

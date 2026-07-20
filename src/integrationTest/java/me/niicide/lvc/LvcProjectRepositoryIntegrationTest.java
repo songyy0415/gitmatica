@@ -14,6 +14,7 @@ import org.eclipse.jgit.lib.Repository;
 import org.eclipse.jgit.revwalk.RevCommit;
 import org.eclipse.jgit.revwalk.RevWalk;
 import org.eclipse.jgit.storage.file.FileRepositoryBuilder;
+import me.niicide.lvc.project.LvcProjectPaths;
 import me.niicide.lvc.storage.LvcRepository;
 import me.niicide.lvc.storage.LvcSemanticRepository;
 
@@ -28,6 +29,7 @@ final class LvcProjectRepositoryIntegrationTest
         IntegrationTestSupport.run("semantic repo commits use current branch HEAD and history lists newest first", LvcProjectRepositoryIntegrationTest::semanticRepoCommitsUseCurrentBranchHeadAndHistoryListsNewestFirst);
         IntegrationTestSupport.run("project service lists semantic repositories and pushes to a remote", LvcProjectRepositoryIntegrationTest::projectServiceListsSemanticRepositoriesAndPushesToRemote);
         IntegrationTestSupport.run("project repository names cannot escape project root", LvcProjectRepositoryIntegrationTest::projectRepositoryNamesCannotEscapeProjectRoot);
+        IntegrationTestSupport.run("project success paths start at the Minecraft directory", LvcProjectRepositoryIntegrationTest::projectSuccessPathsStartAtMinecraftDirectory);
         IntegrationTestSupport.run("project service deletes semantic repositories recursively", LvcProjectRepositoryIntegrationTest::projectServiceDeletesSemanticRepositoriesRecursively);
         IntegrationTestSupport.run("remote URL config can be created and edited", LvcProjectRepositoryIntegrationTest::remoteUrlConfigCanBeCreatedAndEdited);
         IntegrationTestSupport.run("push uses the last active branch while HEAD is detached", LvcProjectRepositoryIntegrationTest::pushUsesLastActiveBranchWhileHeadIsDetached);
@@ -104,6 +106,30 @@ final class LvcProjectRepositoryIntegrationTest
         assertRejectedProjectName(runDir, "../escape");
         assertRejectedProjectName(runDir, "nested/project");
         assertRejectedProjectName(runDir, "nested\\project");
+    }
+
+    private static void projectSuccessPathsStartAtMinecraftDirectory() throws Exception
+    {
+        Path runDir = Files.createTempDirectory("lvc-display-path-");
+        Path repositoryDirectory = LvcProjectService.repositoryDirectory(runDir, "Display Project");
+        Path displayPath = LvcProjectPaths.minecraftDisplayPath(runDir, repositoryDirectory);
+
+        IntegrationTestSupport.assertEquals(
+                Path.of(".minecraft", LvcProjectService.REPOS_DIRECTORY, "Display Project"),
+                displayPath,
+                "project-created message path"
+        );
+
+        try
+        {
+            LvcProjectPaths.minecraftDisplayPath(runDir, runDir.resolveSibling("outside"));
+            throw new AssertionError("paths outside the Minecraft directory should be rejected");
+        }
+        catch (IllegalArgumentException expected)
+        {
+            IntegrationTestSupport.assertTrue(expected.getMessage().contains("inside the Minecraft game directory"),
+                    "outside display path error should explain the rejected path");
+        }
     }
 
     private static void projectServiceDeletesSemanticRepositoriesRecursively() throws Exception
