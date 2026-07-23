@@ -1,7 +1,7 @@
 package fi.dy.masa.litematica.event;
 
 import me.niicide.lvc.LvcDiagnostics;
-import me.niicide.lvc.gui.GuiLvcDiffViewer;
+import me.niicide.lvc.gui.GuiLvcChangeViewer;
 import me.niicide.lvc.overlay.LvcTrackingOverlayService;
 import net.minecraft.client.Minecraft;
 import net.minecraft.core.BlockPos;
@@ -397,8 +397,8 @@ public class KeyCallbacks
                 {
                     if (LvcTrackingOverlayService.isSemanticTrackingPlacement(schematicPlacement))
                     {
-                        LvcDiagnostics.info("opening GitMatica Diff Viewer for placement='{}'", schematicPlacement.getName());
-                        GuiBase.openGui(new GuiLvcDiffViewer(schematicPlacement));
+                        LvcDiagnostics.info("opening GitMatica Change Viewer for placement='{}'", schematicPlacement.getName());
+                        GuiBase.openGui(new GuiLvcChangeViewer(schematicPlacement));
                     }
                     else
                     {

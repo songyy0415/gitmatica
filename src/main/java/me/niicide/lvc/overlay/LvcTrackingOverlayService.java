@@ -262,6 +262,27 @@ public final class LvcTrackingOverlayService
         return restoredOverlay;
     }
 
+    public static boolean isCurrentTrackingOverlayLoaded(Path repositoryDirectory) throws IOException
+    {
+        Objects.requireNonNull(repositoryDirectory, "repositoryDirectory");
+
+        if (!isSemanticTrackingCacheCurrent(repositoryDirectory))
+        {
+            return false;
+        }
+
+        LvcManifest manifest = LvcSemanticRepository.readManifest(repositoryDirectory);
+        Path cacheFile = currentSemanticTrackingCacheFile(repositoryDirectory);
+
+        if (cacheFile == null)
+        {
+            return false;
+        }
+
+        String expectedName = trackingOverlayDisplayName(repositoryDirectory, manifest.name());
+        return findMatchingTrackingPlacement(cacheFile, expectedName) != null;
+    }
+
     @Nullable
     public static LvcProjectService.TrackingOverlay refreshVerifierIfCurrent(Path repositoryDirectory,
                                                                              @Nullable ClientLevel clientLevel,

@@ -4,13 +4,16 @@ import java.io.IOException;
 import java.util.List;
 import java.util.Optional;
 import javax.annotation.Nullable;
+import com.mojang.blaze3d.platform.InputConstants;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.multiplayer.ClientLevel;
 import net.minecraft.world.level.Level;
+import org.lwjgl.glfw.GLFW;
 import me.niicide.lvc.LvcDiagnostics;
 import me.niicide.lvc.LvcFriendlyErrors.Operation;
 import me.niicide.lvc.LvcProjectService;
 import me.niicide.lvc.gui.widgets.WidgetLvcBranchActionMenu;
+import me.niicide.lvc.overlay.LvcTrackingOverlayService;
 import me.niicide.lvc.task.LvcOperationHandle;
 import me.niicide.lvc.task.LvcOperationJournal;
 import me.niicide.lvc.task.LvcRemoteServerApplyTask;
@@ -26,6 +29,7 @@ import me.niicide.lvc.world.LvcWorldBackend;
 
 import fi.dy.masa.litematica.data.DataManager;
 import fi.dy.masa.litematica.gui.GuiMainMenu;
+import fi.dy.masa.litematica.schematic.placement.SchematicPlacement;
 import fi.dy.masa.litematica.selection.AreaSelection;
 import fi.dy.masa.malilib.gui.GuiBase;
 import fi.dy.masa.malilib.gui.Message.MessageType;
@@ -174,6 +178,55 @@ final class GuiLvcProjectController
         if (commit != null)
         {
             this.promptCheckoutCommit(commit);
+        }
+    }
+
+    private void softLoadSelectedCommit()
+    {
+        LvcProjectService.CommitInfo commit = this.requireSelectedCommit();
+
+        if (commit == null)
+        {
+            return;
+        }
+
+        if (Minecraft.getInstance().level == null)
+        {
+            LvcGuiMessages.show(MessageType.ERROR, "litematica.error.lvc_project.no_world");
+            return;
+        }
+
+        boolean headChanged = false;
+
+        try
+        {
+            if (this.isVersionAlreadyLoaded(commit.id()))
+            {
+                this.showAlreadyAtVersion(commit.id());
+                return;
+            }
+
+            LvcProjectService.checkoutCommitToWorkingTree(this.gui.repositoryDirectory, commit.id());
+            headChanged = true;
+            LvcProjectService.reattachHeadToBranchIfAtTip(this.gui.repositoryDirectory, this.gui.checkoutBranchName);
+            this.removeTrackingOverlay();
+            this.gui.focusHistoryCommitAfterNextRefresh(commit.id());
+            this.refreshRepositoryState();
+            this.gui.refreshHistory();
+            this.gui.syncBranchDropdownSelection();
+            this.loadTrackingOverlayAfterSoftLoad(commit.shortId());
+            LvcDiagnostics.debug("GuiLvcProjectManager: selected commit soft load scheduled repo='{}' commit='{}' detached={}",
+                    this.gui.repositoryDirectory, commit.id(), this.gui.detachedHead);
+        }
+        catch (Exception e)
+        {
+            this.refreshAfterSoftLoadFailure();
+            LvcGuiMessages.showTaskError(
+                    headChanged ? Operation.LOAD_OVERLAY : Operation.CHECKOUT,
+                    headChanged ? "litematica.error.lvc_project.tracking_failed" :
+                            "litematica.error.lvc_project.checkout_failed",
+                    e
+            );
         }
     }
 
@@ -491,9 +544,18 @@ final class GuiLvcProjectController
         }
     }
 
-    void scanChanges()
+    void openChangeViewer()
     {
-        GuiLvcProjectTaskActions.scanChanges(this);
+        try
+        {
+            SchematicPlacement placement = LvcTrackingOverlayService.requireTrackingPlacement(this.gui.repositoryDirectory);
+            GuiBase.openGui(new GuiLvcChangeViewer(placement));
+        }
+        catch (Exception e)
+        {
+            LvcGuiMessages.showTaskError(Operation.LOAD_OVERLAY,
+                    "litematica.error.lvc_project.tracking_failed", e);
+        }
     }
 
     void promptClearArea()
@@ -534,11 +596,7 @@ final class GuiLvcProjectController
                 this.gui.detachedHead
         );
 
-        if (!this.gui.detachedHead && branchName.equals(this.gui.headPointerName))
-        {
-            this.gui.syncBranchDropdownSelection();
-            return;
-        }
+        boolean softLoad = isLeftShiftDown();
 
         if (LvcTaskRegistry.hasActiveOperation())
         {
@@ -547,7 +605,68 @@ final class GuiLvcProjectController
             return;
         }
 
+        if (softLoad)
+        {
+            this.softLoadBranch(branchName);
+            return;
+        }
+
         GuiLvcProjectTaskActions.promptCheckoutBranch(this, branchName);
+    }
+
+    private void softLoadBranch(String branchName)
+    {
+        String trimmedBranchName = branchName.trim();
+
+        if (Minecraft.getInstance().level == null)
+        {
+            this.gui.syncBranchDropdownSelection();
+            LvcGuiMessages.show(MessageType.ERROR, "litematica.error.lvc_project.no_world");
+            return;
+        }
+
+        boolean headChanged = false;
+
+        try
+        {
+            String targetCommitId = LvcProjectService.localBranchTipCommitId(
+                    this.gui.repositoryDirectory, trimmedBranchName);
+
+            if (this.isBranchAlreadyLoaded(trimmedBranchName, targetCommitId))
+            {
+                this.gui.syncBranchDropdownSelection();
+                this.showAlreadyAtVersion(targetCommitId);
+                return;
+            }
+
+            LvcProjectService.checkoutBranchToWorkingTree(this.gui.repositoryDirectory, trimmedBranchName);
+            headChanged = true;
+            this.removeTrackingOverlay();
+            this.gui.focusHistoryCommitAfterNextRefresh(targetCommitId);
+            this.refreshRepositoryState();
+            this.gui.refreshHistory();
+            this.gui.syncBranchDropdownSelection();
+            this.loadTrackingOverlayAfterSoftLoad(shortCommitId(targetCommitId));
+            LvcDiagnostics.debug("GuiLvcProjectManager: branch soft load scheduled repo='{}' branch='{}' commit='{}'",
+                    this.gui.repositoryDirectory, trimmedBranchName, targetCommitId);
+        }
+        catch (Exception e)
+        {
+            this.refreshAfterSoftLoadFailure();
+            LvcGuiMessages.showTaskError(
+                    headChanged ? Operation.LOAD_OVERLAY : Operation.CHECKOUT_BRANCH,
+                    headChanged ? "litematica.error.lvc_project.tracking_failed" :
+                            "litematica.error.lvc_project.checkout_failed",
+                    e
+            );
+        }
+    }
+
+    private void refreshAfterSoftLoadFailure()
+    {
+        this.refreshRepositoryState();
+        this.gui.refreshHistory();
+        this.gui.syncBranchDropdownSelection();
     }
 
     void handleBranchMenuAction(WidgetLvcBranchActionMenu.Action action)
@@ -1022,7 +1141,12 @@ final class GuiLvcProjectController
 
     void loadTrackingOverlay()
     {
-        this.scheduleSemanticTrackingOverlay(true, true);
+        this.scheduleSemanticTrackingOverlay(true, true, null);
+    }
+
+    private void loadTrackingOverlayAfterSoftLoad(String commitId)
+    {
+        this.scheduleSemanticTrackingOverlay(true, true, commitId);
     }
 
     void refreshTrackingOverlayAfterWorldMutation()
@@ -1061,6 +1185,12 @@ final class GuiLvcProjectController
     }
 
     private void scheduleSemanticTrackingOverlay(boolean forceReload, boolean startVerifier)
+    {
+        this.scheduleSemanticTrackingOverlay(forceReload, startVerifier, null);
+    }
+
+    private void scheduleSemanticTrackingOverlay(boolean forceReload, boolean startVerifier,
+                                                 @Nullable String softLoadedCommitId)
     {
         ClientLevel clientLevel = Minecraft.getInstance().level;
 
@@ -1131,12 +1261,24 @@ final class GuiLvcProjectController
                             this.gui.trackingOverlay = overlay;
                             this.updateTrackingStatusAfterRestore();
                             this.clearRefreshMarkerAfterOverlay();
+
+                            if (softLoadedCommitId != null)
+                            {
+                                LvcGuiMessages.show(MessageType.SUCCESS,
+                                        "litematica.message.lvc_project.soft_loaded_version", softLoadedCommitId);
+                            }
                         },
                         e -> LvcGuiMessages.showTaskError(Operation.LOAD_OVERLAY, "litematica.error.lvc_project.tracking_failed", e),
                         () -> LvcDiagnostics.debug("GuiLvcProjectManager: overlay load aborted repo='{}'", this.gui.repositoryDirectory)
                 )
         );
         LvcTaskScheduling.scheduleForWorld(clientLevel, task);
+
+        if (softLoadedCommitId != null)
+        {
+            LvcGuiMessages.show(MessageType.INFO,
+                    "litematica.message.lvc_project.soft_load_started", softLoadedCommitId);
+        }
     }
 
     private boolean isOverlayLoadActiveForThisRepo()
@@ -1264,8 +1406,19 @@ final class GuiLvcProjectController
             case PUSH -> this.push();
             case PULL -> this.promptPull();
             case BRANCH_SELECTOR -> this.openBranchSelector();
-            case CHECKOUT_VERSION -> this.promptCheckoutSelectedCommit();
-            case VIEW_CHANGES -> this.scanChanges();
+            case CHECKOUT_VERSION ->
+            {
+                if (isLeftShiftDown())
+                {
+                    this.softLoadSelectedCommit();
+                }
+                else
+                {
+                    this.promptCheckoutSelectedCommit();
+                }
+            }
+            case VIEW_CHANGES -> this.openChangeViewer();
+            case VIEW_DIFFS -> this.showFullReleaseFeature();
             case REVERT_CHANGES -> this.showFullReleaseFeature();
             case PROJECT_EDITOR -> GuiBase.openGui(new GuiLvcProjectEditor(this.gui.repositoryDirectory, this.gui.projectName));
             case PROJECT_SETTINGS -> this.showFullReleaseFeature();
@@ -1276,6 +1429,35 @@ final class GuiLvcProjectController
             }
             case LITEMATICA_MENU -> GuiBase.openGui(new GuiMainMenu());
         }
+    }
+
+    private static boolean isLeftShiftDown()
+    {
+        return InputConstants.isKeyDown(Minecraft.getInstance().getWindow(), GLFW.GLFW_KEY_LEFT_SHIFT);
+    }
+
+    private static String shortCommitId(String commitId)
+    {
+        return commitId.substring(0, Math.min(8, commitId.length()));
+    }
+
+    boolean isVersionAlreadyLoaded(String commitId) throws IOException
+    {
+        return LvcProjectService.headMatchesCommit(this.gui.repositoryDirectory, commitId) &&
+                LvcProjectService.isCurrentTrackingOverlayLoaded(this.gui.repositoryDirectory);
+    }
+
+    boolean isBranchAlreadyLoaded(String branchName, String commitId) throws IOException
+    {
+        return this.isVersionAlreadyLoaded(commitId) &&
+                !LvcProjectService.isDetachedHead(this.gui.repositoryDirectory) &&
+                branchName.equals(LvcProjectService.headPointerName(this.gui.repositoryDirectory));
+    }
+
+    void showAlreadyAtVersion(String commitId)
+    {
+        LvcGuiMessages.show(MessageType.ERROR, "litematica.message.lvc_project.already_at_version",
+                shortCommitId(commitId));
     }
 
     private boolean promptPendingInterruptedOperationIfNeeded()

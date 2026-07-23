@@ -21,7 +21,7 @@ repositories {
 //	maven { url = 'https://api.modrinth.com/maven' }
 }
 
-ext.gitmaticaLoaderVersion = "${project.litematica_base_version}-gitmatica.${project.gitmatica_version}"
+ext.gitmaticaLoaderVersion = "${project.litematica_base_version}+gitmatica.${project.gitmatica_version}"
 
 dependencies {
 	minecraft "com.mojang:minecraft:${project.minecraft_version}"

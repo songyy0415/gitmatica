@@ -3,8 +3,6 @@ package me.niicide.lvc.gui;
 import java.util.List;
 import java.util.Optional;
 import net.minecraft.client.Minecraft;
-import net.minecraft.client.multiplayer.ClientLevel;
-import net.minecraft.server.level.ServerLevel;
 import net.minecraft.world.entity.player.Player;
 import net.minecraft.world.level.Level;
 import org.eclipse.jgit.revwalk.RevCommit;
@@ -13,15 +11,11 @@ import me.niicide.lvc.LvcFriendlyErrors.Operation;
 import me.niicide.lvc.LvcPlayerIdentity;
 import me.niicide.lvc.LvcProjectService;
 import me.niicide.lvc.model.LvcManifest;
-import me.niicide.lvc.task.LvcAuthoritativeScanSync;
 import me.niicide.lvc.task.LvcOperationHandle;
 import me.niicide.lvc.task.LvcSemanticCommitTask;
-import me.niicide.lvc.task.LvcSemanticScanTask;
 import me.niicide.lvc.task.LvcTaskCallbacks;
 import me.niicide.lvc.task.LvcTaskRegistry;
-import me.niicide.lvc.task.LvcTaskScheduling;
 import me.niicide.lvc.world.LvcWorldAccess;
-import me.niicide.lvc.world.LvcWorldBackend;
 import fi.dy.masa.litematica.data.DataManager;
 import fi.dy.masa.litematica.selection.AreaSelection;
 import fi.dy.masa.malilib.gui.Message.MessageType;
@@ -31,73 +25,6 @@ final class LvcVersionWorkflow
 {
     private LvcVersionWorkflow()
     {
-    }
-
-    static void scanChanges(GuiLvcProjectController controller)
-    {
-        Minecraft minecraft = Minecraft.getInstance();
-        ClientLevel world = minecraft.level;
-
-        if (world == null)
-        {
-            LvcGuiMessages.show(MessageType.ERROR, "litematica.error.lvc_project.no_world");
-            return;
-        }
-
-        Optional<LvcOperationHandle> handle = LvcOperationCoordinator.acquire(controller, "LVC Scan Changes");
-
-        if (handle.isEmpty())
-        {
-            return;
-        }
-
-        try
-        {
-            LvcWorldBackend backend = LvcWorldBackend.resolve(world);
-
-            if (backend != LvcWorldBackend.DIRECT)
-            {
-                LvcSemanticScanTask task = new LvcSemanticScanTask(
-                        handle.get(),
-                        controller.gui.repositoryDirectory,
-                        world,
-                        LvcTaskCallbacks.of(
-                                result -> reportScanResult(controller, result),
-                                e -> LvcGuiMessages.showTaskError(Operation.SCAN_CHANGES, "litematica.error.lvc_project.scan_failed", e),
-                                () -> LvcGuiMessages.show(MessageType.INFO, "litematica.message.lvc_project.task_aborted", "LVC Scan Changes")
-                        ),
-                        true
-                );
-                LvcTaskScheduling.scheduleClient(task);
-                LvcGuiMessages.show(MessageType.INFO, "litematica.message.lvc_project.task_started", "LVC Scan Changes");
-                return;
-            }
-
-            Level authoritativeWorld = LvcWorldAccess.resolveSemanticRestoreWorld(world);
-
-            if (!(authoritativeWorld instanceof ServerLevel serverWorld))
-            {
-                throw new IllegalStateException("Scan Changes requires a server-authoritative world");
-            }
-
-            LvcAuthoritativeScanSync.schedule(
-                    handle.get(),
-                    controller.gui.repositoryDirectory,
-                    serverWorld,
-                    world,
-                    LvcTaskCallbacks.of(
-                            result -> reportScanResult(controller, result.scanResult()),
-                            e -> LvcGuiMessages.showTaskError(Operation.SCAN_CHANGES, "litematica.error.lvc_project.scan_failed", e),
-                            () -> LvcGuiMessages.show(MessageType.INFO, "litematica.message.lvc_project.task_aborted", "LVC Scan Changes")
-                    )
-            );
-            LvcGuiMessages.show(MessageType.INFO, "litematica.message.lvc_project.task_started", "LVC Scan Changes");
-        }
-        catch (Exception e)
-        {
-            LvcTaskRegistry.release(handle.get());
-            LvcGuiMessages.showTaskError(Operation.SCAN_CHANGES, "litematica.error.lvc_project.scan_failed", e);
-        }
     }
 
     static void commitStoredSelectionWithCurrentSelectionFallback(GuiLvcProjectController controller, String message)
@@ -284,37 +211,4 @@ final class LvcVersionWorkflow
         return commitId.substring(0, Math.min(8, commitId.length()));
     }
 
-    private static void reportScanResult(GuiLvcProjectController controller, LvcProjectService.SemanticScanResult result)
-    {
-        if (result.unknownChunks() > 0)
-        {
-            controller.gui.trackingStatus = StringUtils.translate(
-                    "litematica.gui.label.lvc_project.semantic_scan_unknown",
-                    result.changedChunks(),
-                    result.addedChunks(),
-                    result.removedChunks(),
-                    result.unknownChunks()
-            );
-            LvcGuiMessages.show(MessageType.INFO, "litematica.message.lvc_project.scan_unknown",
-                    result.unknownChunks(), result.dirtyChunks());
-        }
-        else if (result.clean())
-        {
-            controller.gui.trackingStatus = StringUtils.translate(
-                    "litematica.gui.label.lvc_project.semantic_scan_clean", result.unchangedChunks());
-            LvcGuiMessages.show(MessageType.SUCCESS, "litematica.message.lvc_project.scan_clean",
-                    result.unchangedChunks());
-        }
-        else
-        {
-            controller.gui.trackingStatus = StringUtils.translate(
-                    "litematica.gui.label.lvc_project.semantic_scan_dirty",
-                    result.changedChunks(),
-                    result.addedChunks(),
-                    result.removedChunks()
-            );
-            LvcGuiMessages.show(MessageType.INFO, "litematica.message.lvc_project.scan_dirty",
-                    result.changedChunks(), result.addedChunks(), result.removedChunks());
-        }
-    }
 }

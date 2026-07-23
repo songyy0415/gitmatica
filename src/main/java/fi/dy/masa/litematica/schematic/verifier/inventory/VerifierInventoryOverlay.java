@@ -136,6 +136,14 @@ public class VerifierInventoryOverlay
 
     public static void renderPreviewTooltip(GuiContext ctx, VerifierInventoryPreview preview, int mouseX, int mouseY)
     {
+        renderPreviewTooltip(ctx, preview, mouseX, mouseY,
+                "litematica.gui.label.schematic_verifier.expected",
+                "litematica.gui.label.schematic_verifier.found");
+    }
+
+    public static void renderPreviewTooltip(GuiContext ctx, VerifierInventoryPreview preview, int mouseX, int mouseY,
+                                            String expectedLabelKey, String foundLabelKey)
+    {
         VerifierInventorySide expected = preview.expected();
         VerifierInventorySide found = preview.found();
 
@@ -150,18 +158,10 @@ public class VerifierInventoryOverlay
         int labelHeight = 14;
         int totalWidth = expectedMetrics.width() + foundMetrics.width() + gap + 20;
         int totalHeight = Math.max(expectedMetrics.height(), foundMetrics.height()) + labelHeight + 12;
-        int x = mouseX + 10;
-        int y = mouseY + 10;
-
-        if (x + totalWidth > GuiUtils.getCurrentScreenWidth())
-        {
-            x = mouseX - totalWidth - 10;
-        }
-
-        if (y + totalHeight > GuiUtils.getCurrentScreenHeight())
-        {
-            y = mouseY - totalHeight - 2;
-        }
+        int screenWidth = GuiUtils.getCurrentScreenWidth();
+        int screenHeight = GuiUtils.getCurrentScreenHeight();
+        int x = Math.max(2, (screenWidth - totalWidth) / 2);
+        int y = Math.max(2, screenHeight / 2 - totalHeight);
 
         RenderUtils.renderBackgroundMask(ctx, x + 1, y + 1, totalWidth - 1, totalHeight - 1);
         fi.dy.masa.malilib.render.RenderUtils.drawOutlinedBox(ctx, x, y, totalWidth, totalHeight, 0xFF000000, GuiBase.COLOR_HORIZONTAL_BAR);
@@ -171,8 +171,8 @@ public class VerifierInventoryOverlay
         int yInv = y + labelHeight + 6;
         String pre = GuiBase.TXT_WHITE + GuiBase.TXT_BOLD;
 
-        ctx.drawString(ctx.fontRenderer(), pre + StringUtils.translate("litematica.gui.label.schematic_verifier.expected") + GuiBase.TXT_RST, xExpected, y + 5, 0xFFFFFFFF, false);
-        ctx.drawString(ctx.fontRenderer(), pre + StringUtils.translate("litematica.gui.label.schematic_verifier.found") + GuiBase.TXT_RST, xFound, y + 5, 0xFFFFFFFF, false);
+        ctx.drawString(ctx.fontRenderer(), pre + StringUtils.translate(expectedLabelKey) + GuiBase.TXT_RST, xExpected, y + 5, 0xFFFFFFFF, false);
+        ctx.drawString(ctx.fontRenderer(), pre + StringUtils.translate(foundLabelKey) + GuiBase.TXT_RST, xFound, y + 5, 0xFFFFFFFF, false);
 
         delayRenderingHoveredStack = true;
         renderSide(ctx, preview, expected, expectedMetrics, false, xExpected, yInv, mouseX, mouseY);

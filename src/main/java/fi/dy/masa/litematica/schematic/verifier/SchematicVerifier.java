@@ -87,7 +87,7 @@ public class SchematicVerifier extends TaskBase implements IInfoHudRenderer
     private boolean verificationStarted;
     private boolean verificationActive;
     private boolean shouldRenderInfoHud = true;
-    private boolean lvcDiffInfoHud;
+    private boolean lvcChangeInfoHud;
     private int totalRequiredChunks;
     private int schematicBlocks;
     private int clientBlocks;
@@ -129,9 +129,9 @@ public class SchematicVerifier extends TaskBase implements IInfoHudRenderer
         this.shouldRenderInfoHud = ! this.shouldRenderInfoHud;
     }
 
-    public void setLvcDiffInfoHud(boolean lvcDiffInfoHud)
+    public void setLvcChangeInfoHud(boolean lvcChangeInfoHud)
     {
-        this.lvcDiffInfoHud = lvcDiffInfoHud;
+        this.lvcChangeInfoHud = lvcChangeInfoHud;
     }
 
     public boolean isActive()
@@ -1338,9 +1338,9 @@ public class SchematicVerifier extends TaskBase implements IInfoHudRenderer
         {
             String rst = GuiBase.TXT_RST;
 
-            if (this.lvcDiffInfoHud)
+            if (this.lvcChangeInfoHud)
             {
-                String title = StringUtils.translate("litematica.gui.title.lvc_diff_viewer_info_hud");
+                String title = StringUtils.translate("litematica.gui.title.lvc_change_viewer_info_hud");
                 this.infoHudLines.add(String.format("%s%s%s", GuiBase.TXT_BOLD, title, rst));
             }
             else if (mismatchType != null)
@@ -1367,15 +1367,15 @@ public class SchematicVerifier extends TaskBase implements IInfoHudRenderer
 
     private String getMismatchInfoHudColorCode(MismatchRenderPos entry)
     {
-        if (this.lvcDiffInfoHud)
+        if (this.lvcChangeInfoHud)
         {
-            return this.getLvcDiffInfoHudColorCode(entry.type);
+            return this.getLvcChangeInfoHudColorCode(entry.type);
         }
 
         return entry.type.getColorCode();
     }
 
-    private String getLvcDiffInfoHudColorCode(MismatchType type)
+    private String getLvcChangeInfoHudColorCode(MismatchType type)
     {
         switch (type)
         {

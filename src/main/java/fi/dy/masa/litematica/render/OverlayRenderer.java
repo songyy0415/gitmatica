@@ -668,8 +668,8 @@ public class OverlayRenderer
         if (LvcTrackingOverlayService.isSemanticTrackingPlacement(placement))
         {
             return new BlockMismatchInfo(stateExpected, stateFound,
-                    "litematica.gui.label.lvc_diff_viewer.before",
-                    "litematica.gui.label.lvc_diff_viewer.after");
+                    "litematica.gui.label.lvc_change_viewer.before",
+                    "litematica.gui.label.lvc_change_viewer.after");
         }
 
         return new BlockMismatchInfo(stateExpected, stateFound);

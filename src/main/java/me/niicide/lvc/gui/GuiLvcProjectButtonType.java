@@ -17,6 +17,7 @@ enum GuiLvcProjectButtonType
     BRANCH_SELECTOR("litematica.gui.button.lvc_project.branch", ButtonIcons.SCHEMATIC_PROJECTS),
     CHECKOUT_VERSION("litematica.gui.button.lvc_project.load", null),
     VIEW_CHANGES("litematica.gui.button.lvc_project.view_changes", null),
+    VIEW_DIFFS("litematica.gui.button.lvc_project.view_diffs", null),
     REVERT_CHANGES("litematica.gui.button.lvc_project.revert_changes", null),
     PROJECT_EDITOR("litematica.gui.button.lvc_project.project_editor", ButtonIcons.AREA_EDITOR),
     PROJECT_SETTINGS("litematica.gui.button.lvc_project.project_settings", ButtonIcons.CONFIGURATION),

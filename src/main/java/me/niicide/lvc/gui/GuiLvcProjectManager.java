@@ -29,6 +29,7 @@ public class GuiLvcProjectManager extends GuiBase implements ICompletionListener
     private static final GuiLvcProjectButtonType[] TOP_ACTIONS = {
             GuiLvcProjectButtonType.SAVE_VERSION,
             GuiLvcProjectButtonType.DISCARD_CHANGES,
+            GuiLvcProjectButtonType.VIEW_CHANGES,
             GuiLvcProjectButtonType.CLEAR_AREA,
             GuiLvcProjectButtonType.PUSH,
             GuiLvcProjectButtonType.PULL,
@@ -36,7 +37,7 @@ public class GuiLvcProjectManager extends GuiBase implements ICompletionListener
     };
     private static final GuiLvcProjectButtonType[] BOTTOM_ACTIONS = {
             GuiLvcProjectButtonType.CHECKOUT_VERSION,
-            GuiLvcProjectButtonType.VIEW_CHANGES,
+            GuiLvcProjectButtonType.VIEW_DIFFS,
             GuiLvcProjectButtonType.REVERT_CHANGES,
             GuiLvcProjectButtonType.EXPORT,
             GuiLvcProjectButtonType.LITEMATICA_MENU
@@ -428,6 +429,11 @@ public class GuiLvcProjectManager extends GuiBase implements ICompletionListener
             button.setTextCentered(false);
         }
 
+        if (type == GuiLvcProjectButtonType.CHECKOUT_VERSION)
+        {
+            button.setHoverStrings("litematica.gui.button.hover.lvc_project.load_version_soft");
+        }
+
         if (this.isDulledAction(type))
         {
             button.setEnabled(false);
@@ -610,6 +616,7 @@ public class GuiLvcProjectManager extends GuiBase implements ICompletionListener
     {
         return type == GuiLvcProjectButtonType.PUSH ||
                 type == GuiLvcProjectButtonType.PULL ||
+                type == GuiLvcProjectButtonType.VIEW_DIFFS ||
                 type == GuiLvcProjectButtonType.REVERT_CHANGES;
     }
 

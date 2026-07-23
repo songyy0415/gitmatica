@@ -33,11 +33,6 @@ final class GuiLvcProjectTaskActions
     {
     }
 
-    static void scanChanges(GuiLvcProjectController controller)
-    {
-        LvcVersionWorkflow.scanChanges(controller);
-    }
-
     static void mergeBranch(GuiLvcProjectController controller, String sourceBranch)
     {
         LvcMergeWorkflow.mergeBranch(controller, sourceBranch);

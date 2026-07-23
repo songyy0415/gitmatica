@@ -404,6 +404,11 @@ public final class LvcProjectService
         return LvcTrackingOverlayService.getReusableSemanticTrackingOverlay(repositoryDirectory, clientLevel, completionListener);
     }
 
+    public static boolean isCurrentTrackingOverlayLoaded(Path repositoryDirectory) throws IOException
+    {
+        return LvcTrackingOverlayService.isCurrentTrackingOverlayLoaded(repositoryDirectory);
+    }
+
     public static String trackingOverlayDisplayName(Path repositoryDirectory, String projectName)
     {
         return LvcTrackingOverlayService.trackingOverlayDisplayName(repositoryDirectory, projectName);

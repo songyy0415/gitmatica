@@ -35,6 +35,7 @@ public class InitHandler implements IInitializationHandler
         Registry.CONFIG_SCREEN.registerConfigScreenFactory(
                 new ModInfo(Reference.MOD_ID, Reference.MOD_NAME, GuiConfigs::new)
         );
+        LvcConfigs.init();
         ConfigManager.getInstance().registerConfigHandler(LvcReference.MOD_ID, new LvcConfigs());
         Registry.CONFIG_SCREEN.registerConfigScreenFactory(
                 new ModInfo(LvcReference.MOD_ID, LvcReference.MOD_NAME, GuiLvcConfigs::new)

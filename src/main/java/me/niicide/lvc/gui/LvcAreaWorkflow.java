@@ -211,7 +211,7 @@ final class LvcAreaWorkflow
                 LvcTaskCallbacks.of(
                         result ->
                         {
-                            controller.loadTrackingOverlay();
+                            controller.refreshTrackingOverlayAfterWorldMutation();
                             controller.gui.initGui();
                             LvcGuiMessages.show(MessageType.SUCCESS, "litematica.message.lvc_project.discarded_changes",
                                     LvcOperationCoordinator.regionCountText(result.regionCount()));

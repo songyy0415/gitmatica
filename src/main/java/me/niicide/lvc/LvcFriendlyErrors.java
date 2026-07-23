@@ -73,7 +73,6 @@ public final class LvcFriendlyErrors
 
     public enum Operation
     {
-        SCAN_CHANGES("Scan Changes"),
         MERGE_BRANCH("Merge Branch"),
         RECOVERY("Recovery"),
         CLEAR_AREA("Clear Area"),

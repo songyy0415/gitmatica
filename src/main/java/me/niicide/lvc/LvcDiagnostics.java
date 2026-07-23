@@ -1,22 +1,16 @@
 package me.niicide.lvc;
 
 import java.nio.file.Path;
-import java.util.Locale;
 import java.util.Objects;
 import java.util.UUID;
-import javax.annotation.Nullable;
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
+import me.niicide.lvc.config.LvcConfigs;
 import me.niicide.lvc.task.LvcOperationHandle;
 
 public final class LvcDiagnostics
 {
-    public static final String LOGGER_NAME = "gitmatica-lvc";
-    public static final String DEBUG_PROPERTY = "gitmatica.lvc.debug";
-    public static final String DEBUG_ENV = "GITMATICA_LVC_DEBUG";
-
-    private static final Logger LOGGER = LogManager.getLogger(LOGGER_NAME);
-    @Nullable private static Boolean debugOverride;
+    private static final Logger LOGGER = LogManager.getLogger(LvcReference.MOD_ID);
 
     private LvcDiagnostics()
     {
@@ -24,26 +18,14 @@ public final class LvcDiagnostics
 
     public static boolean isDebugEnabled()
     {
-        Boolean override = debugOverride;
-
-        if (override != null)
-        {
-            return override;
-        }
-
-        return Boolean.getBoolean(DEBUG_PROPERTY) || isTruthy(System.getenv(DEBUG_ENV));
-    }
-
-    public static void setDebugOverride(@Nullable Boolean enabled)
-    {
-        debugOverride = enabled;
+        return LvcConfigs.isDebugLoggingEnabled();
     }
 
     public static void debug(String message, Object... args)
     {
         if (isDebugEnabled())
         {
-            LOGGER.debug(message, args);
+            LOGGER.info("[DEBUG] " + message, args);
         }
     }
 
@@ -57,7 +39,7 @@ public final class LvcDiagnostics
         Object[] taggedArgs = new Object[args.length + 1];
         taggedArgs[0] = operationTag(handle);
         System.arraycopy(args, 0, taggedArgs, 1, args.length);
-        LOGGER.debug("{} " + message, taggedArgs);
+        LOGGER.info("[DEBUG] {} " + message, taggedArgs);
     }
 
     public static void info(String message, Object... args)
@@ -129,17 +111,4 @@ public final class LvcDiagnostics
         return path.toAbsolutePath().normalize().toString();
     }
 
-    private static boolean isTruthy(@Nullable String value)
-    {
-        if (value == null)
-        {
-            return false;
-        }
-
-        return switch (value.trim().toLowerCase(Locale.ROOT))
-        {
-            case "1", "true", "yes", "y", "on" -> true;
-            default -> false;
-        };
-    }
 }

@@ -59,14 +59,14 @@ public class GuiMainMenu extends GuiBase
         x += width + 20;
         y = 30;
         this.createChangeMenuButton(x, y, width, ButtonListenerChangeMenu.ButtonType.CONFIGURATION);
-        y += 88;
+        y += 22;
+        this.createChangeMenuButton(x, y, width, ButtonListenerChangeMenu.ButtonType.LVC_PROJECT_BROWSER);
+        y += 66;
 
         this.createChangeMenuButton(x, y, width, ButtonListenerChangeMenu.ButtonType.SCHEMATIC_MANAGER);
         y += 22;
 
         this.createChangeMenuButton(x, y, width, ButtonListenerChangeMenu.ButtonType.TASK_MANAGER);
-        y += 22;
-        this.createChangeMenuButton(x, y, width, ButtonListenerChangeMenu.ButtonType.LVC_PROJECT_MANAGER);
 
         if (Configs.Generic.UNHIDE_SCHEMATIC_PROJECTS.getBooleanValue())
         {
@@ -157,7 +157,7 @@ public class GuiMainMenu extends GuiBase
                 case TASK_MANAGER:
                     gui = new GuiTaskManager();
                     break;
-                case LVC_PROJECT_MANAGER:
+                case LVC_PROJECT_BROWSER:
                     gui = new GuiLvcProjectBrowser();
                     break;
                 case SCHEMATIC_PROJECTS_MANAGER:
@@ -188,8 +188,8 @@ public class GuiMainMenu extends GuiBase
             SCHEMATIC_MANAGER           ("litematica.gui.button.change_menu.schematic_manager", ButtonIcons.SCHEMATIC_MANAGER),
             // Open the Task Manager
             TASK_MANAGER                ("litematica.gui.button.change_menu.task_manager", ButtonIcons.TASK_MANAGER),
-            // Open the LVC Project Manager
-            LVC_PROJECT_MANAGER         ("litematica.gui.button.change_menu.lvc_project_manager", ButtonIcons.FOLDER),
+            // Open the Gitmatica Project Browser
+            LVC_PROJECT_BROWSER         ("litematica.gui.button.change_menu.lvc_project_browser", ButtonIcons.FOLDER),
             // Open the Schematic Projects browser
             SCHEMATIC_PROJECTS_MANAGER  ("litematica.gui.button.change_menu.schematic_projects_manager", ButtonIcons.SCHEMATIC_PROJECTS),
             // In-game Configuration GUI

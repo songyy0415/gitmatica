@@ -12,6 +12,7 @@ public class WidgetLvcBranchDropdown extends WidgetLvcSearchableListDropdown<Str
 {
     private static final int BRANCH_ICON_SIZE = 14;
     private static final String OPTIONS_TOOLTIP_KEY = "litematica.gui.label.lvc_project.branch_dropdown_options_hint";
+    private static final String SOFT_LOAD_TOOLTIP_KEY = "litematica.gui.label.lvc_project.branch_dropdown_soft_load_hint";
 
     @Nullable private String headBranch;
     @Nullable private String detachedCommitId;
@@ -98,7 +99,10 @@ public class WidgetLvcBranchDropdown extends WidgetLvcSearchableListDropdown<Str
     @Override
     protected List<String> closedTooltipLines()
     {
-        return List.of(StringUtils.translate(OPTIONS_TOOLTIP_KEY));
+        return List.of(
+                StringUtils.translate(OPTIONS_TOOLTIP_KEY),
+                StringUtils.translate(SOFT_LOAD_TOOLTIP_KEY)
+        );
     }
 
     @Override

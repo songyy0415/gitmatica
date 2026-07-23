@@ -1,5 +1,6 @@
 package me.niicide.lvc.gui;
 
+import java.io.IOException;
 import java.util.List;
 import java.util.Optional;
 import javax.annotation.Nullable;
@@ -47,15 +48,13 @@ final class LvcCheckoutWorkflow
 
         try
         {
-            if (LvcProjectService.headMatchesCommit(controller.gui.repositoryDirectory, commit.id()))
+            CheckoutTarget target = CheckoutTarget.commit(commit);
+
+            if (rejectAlreadyLoaded(controller, handle.get(), target))
             {
-                LvcTaskRegistry.release(handle.get());
-                LvcGuiMessages.show(MessageType.ERROR, "litematica.message.lvc_project.already_at_version", commit.shortId());
-                controller.refreshRepositoryState();
                 return;
             }
 
-            CheckoutTarget target = CheckoutTarget.commit(commit);
             LvcWorldBackend backend = LvcWorldBackend.resolve(minecraft.level);
 
             if (backend != LvcWorldBackend.DIRECT)
@@ -76,40 +75,7 @@ final class LvcCheckoutWorkflow
 
     static void checkoutCommit(GuiLvcProjectController controller, LvcProjectService.CommitInfo commit)
     {
-        Minecraft minecraft = Minecraft.getInstance();
-
-        if (minecraft.level == null)
-        {
-            LvcGuiMessages.show(MessageType.ERROR, "litematica.error.lvc_project.no_world");
-            return;
-        }
-
-        Optional<LvcOperationHandle> handle = LvcOperationCoordinator.acquire(controller, "LVC Checkout");
-
-        if (handle.isEmpty())
-        {
-            return;
-        }
-
-        try
-        {
-            CheckoutTarget target = CheckoutTarget.commit(commit);
-            LvcWorldBackend backend = LvcWorldBackend.resolve(minecraft.level);
-
-            if (backend != LvcWorldBackend.DIRECT)
-            {
-                scheduleRemoteCheckoutPreflight(controller, handle.get(), minecraft.level, target);
-                return;
-            }
-
-            Level restoreWorld = LvcWorldAccess.resolveSemanticRestoreWorld(minecraft.level);
-            scheduleCheckoutPreflight(controller, handle.get(), restoreWorld, target);
-        }
-        catch (Exception e)
-        {
-            LvcTaskRegistry.release(handle.get());
-            LvcGuiMessages.showTaskError(Operation.CHECKOUT, "litematica.error.lvc_project.checkout_failed", e);
-        }
+        promptCheckoutCommit(controller, commit);
     }
 
     static void promptCheckoutBranch(GuiLvcProjectController controller, String branchName)
@@ -133,6 +99,14 @@ final class LvcCheckoutWorkflow
         try
         {
             String targetCommitId = LvcProjectService.localBranchTipCommitId(controller.gui.repositoryDirectory, trimmedBranchName);
+            CheckoutTarget target = CheckoutTarget.branch(trimmedBranchName, targetCommitId);
+
+            if (target.isAlreadyLoaded(controller))
+            {
+                controller.gui.syncBranchDropdownSelection();
+                controller.showAlreadyAtVersion(targetCommitId);
+                return;
+            }
 
             if (LvcProjectService.headMatchesCommit(controller.gui.repositoryDirectory, targetCommitId))
             {
@@ -157,7 +131,6 @@ final class LvcCheckoutWorkflow
                 return;
             }
 
-            CheckoutTarget target = CheckoutTarget.branch(trimmedBranchName, targetCommitId);
             LvcWorldBackend backend = LvcWorldBackend.resolve(minecraft.level);
 
             if (backend != LvcWorldBackend.DIRECT)
@@ -183,7 +156,16 @@ final class LvcCheckoutWorkflow
         try
         {
             LvcProjectService.checkoutBranchToWorkingTree(controller.gui.repositoryDirectory, branchName);
-            controller.focusTrackingOverlay();
+
+            if (LvcProjectService.isCurrentTrackingOverlayLoaded(controller.gui.repositoryDirectory))
+            {
+                controller.focusTrackingOverlay();
+            }
+            else
+            {
+                controller.loadTrackingOverlay();
+            }
+
             controller.refreshRepositoryState();
             controller.gui.refreshHistory();
             controller.gui.initGui();
@@ -312,6 +294,20 @@ final class LvcCheckoutWorkflow
         }
 
         openCheckoutConfirm(controller, handle, result.prepared(), target);
+    }
+
+    private static boolean rejectAlreadyLoaded(GuiLvcProjectController controller, LvcOperationHandle handle,
+                                               CheckoutTarget target) throws IOException
+    {
+        if (!target.isAlreadyLoaded(controller))
+        {
+            return false;
+        }
+
+        LvcTaskRegistry.release(handle);
+        target.syncBranchDropdownIfNeeded(controller);
+        controller.showAlreadyAtVersion(target.commitId());
+        return true;
     }
 
     private static void openCheckoutConfirm(GuiLvcProjectController controller, LvcOperationHandle handle,
@@ -491,6 +487,13 @@ final class LvcCheckoutWorkflow
         private Operation operation()
         {
             return this.branchSwitch ? Operation.CHECKOUT_BRANCH : Operation.CHECKOUT;
+        }
+
+        private boolean isAlreadyLoaded(GuiLvcProjectController controller) throws IOException
+        {
+            return this.branchSwitch ?
+                    controller.isBranchAlreadyLoaded(this.branchName, this.commitId) :
+                    controller.isVersionAlreadyLoaded(this.commitId);
         }
 
         private boolean reattachIfNeeded(GuiLvcProjectController controller)
