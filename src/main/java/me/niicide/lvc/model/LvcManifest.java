@@ -8,7 +8,6 @@ import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
 import java.util.TreeMap;
-import java.util.UUID;
 import com.google.gson.Gson;
 import com.google.gson.GsonBuilder;
 import com.google.gson.JsonElement;
@@ -19,7 +18,6 @@ import me.niicide.lvc.storage.LvcChunkStore;
 
 public record LvcManifest(
         String format,
-        @SerializedName("project_id") UUID projectId,
         String name,
         Content content,
         List<Site> sites)
@@ -36,7 +34,7 @@ public record LvcManifest(
 
     public static LvcManifest create(String name, List<Site> sites)
     {
-        return new LvcManifest(FORMAT, UUID.randomUUID(), name, Content.defaultContent(), sites).validate();
+        return new LvcManifest(FORMAT, name, Content.defaultContent(), sites).validate();
     }
 
     public static LvcManifest fromJson(String json)
@@ -55,7 +53,7 @@ public record LvcManifest(
             sites.add(new Site(site.id(), site.name(), site.dimension(), site.regions(), site.hashIndex(), Map.of(), Map.of()));
         }
 
-        return new LvcManifest(manifest.format(), manifest.projectId(), manifest.name(), Content.defaultContent(), sites).validate();
+        return new LvcManifest(manifest.format(), manifest.name(), Content.defaultContent(), sites).validate();
     }
 
     public String toJson()
@@ -67,7 +65,7 @@ public record LvcManifest(
             jsonSites.add(new SiteJson(site.id(), site.name(), site.dimension(), site.regions(), site.hashIndex()));
         }
 
-        return GSON.toJson(new ManifestJson(this.format, this.projectId, this.name, jsonSites));
+        return GSON.toJson(new ManifestJson(this.format, this.name, jsonSites));
     }
 
     public static boolean hasSerializedContent(String json)
@@ -79,7 +77,6 @@ public record LvcManifest(
     public LvcManifest validate()
     {
         requireEquals(FORMAT, this.format, "manifest format");
-        requireNotNull(this.projectId, "project_id");
         requireNotBlank(this.name, "project name");
         requireNotNull(this.content, "content").validate();
         requireNotNull(this.sites, "sites");
@@ -140,7 +137,7 @@ public record LvcManifest(
             throw new IllegalArgumentException("Unknown LVC site id: " + siteId);
         }
 
-        return new LvcManifest(this.format, this.projectId, this.name, this.content, updatedSites).validate();
+        return new LvcManifest(this.format, this.name, this.content, updatedSites).validate();
     }
 
     public LvcManifest withSite(String siteId, Site updatedSite)
@@ -174,7 +171,7 @@ public record LvcManifest(
             throw new IllegalArgumentException("Unknown LVC site id: " + siteId);
         }
 
-        return new LvcManifest(this.format, this.projectId, this.name, this.content, updatedSites).validate();
+        return new LvcManifest(this.format, this.name, this.content, updatedSites).validate();
     }
 
     private static void requireEquals(String expected, String actual, String label)
@@ -379,8 +376,7 @@ public record LvcManifest(
         return normalized;
     }
 
-    private record ManifestJson(String format, @SerializedName("project_id") UUID projectId, String name,
-                                List<SiteJson> sites)
+    private record ManifestJson(String format, String name, List<SiteJson> sites)
     {
     }
 

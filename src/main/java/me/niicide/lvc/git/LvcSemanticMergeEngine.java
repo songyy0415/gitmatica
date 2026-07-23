@@ -50,7 +50,7 @@ final class LvcSemanticMergeEngine
             mergedChunks += siteMerge.mergedChunks();
         }
 
-        return new LvcSemanticMergeResult(new LvcManifest(metadata.format(), metadata.projectId(), metadata.name(), metadata.content(), mergedSites), mergedChunks);
+        return new LvcSemanticMergeResult(new LvcManifest(metadata.format(), metadata.name(), metadata.content(), mergedSites), mergedChunks);
     }
 
     private static LvcManifest chooseManifestMetadata(LvcManifest baseManifest, LvcManifest currentManifest,

@@ -41,7 +41,6 @@ public final class LvcSemanticProjectEditor
         LvcManifest manifestWithSiteName = project.manifest().withSite(project.siteId(), project.site().withName(normalizedName));
         LvcManifest updatedManifest = new LvcManifest(
                 manifestWithSiteName.format(),
-                manifestWithSiteName.projectId(),
                 normalizedName,
                 manifestWithSiteName.content(),
                 manifestWithSiteName.sites()

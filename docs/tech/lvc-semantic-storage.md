@@ -109,7 +109,6 @@ Example:
 ```json
 {
   "format": "lvc-manifest-v1",
-  "project_id": "2f3b5d3a-64c1-46c1-9658-193d24283e68",
   "name": "gold_farm",
   "sites": [
     {
@@ -146,7 +145,6 @@ Example:
 
 Required rules:
 
-- `project_id` is stable and generated at project init.
 - `site.id` and `region.id` are stable opaque IDs, not display names.
 - `site.name` and `region.name` are user-facing and may be renamed.
 - `region.min` is relative to the site's project coordinate space.

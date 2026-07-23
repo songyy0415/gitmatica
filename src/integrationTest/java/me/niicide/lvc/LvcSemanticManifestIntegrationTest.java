@@ -11,6 +11,8 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
+import com.google.gson.JsonParser;
 import net.minecraft.core.BlockPos;
 import org.eclipse.jgit.api.Git;
 import org.eclipse.jgit.lib.Constants;
@@ -62,7 +64,11 @@ final class LvcSemanticManifestIntegrationTest
         LvcManifest manifest = LvcManifest.create("Gold Farm", List.of(overworldMain, overworldRemote));
         String json = manifest.toJson();
 
-        IntegrationTestSupport.assertTrue(json.contains("\"project_id\""), "manifest should use project_id JSON key");
+        IntegrationTestSupport.assertEquals(
+                Set.of("format", "name", "sites"),
+                JsonParser.parseString(json).getAsJsonObject().keySet(),
+                "manifest should serialize only supported top-level metadata"
+        );
         IntegrationTestSupport.assertTrue(!json.contains("\"content\""), "manifest should not serialize internal content settings");
         IntegrationTestSupport.assertTrue(!json.contains("\"chunk_size\""), "manifest should not expose internal chunk size");
         IntegrationTestSupport.assertTrue(!json.contains("\"hash_index_format\""), "manifest should not expose internal hash index format");

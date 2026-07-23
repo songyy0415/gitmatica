@@ -250,7 +250,7 @@ public final class LvcSemanticRepository
             sites.add(site.withHashRefs(refs.fullHashes(), refs.trackedHashes()));
         }
 
-        return new LvcManifest(manifest.format(), manifest.projectId(), manifest.name(), manifest.content(), sites).validate();
+        return new LvcManifest(manifest.format(), manifest.name(), manifest.content(), sites).validate();
     }
 
     public static Map<String, String> computeTrackedHashesFromFullObjects(Path repositoryDirectory, LvcManifest.Site site) throws IOException
