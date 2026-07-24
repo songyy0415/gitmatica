@@ -1,0 +1,139 @@
+plugins {
+    id "net.fabricmc.fabric-loom" version "1.17.+"
+    id "maven-publish"
+}
+
+repositories {
+    mavenCentral()
+    mavenLocal()
+    maven {
+        url = "https://masa.dy.fi/maven/sakura-ryoko"
+        content { includeGroupAndSubgroups("fi.dy.masa") }
+    }
+    maven {
+        url = "https://maven.fallenbreath.me/releases"
+        content { includeGroupAndSubgroups("me.fallenbreath") }
+    }
+    maven {
+        url = "https://maven.terraformersmc.com/releases/"
+        content { includeGroupAndSubgroups("com.terraformersmc") }
+    }
+}
+
+dependencies {
+    minecraft "com.mojang:minecraft:${project.minecraft_version}"
+    implementation "net.fabricmc:fabric-loader:${project.fabric_loader_version}"
+    implementation "com.google.code.findbugs:jsr305:3.0.2"
+
+    implementation "fi.dy.masa.malilib:malilib-fabric-${project.minecraft_version_out}:${project.malilib_version}"
+    implementation "fi.dy.masa.litematica:litematica-fabric-${project.minecraft_version_out}:${project.litematica_version}"
+
+    implementation "org.eclipse.jgit:org.eclipse.jgit:7.6.0.202603022253-r"
+    include "org.eclipse.jgit:org.eclipse.jgit:7.6.0.202603022253-r"
+    include "com.googlecode.javaewah:JavaEWAH:1.2.3"
+
+    compileOnly "com.terraformersmc:modmenu:${project.mod_menu_version}"
+}
+
+loom {
+    runs {
+        client {
+            if (project.hasProperty("gitmaticaAuditMixins")) {
+                vmArg "-Dgitmatica.auditMixins=true"
+            }
+        }
+    }
+}
+
+sourceSets {
+    integrationTest {
+        java.srcDir file("src/integrationTest/java")
+        resources.srcDir file("src/integrationTest/resources")
+        compileClasspath += sourceSets.main.output + configurations.runtimeClasspath
+        runtimeClasspath += output + compileClasspath
+    }
+}
+
+tasks.register("integrationTest", JavaExec) {
+    group = "verification"
+    description = "Runs Gitmatica integration tests without mocks."
+    classpath = sourceSets.integrationTest.runtimeClasspath
+    mainClass = "me.niicide.lvc.LvcRepositoryIntegrationTest"
+}
+
+check.dependsOn integrationTest
+
+base {
+    group = "${project.group}.${project.mod_id}"
+    archivesName = "${project.mod_file_name}-${project.minecraft_version_out}"
+    version = project.mod_version
+}
+
+processResources {
+    inputs.properties([
+            mod_id: project.mod_id,
+            mod_name: project.mod_name,
+            mod_version: project.mod_version,
+            author: project.author,
+            minecraft_version: project.minecraft_version,
+            fabric_loader_version: project.fabric_loader_version,
+            litematica_version: project.litematica_version,
+            malilib_version: project.malilib_version
+    ])
+
+    filesMatching("fabric.mod.json") {
+        expand([
+                mod_id: project.mod_id,
+                mod_name: project.mod_name,
+                mod_version: project.mod_version,
+                author: project.author,
+                minecraft_version: project.minecraft_version,
+                fabric_loader_version: project.fabric_loader_version,
+                litematica_version: project.litematica_version,
+                malilib_version: project.malilib_version
+        ])
+    }
+}
+
+tasks.withType(JavaCompile).configureEach {
+    options.encoding = "UTF-8"
+    options.release = 25
+}
+
+java {
+    sourceCompatibility = JavaVersion.VERSION_25
+    targetCompatibility = JavaVersion.VERSION_25
+    withSourcesJar()
+}
+
+jar {
+    archiveClassifier = "dev"
+    from("LICENSE.txt") {
+        rename { "${it}_${base.archivesName.get()}" }
+    }
+    from("NOTICE.md") {
+        rename { "${it}_${base.archivesName.get()}" }
+    }
+}
+
+tasks.register("releaseJar", Jar) {
+    group = "build"
+    description = "Creates the installable Gitmatica addon jar with nested libraries."
+    archiveClassifier = ""
+    dependsOn tasks.named("jar")
+    from({ zipTree(tasks.named("jar").get().archiveFile.get().asFile) })
+    exclude "META-INF/*.SF", "META-INF/*.DSA", "META-INF/*.RSA", "META-INF/*.EC", "META-INF/INDEX.LIST"
+}
+
+tasks.named("assemble") {
+    dependsOn tasks.named("releaseJar")
+}
+
+publishing {
+    publications {
+        mavenJava(MavenPublication) {
+            artifactId = base.archivesName.get()
+            from components.java
+        }
+    }
+}

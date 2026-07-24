@@ -1,0 +1,34 @@
+{
+  "required": true,
+  "minVersion": "0.8",
+  "package": "me.niicide.lvc.mixin",
+  "compatibilityLevel": "JAVA_25",
+  "client": [
+    "access.PlacementManagerDaemonAccess",
+    "gui.MixinGuiMainMenu",
+    "gui.MixinGuiSchematicSaveBase",
+    "gui.widget.MixinBlockMismatchInfo",
+    "gui.widget.MixinWidgetSchematicEntry",
+    "gui.widget.MixinWidgetSchematicPlacement",
+    "hotkey.MixinKeyCallbackHotkeys",
+    "inventory.MixinAbstractContainerScreenInventory",
+    "inventory.MixinClientPacketListenerInventory",
+    "inventory.MixinGuiGraphicsExtractorVerifierInventory",
+    "inventory.MixinGuiRendererVerifierInventory",
+    "inventory.MixinInventoryOverlayVerifierInventory",
+    "inventory.MixinMinecraftGui",
+    "inventory.MixinMultiPlayerGameModeInventory",
+    "lifecycle.MixinEntityDataManager",
+    "network.MixinServuxLitematicaHandler",
+    "placement.MixinPlacementManagerTask",
+    "placement.MixinPlacementManagerTaskRebuild",
+    "render.MixinChunkRendererSchematicVbo",
+    "render.MixinOverlayRenderer",
+    "render.MixinWorldRendererSchematic",
+    "task.MixinTaskScheduler",
+    "verifier.MixinSchematicVerifier"
+  ],
+  "injectors": {
+    "defaultRequire": 1
+  }
+}

@@ -1,0 +1,919 @@
+package me.niicide.lvc.gui;
+
+import me.niicide.lvc.git.LvcGitBranchOps;
+import java.io.IOException;
+import java.util.Optional;
+import java.nio.file.Path;
+import javax.annotation.Nullable;
+import net.minecraft.client.Minecraft;
+import net.minecraft.world.level.Level;
+import me.niicide.lvc.LvcDiagnostics;
+import me.niicide.lvc.LvcFriendlyErrors.Operation;
+import org.eclipse.jgit.lib.ObjectId;
+import me.niicide.lvc.task.LvcOperationHandle;
+import me.niicide.lvc.task.LvcOperationJournal;
+import me.niicide.lvc.task.LvcRemoteServerApplyTask;
+import me.niicide.lvc.task.LvcSemanticCheckoutTask;
+import me.niicide.lvc.task.LvcSemanticDiscardTask;
+import me.niicide.lvc.task.LvcTaskCallbacks;
+import me.niicide.lvc.task.LvcTaskRegistry;
+import me.niicide.lvc.task.LvcTaskScheduling;
+import me.niicide.lvc.world.LvcWorldAccess;
+import me.niicide.lvc.world.LvcWorldBackend;
+import me.niicide.lvc.storage.LvcChunkStagingStore;
+import me.niicide.lvc.storage.LvcRepository;
+import fi.dy.masa.malilib.gui.GuiBase;
+import fi.dy.masa.malilib.gui.Message.MessageType;
+import fi.dy.masa.malilib.util.StringUtils;
+
+final class LvcProjectRecoveryWorkflow
+{
+    private LvcProjectRecoveryWorkflow()
+    {
+    }
+
+    static boolean recoverInterruptedOperation(GuiLvcProjectController controller)
+    {
+        try
+        {
+            LvcOperationJournal.Entry entry = LvcOperationJournal.read(controller.gui.repositoryDirectory);
+
+            if (entry == null)
+            {
+                return false;
+            }
+
+            LvcOperationJournal.Operation operation = LvcOperationJournal.Operation.valueOf(entry.operation());
+            LvcDiagnostics.debug("LVC recovery journal detected repo='{}' operation='{}' phase='{}' targetCommit='{}' targetBranch='{}' startedAt='{}'",
+                    controller.gui.repositoryDirectory, entry.operation(), entry.phase(), entry.targetCommit(), entry.targetBranch(), entry.startedAt());
+
+            if (isWorldMutatingRecoveryOperation(operation))
+            {
+                controller.setPendingInterruptedOperation(entry, operation);
+                return false;
+            }
+
+            cleanupInterruptedOperationData(controller.gui.repositoryDirectory);
+            openInterruptedOperationCancelledDialog(controller, operation);
+            LvcDiagnostics.debug("LVC interrupted non-world operation cancelled repo='{}' operation='{}' phase='{}'",
+                    controller.gui.repositoryDirectory, entry.operation(), entry.phase());
+            return false;
+        }
+        catch (LvcOperationJournal.CorruptJournalException e)
+        {
+            try
+            {
+                LvcOperationJournal.quarantineCorruptJournals(controller.gui.repositoryDirectory, e.corruptPaths());
+            }
+            catch (Exception quarantineFailure)
+            {
+                LvcDiagnostics.warn("Failed to quarantine corrupt LVC operation journal repo='{}' error='{}'",
+                        controller.gui.repositoryDirectory, quarantineFailure.getMessage());
+            }
+
+            openRecoveryDataUnreadableDialog(controller);
+            LvcDiagnostics.warn("Corrupt LVC operation journal quarantined repo='{}' paths={}",
+                    controller.gui.repositoryDirectory, e.corruptPaths());
+            return false;
+        }
+        catch (Exception e)
+        {
+            LvcGuiMessages.showTaskError(Operation.RECOVERY, "gitmatica.error.lvc_project.recovery_failed", e);
+            return true;
+        }
+    }
+
+    static void promptPendingInterruptedOperation(GuiLvcProjectController controller, LvcOperationJournal.Entry entry,
+                                                  LvcOperationJournal.Operation operation)
+    {
+        GuiBase.openGui(new GuiLvcRecoveryDialog(
+                LvcOperationCoordinator.confirmParent(controller),
+                entry,
+                operation,
+                () -> restartInterruptedOperation(controller, entry, operation),
+                () -> abortInterruptedOperation(controller, entry, operation),
+                () -> cancelInterruptedOperationPrompt(controller, entry, operation)
+        ));
+    }
+
+    private static boolean isWorldMutatingRecoveryOperation(LvcOperationJournal.Operation operation)
+    {
+        return operation == LvcOperationJournal.Operation.CHECKOUT ||
+                operation == LvcOperationJournal.Operation.DISCARD ||
+                operation == LvcOperationJournal.Operation.CLEAR ||
+                operation == LvcOperationJournal.Operation.MERGE ||
+                operation == LvcOperationJournal.Operation.DELETE_VERSION;
+    }
+
+    private static void restartInterruptedOperation(GuiLvcProjectController controller, LvcOperationJournal.Entry entry,
+                                                    LvcOperationJournal.Operation operation)
+    {
+        LvcDiagnostics.debug("LVC interrupted operation restart selected repo='{}' operation='{}' phase='{}' targetCommit='{}' targetBranch='{}' previousHead='{}' previousBranch='{}'",
+                controller.gui.repositoryDirectory, entry.operation(), entry.phase(), entry.targetCommit(), entry.targetBranch(),
+                entry.previousHead(), entry.previousBranch());
+        Minecraft minecraft = Minecraft.getInstance();
+
+        if (operation == LvcOperationJournal.Operation.MERGE && restartInterruptedMergeGitIfNeeded(controller, entry))
+        {
+            return;
+        }
+
+        if ((operation == LvcOperationJournal.Operation.CHECKOUT ||
+                operation == LvcOperationJournal.Operation.DELETE_VERSION) &&
+                (entry.targetCommit() == null || entry.targetCommit().isBlank()))
+        {
+            LvcGuiMessages.show(MessageType.ERROR, "gitmatica.error.lvc_project.recovery_failed", "Missing recovery target commit");
+            return;
+        }
+
+        if (minecraft.level == null)
+        {
+            LvcGuiMessages.show(MessageType.ERROR, "gitmatica.error.lvc_project.recovery_requires_world");
+            return;
+        }
+
+        Optional<LvcOperationHandle> handle = LvcOperationCoordinator.acquire(controller, "LVC Recovery");
+
+        if (handle.isEmpty())
+        {
+            return;
+        }
+
+        try
+        {
+            Level restoreWorld = recoveryRestoreWorld(minecraft.level, operation);
+            String mergeRestoreCommit = operation == LvcOperationJournal.Operation.MERGE ?
+                    mergeRecoveryRestoreCommit(controller, entry) : entry.targetCommit();
+            cleanupInterruptedOperationData(controller.gui.repositoryDirectory);
+            controller.clearPendingInterruptedOperation();
+
+            if (operation == LvcOperationJournal.Operation.CLEAR)
+            {
+                LvcOperationJournal.write(controller.gui.repositoryDirectory, LvcOperationJournal.Operation.CLEAR, null, "clear");
+                LvcAreaWorkflow.scheduleClear(controller, handle.get(), restoreWorld);
+            }
+            else if (operation == LvcOperationJournal.Operation.CHECKOUT)
+            {
+                String targetBranch = recoveryBranchForCommit(controller.gui.repositoryDirectory, entry.targetCommit(), entry.targetBranch());
+                LvcOperationJournal.writeCheckout(controller.gui.repositoryDirectory, entry.targetCommit(), targetBranch,
+                        entry.previousHead(), entry.previousBranch(), "restore");
+                scheduleRecoveryCheckout(controller, handle.get(), restoreWorld, entry.targetCommit(), targetBranch,
+                        entry.previousHead(), entry.previousBranch(), "gitmatica.message.lvc_project.recovery_completed");
+            }
+            else if (operation == LvcOperationJournal.Operation.DELETE_VERSION)
+            {
+                if (entry.targetBranch() == null || entry.targetBranch().isBlank())
+                {
+                    throw new IllegalStateException("Missing delete-version target branch");
+                }
+
+                LvcOperationJournal.writeDeleteVersion(controller.gui.repositoryDirectory, entry.targetCommit(), entry.targetBranch(),
+                        entry.previousHead(), entry.previousBranch(), "restore");
+                scheduleRecoveryCheckout(controller, handle.get(), restoreWorld, entry.targetCommit(), entry.targetBranch(),
+                        entry.previousHead(), entry.previousBranch(), true, LvcOperationJournal.Operation.DELETE_VERSION,
+                        "LVC Delete Version", "gitmatica.message.lvc_project.recovery_completed");
+            }
+            else if (operation == LvcOperationJournal.Operation.DISCARD)
+            {
+                LvcOperationJournal.write(controller.gui.repositoryDirectory, LvcOperationJournal.Operation.DISCARD,
+                        entry.targetCommit(), "discard");
+                scheduleRecoveryDiscard(controller, handle.get(), restoreWorld, entry.targetCommit());
+            }
+            else if (operation == LvcOperationJournal.Operation.MERGE)
+            {
+                boolean rollbackMerge = isMergeRollbackJournal(entry, mergeRestoreCommit);
+
+                LvcOperationJournal.write(controller.gui.repositoryDirectory, LvcOperationJournal.Operation.MERGE,
+                        mergeRestoreCommit, entry.targetBranch(), entry.sourceBranch(), entry.previousHead(), "restore");
+
+                if (rollbackMerge)
+                {
+                    resetMergeTargetBranchForRollback(controller.gui.repositoryDirectory, entry.targetBranch(), mergeRestoreCommit);
+                }
+
+                scheduleRecoveryMergeRestore(controller, handle.get(), restoreWorld, mergeRestoreCommit,
+                        entry.targetBranch(), entry.sourceBranch(), entry.previousHead(),
+                        "gitmatica.message.lvc_project.recovery_completed");
+            }
+            else
+            {
+                LvcTaskRegistry.release(handle.get());
+                return;
+            }
+
+            LvcGuiMessages.show(MessageType.INFO, "gitmatica.message.lvc_project.recovery_started",
+                    GuiLvcRecoveryDialog.displayOperation(operation));
+        }
+        catch (Exception e)
+        {
+            LvcTaskRegistry.release(handle.get());
+            LvcGuiMessages.showTaskError(Operation.RECOVERY, "gitmatica.error.lvc_project.recovery_failed", e);
+        }
+    }
+
+    private static void abortInterruptedOperation(GuiLvcProjectController controller, LvcOperationJournal.Entry entry,
+                                                  LvcOperationJournal.Operation operation)
+    {
+        if (operation == LvcOperationJournal.Operation.CHECKOUT)
+        {
+            abortInterruptedCheckout(controller, entry, operation);
+            return;
+        }
+
+        if (operation == LvcOperationJournal.Operation.MERGE)
+        {
+            abortInterruptedMerge(controller, entry, operation);
+            return;
+        }
+
+        if (operation == LvcOperationJournal.Operation.DELETE_VERSION)
+        {
+            abortInterruptedDeleteVersion(controller, entry, operation);
+            return;
+        }
+
+        try
+        {
+            LvcDiagnostics.debug("LVC interrupted operation abort selected repo='{}' operation='{}' phase='{}' targetCommit='{}' targetBranch='{}' previousHead='{}' previousBranch='{}'",
+                    controller.gui.repositoryDirectory, entry.operation(), entry.phase(), entry.targetCommit(), entry.targetBranch(),
+                    entry.previousHead(), entry.previousBranch());
+            cleanupInterruptedMergeGitState(controller.gui.repositoryDirectory, entry);
+            cleanupInterruptedOperationData(controller.gui.repositoryDirectory);
+            controller.clearPendingInterruptedOperation();
+            controller.focusTrackingOverlay();
+            openInterruptedRestorelessOperationAbortedDialog(controller, operation);
+        }
+        catch (Exception e)
+        {
+            LvcGuiMessages.showTaskError(Operation.RECOVERY, "gitmatica.error.lvc_project.recovery_failed", e);
+        }
+    }
+
+    private static void abortInterruptedCheckout(GuiLvcProjectController controller, LvcOperationJournal.Entry entry,
+                                                 LvcOperationJournal.Operation operation)
+    {
+        LvcDiagnostics.debug("LVC interrupted checkout abort selected repo='{}' phase='{}' targetCommit='{}' targetBranch='{}' previousHead='{}' previousBranch='{}'",
+                controller.gui.repositoryDirectory, entry.phase(), entry.targetCommit(), entry.targetBranch(),
+                entry.previousHead(), entry.previousBranch());
+
+        if (entry.previousHead() == null || entry.previousHead().isBlank())
+        {
+            LvcGuiMessages.show(MessageType.ERROR, "gitmatica.error.lvc_project.recovery_failed",
+                    "Missing checkout rollback version; restart recovery to finish checkout");
+            return;
+        }
+
+        Minecraft minecraft = Minecraft.getInstance();
+
+        if (minecraft.level == null)
+        {
+            LvcGuiMessages.show(MessageType.ERROR, "gitmatica.error.lvc_project.recovery_requires_world");
+            return;
+        }
+
+        Optional<LvcOperationHandle> handle = LvcOperationCoordinator.acquire(controller, "LVC Recovery");
+
+        if (handle.isEmpty())
+        {
+            return;
+        }
+
+        try
+        {
+            Level restoreWorld = recoveryRestoreWorld(minecraft.level, operation);
+            String rollbackCommit = entry.previousHead();
+            String rollbackBranch = recoveryBranchForCommit(controller.gui.repositoryDirectory, rollbackCommit, entry.previousBranch());
+            cleanupInterruptedOperationData(controller.gui.repositoryDirectory);
+            controller.clearPendingInterruptedOperation();
+
+            LvcOperationJournal.writeCheckout(controller.gui.repositoryDirectory, rollbackCommit, rollbackBranch,
+                    rollbackCommit, rollbackBranch, "restore");
+            scheduleRecoveryCheckout(controller, handle.get(), restoreWorld, rollbackCommit, rollbackBranch,
+                    rollbackCommit, rollbackBranch, "gitmatica.message.lvc_project.recovery_aborted",
+                    GuiLvcRecoveryDialog.displayOperation(operation));
+            LvcGuiMessages.show(MessageType.INFO, "gitmatica.message.lvc_project.task_started", "LVC Recovery");
+        }
+        catch (Exception e)
+        {
+            LvcTaskRegistry.release(handle.get());
+            LvcGuiMessages.showTaskError(Operation.RECOVERY, "gitmatica.error.lvc_project.recovery_failed", e);
+        }
+    }
+
+    private static void abortInterruptedDeleteVersion(GuiLvcProjectController controller, LvcOperationJournal.Entry entry,
+                                                      LvcOperationJournal.Operation operation)
+    {
+        LvcDiagnostics.debug("LVC interrupted delete-version abort selected repo='{}' phase='{}' targetCommit='{}' targetBranch='{}' previousHead='{}' previousBranch='{}'",
+                controller.gui.repositoryDirectory, entry.phase(), entry.targetCommit(), entry.targetBranch(),
+                entry.previousHead(), entry.previousBranch());
+
+        if (entry.previousHead() == null || entry.previousHead().isBlank())
+        {
+            LvcGuiMessages.show(MessageType.ERROR, "gitmatica.error.lvc_project.recovery_failed",
+                    "Missing delete-version rollback version; restart recovery to finish deleting the version");
+            return;
+        }
+
+        if (entry.previousBranch() == null || entry.previousBranch().isBlank())
+        {
+            LvcGuiMessages.show(MessageType.ERROR, "gitmatica.error.lvc_project.recovery_failed",
+                    "Missing delete-version rollback branch; restart recovery to finish deleting the version");
+            return;
+        }
+
+        Minecraft minecraft = Minecraft.getInstance();
+
+        if (minecraft.level == null)
+        {
+            LvcGuiMessages.show(MessageType.ERROR, "gitmatica.error.lvc_project.recovery_requires_world");
+            return;
+        }
+
+        Optional<LvcOperationHandle> handle = LvcOperationCoordinator.acquire(controller, "LVC Recovery");
+
+        if (handle.isEmpty())
+        {
+            return;
+        }
+
+        try
+        {
+            Level restoreWorld = recoveryRestoreWorld(minecraft.level, operation);
+            String rollbackCommit = entry.previousHead().trim();
+            String rollbackBranch = entry.previousBranch().trim();
+            cleanupInterruptedOperationData(controller.gui.repositoryDirectory);
+            controller.clearPendingInterruptedOperation();
+
+            LvcOperationJournal.writeDeleteVersion(controller.gui.repositoryDirectory, rollbackCommit, rollbackBranch,
+                    rollbackCommit, rollbackBranch, "restore");
+            scheduleRecoveryCheckout(controller, handle.get(), restoreWorld, rollbackCommit, rollbackBranch,
+                    rollbackCommit, rollbackBranch, true, LvcOperationJournal.Operation.DELETE_VERSION,
+                    "LVC Delete Version", "gitmatica.message.lvc_project.recovery_aborted",
+                    GuiLvcRecoveryDialog.displayOperation(operation));
+            LvcGuiMessages.show(MessageType.INFO, "gitmatica.message.lvc_project.task_started", "LVC Recovery");
+        }
+        catch (Exception e)
+        {
+            LvcTaskRegistry.release(handle.get());
+            LvcGuiMessages.showTaskError(Operation.RECOVERY, "gitmatica.error.lvc_project.recovery_failed", e);
+        }
+    }
+
+    private static void abortInterruptedMerge(GuiLvcProjectController controller, LvcOperationJournal.Entry entry,
+                                              LvcOperationJournal.Operation operation)
+    {
+        LvcDiagnostics.debug("LVC interrupted merge abort selected repo='{}' phase='{}' targetCommit='{}' targetBranch='{}' sourceBranch='{}' previousHead='{}'",
+                controller.gui.repositoryDirectory, entry.phase(), entry.targetCommit(), entry.targetBranch(),
+                entry.sourceBranch(), entry.previousHead());
+
+        try
+        {
+            if (LvcOperationJournal.PHASE_MERGE_GIT.equals(entry.phase()) && mergeHeadStillAtPreviousHead(controller.gui.repositoryDirectory, entry))
+            {
+                cleanupInterruptedMergeGitState(controller.gui.repositoryDirectory, entry);
+                cleanupInterruptedOperationData(controller.gui.repositoryDirectory);
+                controller.clearPendingInterruptedOperation();
+                controller.focusTrackingOverlay();
+                LvcGuiMessages.show(MessageType.SUCCESS, "gitmatica.message.lvc_project.recovery_aborted",
+                        GuiLvcRecoveryDialog.displayOperation(operation));
+                return;
+            }
+        }
+        catch (Exception e)
+        {
+            LvcGuiMessages.showTaskError(Operation.RECOVERY, "gitmatica.error.lvc_project.recovery_failed", e);
+            return;
+        }
+
+        if (entry.previousHead() == null || entry.previousHead().isBlank())
+        {
+            LvcGuiMessages.show(MessageType.ERROR, "gitmatica.error.lvc_project.recovery_failed",
+                    "Missing merge rollback version; restart recovery to finish merge");
+            return;
+        }
+
+        if (entry.targetBranch() == null || entry.targetBranch().isBlank())
+        {
+            LvcGuiMessages.show(MessageType.ERROR, "gitmatica.error.lvc_project.recovery_failed",
+                    "Missing merge target branch; restart recovery to finish merge");
+            return;
+        }
+
+        Minecraft minecraft = Minecraft.getInstance();
+
+        if (minecraft.level == null)
+        {
+            LvcGuiMessages.show(MessageType.ERROR, "gitmatica.error.lvc_project.recovery_requires_world");
+            return;
+        }
+
+        Optional<LvcOperationHandle> handle = LvcOperationCoordinator.acquire(controller, "LVC Recovery");
+
+        if (handle.isEmpty())
+        {
+            return;
+        }
+
+        try
+        {
+            Level restoreWorld = recoveryRestoreWorld(minecraft.level, operation);
+            String rollbackCommit = entry.previousHead().trim();
+            String targetBranch = entry.targetBranch().trim();
+            String sourceBranch = entry.sourceBranch() == null || entry.sourceBranch().isBlank() ? null : entry.sourceBranch().trim();
+            cleanupInterruptedOperationData(controller.gui.repositoryDirectory);
+            controller.clearPendingInterruptedOperation();
+
+            LvcOperationJournal.write(controller.gui.repositoryDirectory, LvcOperationJournal.Operation.MERGE,
+                    rollbackCommit, targetBranch, sourceBranch, rollbackCommit, "restore");
+            resetMergeTargetBranchForRollback(controller.gui.repositoryDirectory, targetBranch, rollbackCommit);
+            scheduleRecoveryMergeRestore(controller, handle.get(), restoreWorld, rollbackCommit,
+                    targetBranch, sourceBranch, rollbackCommit, "gitmatica.message.lvc_project.recovery_aborted",
+                    GuiLvcRecoveryDialog.displayOperation(operation));
+            LvcGuiMessages.show(MessageType.INFO, "gitmatica.message.lvc_project.task_started", "LVC Recovery");
+        }
+        catch (Exception e)
+        {
+            LvcTaskRegistry.release(handle.get());
+            LvcGuiMessages.showTaskError(Operation.RECOVERY, "gitmatica.error.lvc_project.recovery_failed", e);
+        }
+    }
+
+    private static void cancelInterruptedOperationPrompt(GuiLvcProjectController controller, LvcOperationJournal.Entry entry,
+                                                        LvcOperationJournal.Operation operation)
+    {
+        LvcDiagnostics.debug("LVC interrupted operation prompt cancelled repo='{}' operation='{}' phase='{}' targetCommit='{}' targetBranch='{}'",
+                controller.gui.repositoryDirectory, entry.operation(), entry.phase(), entry.targetCommit(), entry.targetBranch());
+    }
+
+    private static void cleanupInterruptedOperationData(Path repositoryDirectory) throws Exception
+    {
+        LvcChunkStagingStore.deleteRecursivelyIfExists(
+                LvcOperationJournal.gitLocalDirectory(repositoryDirectory).resolve(LvcOperationJournal.STAGING_DIRECTORY)
+        );
+        LvcOperationJournal.delete(repositoryDirectory);
+    }
+
+    private static boolean restartInterruptedMergeGitIfNeeded(GuiLvcProjectController controller,
+                                                              LvcOperationJournal.Entry entry)
+    {
+        if (!LvcOperationJournal.PHASE_MERGE_GIT.equals(entry.phase()))
+        {
+            return false;
+        }
+
+        try
+        {
+            if (!mergeHeadStillAtPreviousHead(controller.gui.repositoryDirectory, entry))
+            {
+                return false;
+            }
+
+            if (entry.sourceBranch() == null || entry.sourceBranch().isBlank())
+            {
+                LvcGuiMessages.show(MessageType.ERROR, "gitmatica.error.lvc_project.recovery_failed", "Missing merge source branch");
+                return true;
+            }
+
+            cleanupInterruptedMergeGitState(controller.gui.repositoryDirectory, entry);
+            cleanupInterruptedOperationData(controller.gui.repositoryDirectory);
+            controller.clearPendingInterruptedOperation();
+            LvcMergeWorkflow.mergeBranch(controller, entry.sourceBranch());
+            LvcGuiMessages.show(MessageType.INFO, "gitmatica.message.lvc_project.recovery_started",
+                    GuiLvcRecoveryDialog.displayOperation(LvcOperationJournal.Operation.MERGE));
+            return true;
+        }
+        catch (Exception e)
+        {
+            LvcGuiMessages.showTaskError(Operation.RECOVERY, "gitmatica.error.lvc_project.recovery_failed", e);
+            return true;
+        }
+    }
+
+    private static String mergeRecoveryRestoreCommit(GuiLvcProjectController controller, LvcOperationJournal.Entry entry) throws Exception
+    {
+        if (entry.targetCommit() != null && !entry.targetCommit().isBlank())
+        {
+            return entry.targetCommit();
+        }
+
+        ObjectId head = LvcRepository.resolveHead(controller.gui.repositoryDirectory);
+
+        if (head == null)
+        {
+            throw new IllegalStateException("Missing merge recovery target commit");
+        }
+
+        if (mergeHeadStillAtPreviousHead(controller.gui.repositoryDirectory, entry))
+        {
+            throw new IllegalStateException("Merge did not finish moving HEAD; restart the interrupted merge instead");
+        }
+
+        return head.name();
+    }
+
+    private static Level recoveryRestoreWorld(Level currentWorld, LvcOperationJournal.Operation operation) throws Exception
+    {
+        if ((operation == LvcOperationJournal.Operation.CHECKOUT ||
+                operation == LvcOperationJournal.Operation.DELETE_VERSION ||
+                operation == LvcOperationJournal.Operation.MERGE) &&
+                LvcWorldBackend.resolve(currentWorld) != LvcWorldBackend.DIRECT)
+        {
+            return currentWorld;
+        }
+
+        return LvcWorldAccess.resolveSemanticRestoreWorld(currentWorld);
+    }
+
+    @Nullable
+    private static String recoveryBranchForCommit(Path repositoryDirectory, @Nullable String commitId, @Nullable String branchName)
+    {
+        if (commitId == null || commitId.isBlank() || branchName == null || branchName.isBlank())
+        {
+            return null;
+        }
+
+        String normalizedBranchName = branchName.trim();
+
+        try
+        {
+            String branchTip = LvcGitBranchOps.localBranchTipCommitId(repositoryDirectory, normalizedBranchName);
+
+            if (commitIdsMatch(branchTip, commitId.trim()))
+            {
+                return normalizedBranchName;
+            }
+
+            LvcDiagnostics.warn("LVC recovery ignored branch because tip differs from journal commit repo='{}' branch='{}' branchTip='{}' journalCommit='{}'",
+                    repositoryDirectory, normalizedBranchName, branchTip, commitId);
+        }
+        catch (Exception e)
+        {
+            LvcDiagnostics.warn("LVC recovery ignored unavailable branch repo='{}' branch='{}' commit='{}' error='{}'",
+                    repositoryDirectory, normalizedBranchName, commitId, e.getMessage());
+        }
+
+        return null;
+    }
+
+    private static boolean isMergeRollbackJournal(LvcOperationJournal.Entry entry, String restoreCommit)
+    {
+        return entry.previousHead() != null &&
+                !entry.previousHead().isBlank() &&
+                commitIdsMatch(restoreCommit, entry.previousHead().trim());
+    }
+
+    private static void resetMergeTargetBranchForRollback(Path repositoryDirectory, @Nullable String targetBranch,
+                                                          String rollbackCommit) throws Exception
+    {
+        if (targetBranch == null || targetBranch.isBlank())
+        {
+            throw new IllegalStateException("Missing merge target branch; restart recovery to finish merge");
+        }
+
+        LvcGitBranchOps.checkoutBranchAndResetToCommit(repositoryDirectory, targetBranch.trim(), rollbackCommit);
+    }
+
+    private static boolean commitIdsMatch(String left, String right)
+    {
+        return left.equals(right) || left.startsWith(right) || right.startsWith(left);
+    }
+
+    private static void cleanupInterruptedMergeGitState(Path repositoryDirectory, LvcOperationJournal.Entry entry) throws Exception
+    {
+        if (!LvcOperationJournal.PHASE_MERGE_GIT.equals(entry.phase()) || !mergeHeadStillAtPreviousHead(repositoryDirectory, entry))
+        {
+            return;
+        }
+
+        if (LvcGitBranchOps.hasUncommittedChanges(repositoryDirectory))
+        {
+            LvcGitBranchOps.resetWorkingTreeToHead(repositoryDirectory);
+            LvcDiagnostics.debug("LVC interrupted merge git state reset repo='{}' previousHead='{}'",
+                    repositoryDirectory, entry.previousHead());
+        }
+    }
+
+    private static boolean mergeHeadStillAtPreviousHead(Path repositoryDirectory, LvcOperationJournal.Entry entry) throws Exception
+    {
+        if (entry.previousHead() == null || entry.previousHead().isBlank())
+        {
+            return false;
+        }
+
+        ObjectId head = LvcRepository.resolveHead(repositoryDirectory);
+        return head != null && entry.previousHead().equals(head.name());
+    }
+
+    private static void openInterruptedOperationCancelledDialog(GuiLvcProjectController controller,
+                                                                LvcOperationJournal.Operation operation)
+    {
+        GuiBase.openGui(new GuiLvcNoticeDialog(
+                LvcOperationCoordinator.confirmParent(controller),
+                "gitmatica.gui.title.lvc_project.operation_cancelled",
+                "gitmatica.gui.message.lvc_project.interrupted_operation_cancelled",
+                0xFFFF5555,
+                GuiLvcRecoveryDialog.displayOperation(operation)
+        ));
+    }
+
+    private static void openInterruptedRestorelessOperationAbortedDialog(GuiLvcProjectController controller,
+                                                                         LvcOperationJournal.Operation operation)
+    {
+        GuiBase.openGui(new GuiLvcNoticeDialog(
+                LvcOperationCoordinator.confirmParent(controller),
+                "gitmatica.gui.title.lvc_project.operation_cancelled",
+                "gitmatica.gui.message.lvc_project.recovery_aborted_no_world_changes",
+                0xFFFFAA00,
+                GuiLvcRecoveryDialog.displayOperation(operation),
+                GuiLvcRecoveryDialog.displayOperation(operation),
+                shortOperationName(operation)
+        ));
+    }
+
+    private static String shortOperationName(LvcOperationJournal.Operation operation)
+    {
+        return switch (operation)
+        {
+            case CLEAR -> StringUtils.translate("gitmatica.gui.label.lvc_project.operation_short_clear");
+            case DISCARD -> StringUtils.translate("gitmatica.gui.label.lvc_project.operation_short_discard");
+            default -> GuiLvcRecoveryDialog.displayOperation(operation);
+        };
+    }
+
+    private static void openRecoveryDataUnreadableDialog(GuiLvcProjectController controller)
+    {
+        GuiBase.openGui(new GuiLvcNoticeDialog(
+                LvcOperationCoordinator.confirmParent(controller),
+                "gitmatica.gui.title.lvc_project.operation_cancelled",
+                "gitmatica.gui.message.lvc_project.recovery_data_unreadable",
+                0xFFFF5555
+        ));
+    }
+
+    private static void scheduleRecoveryCheckout(GuiLvcProjectController controller, LvcOperationHandle handle,
+                                                 Level restoreWorld, String targetCommit, @Nullable String targetBranch)
+    {
+        scheduleRecoveryCheckout(controller, handle, restoreWorld, targetCommit, targetBranch,
+                null, null, "gitmatica.message.lvc_project.recovery_completed");
+    }
+
+    private static void scheduleRecoveryCheckout(GuiLvcProjectController controller, LvcOperationHandle handle,
+                                                 Level restoreWorld, String targetCommit, @Nullable String targetBranch,
+                                                 @Nullable String previousHead, @Nullable String previousBranch,
+                                                 String successMessageKey, Object... successMessageArgs)
+    {
+        scheduleRecoveryCheckout(controller, handle, restoreWorld, targetCommit, targetBranch,
+                previousHead, previousBranch, false, LvcOperationJournal.Operation.CHECKOUT, "LVC Checkout",
+                successMessageKey, successMessageArgs);
+    }
+
+    private static void scheduleRecoveryCheckout(GuiLvcProjectController controller, LvcOperationHandle handle,
+                                                 Level restoreWorld, String targetCommit, @Nullable String targetBranch,
+                                                 @Nullable String previousHead, @Nullable String previousBranch,
+                                                 boolean resetTargetBranchToCommit,
+                                                 LvcOperationJournal.Operation journalOperation,
+                                                 String displayName, String successMessageKey,
+                                                 Object... successMessageArgs)
+    {
+        if (targetCommit == null || targetCommit.isBlank())
+        {
+            LvcTaskRegistry.release(handle);
+            LvcGuiMessages.show(MessageType.ERROR, "gitmatica.error.lvc_project.recovery_failed", "Missing checkout target commit");
+            return;
+        }
+
+        if (LvcWorldBackend.resolve(restoreWorld) != LvcWorldBackend.DIRECT)
+        {
+            scheduleRemoteRecoveryCheckout(controller, handle, restoreWorld, targetCommit, targetBranch,
+                    journalOperation, displayName, successMessageKey, successMessageArgs);
+            return;
+        }
+
+        LvcSemanticCheckoutTask.Preflight task = new LvcSemanticCheckoutTask.Preflight(
+                handle,
+                controller.gui.repositoryDirectory,
+                restoreWorld,
+                targetCommit,
+                LvcTaskCallbacks.of(
+                        result -> schedulePreparedRecoveryCheckout(controller, handle, result.prepared(), targetBranch,
+                                previousHead, previousBranch, resetTargetBranchToCommit, journalOperation, displayName,
+                                successMessageKey, successMessageArgs),
+                        e -> LvcGuiMessages.showTaskError(Operation.RECOVERY, "gitmatica.error.lvc_project.recovery_failed", e),
+                        () -> LvcGuiMessages.show(MessageType.INFO, "gitmatica.message.lvc_project.task_aborted", "LVC Recovery")
+                )
+        );
+        LvcTaskScheduling.scheduleForWorld(restoreWorld, task);
+    }
+
+    private static void scheduleRemoteRecoveryCheckout(GuiLvcProjectController controller, LvcOperationHandle handle,
+                                                       Level restoreWorld, String targetCommit,
+                                                       @Nullable String targetBranch,
+                                                       LvcOperationJournal.Operation journalOperation,
+                                                       String displayName, String successMessageKey,
+                                                       Object... successMessageArgs)
+    {
+        try
+        {
+            controller.removeTrackingOverlay();
+            LvcRemoteServerApplyTask task = journalOperation == LvcOperationJournal.Operation.DELETE_VERSION ?
+                    LvcRemoteServerApplyTask.deleteVersion(
+                            handle,
+                            controller.gui.repositoryDirectory,
+                            restoreWorld,
+                            targetCommit,
+                            requireRecoveryTargetBranch(targetBranch),
+                            remoteRecoveryCallbacks(controller, displayName, successMessageKey, successMessageArgs)
+                    ) :
+                    LvcRemoteServerApplyTask.checkout(
+                            handle,
+                            controller.gui.repositoryDirectory,
+                            restoreWorld,
+                            targetCommit,
+                            targetBranch,
+                            remoteRecoveryCallbacks(controller, displayName, successMessageKey, successMessageArgs)
+                    );
+            LvcTaskScheduling.scheduleForWorld(restoreWorld, task);
+        }
+        catch (Exception e)
+        {
+            LvcTaskRegistry.release(handle);
+            LvcGuiMessages.showTaskError(Operation.RECOVERY, "gitmatica.error.lvc_project.recovery_failed", e);
+        }
+    }
+
+    private static String requireRecoveryTargetBranch(@Nullable String targetBranch)
+    {
+        if (targetBranch == null || targetBranch.isBlank())
+        {
+            throw new IllegalStateException("Missing delete-version target branch");
+        }
+
+        return targetBranch;
+    }
+
+    private static LvcTaskCallbacks<LvcRemoteServerApplyTask.Result> remoteRecoveryCallbacks(GuiLvcProjectController controller,
+                                                                                            String displayName,
+                                                                                            String successMessageKey,
+                                                                                            Object... successMessageArgs)
+    {
+        return LvcTaskCallbacks.of(
+                result ->
+                {
+                    controller.loadTrackingOverlay();
+                    controller.gui.initGui();
+                    LvcGuiMessages.show(MessageType.SUCCESS, successMessageKey, successMessageArgs);
+                    showLossyRemoteWarning(result);
+                },
+                e -> LvcGuiMessages.showTaskError(Operation.RECOVERY, "gitmatica.error.lvc_project.recovery_failed", e, true),
+                () -> LvcGuiMessages.show(MessageType.INFO, "gitmatica.message.lvc_project.task_aborted", displayName)
+        );
+    }
+
+    private static void schedulePreparedRecoveryCheckout(GuiLvcProjectController controller, LvcOperationHandle handle,
+                                                         LvcSemanticCheckoutTask.PreparedCheckout prepared,
+                                                         @Nullable String targetBranch,
+                                                         @Nullable String previousHead, @Nullable String previousBranch,
+                                                         boolean resetTargetBranchToCommit,
+                                                         LvcOperationJournal.Operation journalOperation,
+                                                         String displayName,
+                                                         String successMessageKey, Object... successMessageArgs)
+    {
+        try
+        {
+            controller.removeTrackingOverlay();
+            LvcSemanticCheckoutTask.Apply task = new LvcSemanticCheckoutTask.Apply(
+                    handle,
+                    prepared,
+                    targetBranch,
+                    previousHead,
+                    previousBranch,
+                    resetTargetBranchToCommit,
+                    journalOperation,
+                    displayName,
+                    LvcTaskCallbacks.of(
+                            result ->
+                            {
+                                controller.loadTrackingOverlay();
+                                controller.gui.initGui();
+                                LvcGuiMessages.show(MessageType.SUCCESS, successMessageKey, successMessageArgs);
+                            },
+                            e -> LvcGuiMessages.showTaskError(Operation.RECOVERY, "gitmatica.error.lvc_project.recovery_failed", e, true),
+                            () -> LvcGuiMessages.show(MessageType.INFO, "gitmatica.message.lvc_project.task_aborted", "LVC Recovery")
+                    )
+            );
+            LvcTaskScheduling.scheduleForWorld(prepared.world(), task);
+        }
+        catch (Exception e)
+        {
+            prepared.close();
+            LvcTaskRegistry.release(handle);
+            LvcGuiMessages.showTaskError(Operation.RECOVERY, "gitmatica.error.lvc_project.recovery_failed", e);
+        }
+    }
+
+    private static void scheduleRecoveryDiscard(GuiLvcProjectController controller, LvcOperationHandle handle,
+                                                Level restoreWorld, String targetCommit) throws IOException
+    {
+        scheduleRecoveryDiscard(controller, handle, restoreWorld, targetCommit,
+                "gitmatica.message.lvc_project.recovery_completed");
+    }
+
+    private static void scheduleRecoveryDiscard(GuiLvcProjectController controller, LvcOperationHandle handle,
+                                                Level restoreWorld, String targetCommit,
+                                                String successMessageKey, Object... successMessageArgs) throws IOException
+    {
+        controller.removeTrackingOverlay();
+        LvcSemanticDiscardTask task = new LvcSemanticDiscardTask(
+                handle,
+                controller.gui.repositoryDirectory,
+                restoreWorld,
+                targetCommit,
+                LvcTaskCallbacks.of(
+                        result ->
+                        {
+                            controller.loadTrackingOverlay();
+                            controller.gui.initGui();
+                            LvcGuiMessages.show(MessageType.SUCCESS, successMessageKey, successMessageArgs);
+                        },
+                        e -> LvcGuiMessages.showTaskError(Operation.RECOVERY, "gitmatica.error.lvc_project.recovery_failed", e, true),
+                        () -> LvcGuiMessages.show(MessageType.INFO, "gitmatica.message.lvc_project.task_aborted", "LVC Recovery")
+                )
+        );
+        LvcTaskScheduling.scheduleForWorld(restoreWorld, task);
+    }
+
+    private static void showLossyRemoteWarning(LvcRemoteServerApplyTask.Result result)
+    {
+        if (result.lossy())
+        {
+            LvcGuiMessages.show(MessageType.WARNING, "gitmatica.message.lvc_project.lossy_command_apply");
+        }
+    }
+
+    private static void scheduleRecoveryMergeRestore(GuiLvcProjectController controller, LvcOperationHandle handle,
+                                                     Level restoreWorld, String targetCommit,
+                                                     @Nullable String targetBranch, @Nullable String sourceBranch,
+                                                     @Nullable String previousHead, String successMessageKey,
+                                                     Object... successMessageArgs) throws IOException
+    {
+        if (LvcWorldBackend.resolve(restoreWorld) != LvcWorldBackend.DIRECT)
+        {
+            scheduleRemoteRecoveryMergeRestore(controller, handle, restoreWorld, targetCommit, targetBranch,
+                    sourceBranch, previousHead, successMessageKey, successMessageArgs);
+            return;
+        }
+
+        controller.removeTrackingOverlay();
+        LvcSemanticDiscardTask task = new LvcSemanticDiscardTask(
+                handle,
+                controller.gui.repositoryDirectory,
+                restoreWorld,
+                targetCommit,
+                LvcTaskCallbacks.of(
+                        result ->
+                        {
+                            controller.loadTrackingOverlay();
+                            controller.gui.initGui();
+                            LvcGuiMessages.show(MessageType.SUCCESS, successMessageKey, successMessageArgs);
+                        },
+                        e -> LvcGuiMessages.showTaskError(Operation.RECOVERY, "gitmatica.error.lvc_project.recovery_failed", e, true),
+                        () -> LvcGuiMessages.show(MessageType.INFO, "gitmatica.message.lvc_project.task_aborted", "LVC Recovery")
+                ),
+                "LVC Recovery",
+                LvcOperationJournal.Operation.MERGE,
+                targetBranch,
+                sourceBranch,
+                previousHead
+        );
+        LvcTaskScheduling.scheduleForWorld(restoreWorld, task);
+    }
+
+    private static void scheduleRemoteRecoveryMergeRestore(GuiLvcProjectController controller, LvcOperationHandle handle,
+                                                           Level restoreWorld, String targetCommit,
+                                                           @Nullable String targetBranch, @Nullable String sourceBranch,
+                                                           @Nullable String previousHead, String successMessageKey,
+                                                           Object... successMessageArgs)
+    {
+        try
+        {
+            controller.removeTrackingOverlay();
+            LvcRemoteServerApplyTask task = LvcRemoteServerApplyTask.merge(
+                    handle,
+                    controller.gui.repositoryDirectory,
+                    restoreWorld,
+                    targetCommit,
+                    targetBranch,
+                    sourceBranch,
+                    previousHead,
+                    remoteRecoveryCallbacks(controller, "LVC Recovery", successMessageKey, successMessageArgs)
+            );
+            LvcTaskScheduling.scheduleForWorld(restoreWorld, task);
+        }
+        catch (Exception e)
+        {
+            LvcTaskRegistry.release(handle);
+            LvcGuiMessages.showTaskError(Operation.RECOVERY, "gitmatica.error.lvc_project.recovery_failed", e);
+        }
+    }
+
+}

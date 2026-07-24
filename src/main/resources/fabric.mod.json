@@ -1,0 +1,39 @@
+{
+  "schemaVersion": 1,
+  "id": "${mod_id}",
+  "name": "${mod_name}",
+  "version": "${mod_version}",
+  "description": "Git-backed structure version control for Litematica projects.",
+  "authors": [
+    "${author}"
+  ],
+  "contributors": [
+    "masa",
+    "Sakura-Ryoko"
+  ],
+  "contact": {
+    "homepage": "https://github.com/Arnavpmr/gitmatica",
+    "issues": "https://github.com/Arnavpmr/gitmatica/issues",
+    "sources": "https://github.com/Arnavpmr/gitmatica"
+  },
+  "license": "LGPL-3.0-only",
+  "icon": "assets/gitmatica/icon.png",
+  "environment": "client",
+  "entrypoints": {
+    "main": [
+      "me.niicide.lvc.Gitmatica"
+    ],
+    "modmenu": [
+      "me.niicide.lvc.integration.modmenu.GitmaticaModMenuIntegration"
+    ]
+  },
+  "mixins": [
+    "gitmatica.mixins.json"
+  ],
+  "depends": {
+    "fabricloader": ">=${fabric_loader_version}",
+    "minecraft": "~${minecraft_version}-",
+    "malilib": ">=${malilib_version}- <0.30.0-",
+    "litematica": ">=${litematica_version}- <0.29.0-"
+  }
+}
