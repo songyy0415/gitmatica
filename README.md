@@ -1,4 +1,4 @@
-# Litematica Version Control
+# Gitmatica
 
 > [!IMPORTANT]
 > This repository contains Gitmatica's former Litematica-fork implementation
