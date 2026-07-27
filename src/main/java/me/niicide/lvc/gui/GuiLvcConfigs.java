@@ -17,7 +17,7 @@ import fi.dy.masa.malilib.util.StringUtils;
 
 public class GuiLvcConfigs extends GuiConfigsBase implements IConfigGuiAllTab
 {
-    private ConfigGuiTab selectedTab = ConfigGuiTab.GENERIC;
+    private ConfigGuiTab selectedTab = ConfigGuiTab.ALL;
 
     public GuiLvcConfigs()
     {

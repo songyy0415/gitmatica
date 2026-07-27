@@ -325,13 +325,13 @@ public final class LvcSemanticSchematicBuilder
 
     private static String uniqueRegionName(LvcManifest.Region region, Set<String> usedNames)
     {
-        String base = region.name() == null || region.name().isBlank() ? region.id() : region.name().trim();
+        String base = region.name().trim();
         String candidate = base;
         int suffix = 2;
 
         while (!usedNames.add(candidate))
         {
-            candidate = base + " (" + region.id() + (suffix == 2 ? "" : "-" + suffix) + ")";
+            candidate = base + " (" + suffix + ")";
             suffix++;
         }
 

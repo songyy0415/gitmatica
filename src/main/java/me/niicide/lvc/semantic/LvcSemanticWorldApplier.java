@@ -481,7 +481,7 @@ public final class LvcSemanticWorldApplier
         void onEntityMutation() throws IOException;
     }
 
-    private record EntityRegionBounds(String id, LvcIntPosition min, LvcIntPosition size, AABB bounds)
+    private record EntityRegionBounds(AABB bounds)
     {
         private static EntityRegionBounds of(LvcManifest.Region region, LvcIntPosition origin)
         {
@@ -490,7 +490,7 @@ public final class LvcSemanticWorldApplier
             LvcIntPosition worldMin = origin.offset(min);
             AABB bounds = new AABB(worldMin.x(), worldMin.y(), worldMin.z(),
                     worldMin.x() + size.x(), worldMin.y() + size.y(), worldMin.z() + size.z());
-            return new EntityRegionBounds(region.id(), min, size, bounds);
+            return new EntityRegionBounds(bounds);
         }
 
         private boolean contains(Entity entity)

@@ -117,7 +117,6 @@ Example:
       "dimension": "minecraft:overworld",
       "regions": [
         {
-          "id": "storage",
           "name": "Storage",
           "min": [0, 0, 0],
           "size": [32, 16, 32]
@@ -131,7 +130,6 @@ Example:
       "dimension": "minecraft:the_nether",
       "regions": [
         {
-          "id": "spawn_platforms",
           "name": "Spawn Platforms",
           "min": [0, 0, 0],
           "size": [128, 8, 128]
@@ -145,8 +143,11 @@ Example:
 
 Required rules:
 
-- `site.id` and `region.id` are stable opaque IDs, not display names.
-- `site.name` and `region.name` are user-facing and may be renamed.
+- `site.id` is a stable opaque ID, not a display name.
+- `site.name` is user-facing and may be renamed.
+- `region.name` is both the user-facing name and the exact sub-region identity.
+  Renaming it is therefore modeled as deleting the old sub-region and adding a
+  new one.
 - `region.min` is relative to the site's project coordinate space.
 - `region.size` is positive on every axis.
 - `site.hash_index` points to a versioned raw binary `.lvcidx` file for that site.

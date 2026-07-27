@@ -14,7 +14,8 @@ public class LvcMergeConflictException extends IOException
         CHUNK_ADD,
         CHUNK_DELETE,
         CHUNK_SHAPE,
-        BLOCK_PAYLOAD
+        BLOCK_PAYLOAD,
+        SUBREGION
     }
 
     private final Reason reason;

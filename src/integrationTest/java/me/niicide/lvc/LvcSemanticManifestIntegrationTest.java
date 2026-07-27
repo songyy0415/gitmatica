@@ -36,7 +36,9 @@ final class LvcSemanticManifestIntegrationTest
     static void runAll() throws Exception
     {
         IntegrationTestSupport.run("semantic manifest round trip", LvcSemanticManifestIntegrationTest::semanticManifestAndLocalStateRoundTrip);
+        IntegrationTestSupport.run("semantic manifest rejects duplicate sub-region names", LvcSemanticManifestIntegrationTest::semanticManifestRejectsDuplicateSubRegionNames);
         IntegrationTestSupport.run("semantic manifest allows overlapping regions as tracked union masks", LvcSemanticManifestIntegrationTest::semanticManifestAllowsOverlappingRegionsAsTrackedUnionMasks);
+        IntegrationTestSupport.run("semantic region comparison detects names and bounds only", LvcSemanticManifestIntegrationTest::semanticRegionComparisonDetectsNamesAndBoundsOnly);
         IntegrationTestSupport.run("project service maps selection to semantic site", LvcSemanticManifestIntegrationTest::projectServiceMapsSelectionToSemanticSite);
         IntegrationTestSupport.run("project service updates regions from existing placement origin", LvcSemanticManifestIntegrationTest::projectServiceUpdatesRegionsFromExistingPlacementOrigin);
         IntegrationTestSupport.run("tracking overlay first load uses seeded project origin", LvcSemanticManifestIntegrationTest::trackingOverlayFirstLoadUsesSeededProjectOrigin);
@@ -51,14 +53,14 @@ final class LvcSemanticManifestIntegrationTest
                 "overworld_main",
                 "Overworld Main",
                 "minecraft:overworld",
-                List.of(new LvcManifest.Region("storage", "Storage", List.of(0, 0, 0), List.of(32, 16, 32))),
+                List.of(new LvcManifest.Region("Storage", List.of(0, 0, 0), List.of(32, 16, 32))),
                 Map.of("0,0,0", objectId)
         );
         LvcManifest.Site overworldRemote = new LvcManifest.Site(
                 "overworld_remote",
                 "Overworld Remote",
                 "minecraft:overworld",
-                List.of(new LvcManifest.Region("dropoff", "Dropoff", List.of(0, 0, 0), List.of(16, 16, 16))),
+                List.of(new LvcManifest.Region("Dropoff", List.of(0, 0, 0), List.of(16, 16, 16))),
                 Map.of()
         );
         LvcManifest manifest = LvcManifest.create("Gold Farm", List.of(overworldMain, overworldRemote));
@@ -76,6 +78,11 @@ final class LvcSemanticManifestIntegrationTest
         IntegrationTestSupport.assertTrue(!json.contains("\"full_hashes\""), "manifest should not serialize full hashes");
         IntegrationTestSupport.assertTrue(!json.contains("\"chunks\""), "manifest should not serialize old chunks key");
         IntegrationTestSupport.assertTrue(!json.contains("\"tracked_hashes\""), "manifest should not serialize tracked hashes");
+        IntegrationTestSupport.assertTrue(
+                !JsonParser.parseString(json).getAsJsonObject()
+                        .getAsJsonArray("sites").get(0).getAsJsonObject()
+                        .getAsJsonArray("regions").get(0).getAsJsonObject().has("id"),
+                "sub-regions should be identified solely by name");
 
         LvcManifest decodedManifest = LvcManifest.fromJson(json);
         IntegrationTestSupport.assertEquals("Gold Farm", decodedManifest.name(), "manifest name");
@@ -84,6 +91,23 @@ final class LvcSemanticManifestIntegrationTest
         IntegrationTestSupport.assertEquals("indexes/overworld_main.lvcidx", decodedManifest.sites().get(0).hashIndex(), "manifest should round-trip hash index reference");
         IntegrationTestSupport.assertEquals(0, decodedManifest.sites().get(0).fullHashes().size(), "manifest JSON alone should not carry full hashes");
         IntegrationTestSupport.assertEquals(0, decodedManifest.sites().get(0).trackedHashes().size(), "manifest JSON alone should not carry tracked hashes");
+
+        var legacyJson = JsonParser.parseString(json).getAsJsonObject();
+        legacyJson.getAsJsonArray("sites").get(0).getAsJsonObject()
+                .getAsJsonArray("regions").get(0).getAsJsonObject()
+                .addProperty("id", "legacy-storage-id");
+        LvcManifest legacyManifest = LvcManifest.fromJson(legacyJson.toString());
+        IntegrationTestSupport.assertEquals(
+                "Storage",
+                legacyManifest.sites().get(0).regions().get(0).name(),
+                "legacy region IDs should be ignored while reading existing histories"
+        );
+        IntegrationTestSupport.assertTrue(
+                !JsonParser.parseString(legacyManifest.toJson()).getAsJsonObject()
+                        .getAsJsonArray("sites").get(0).getAsJsonObject()
+                        .getAsJsonArray("regions").get(0).getAsJsonObject().has("id"),
+                "rewriting a legacy manifest should remove the obsolete region ID"
+        );
 
         String userEditedContentJson = json.replaceFirst(
                 "\"sites\"",
@@ -104,8 +128,8 @@ final class LvcSemanticManifestIntegrationTest
                 "Main",
                 "minecraft:overworld",
                 List.of(
-                        new LvcManifest.Region("a", "A", List.of(0, 0, 0), List.of(2, 1, 1)),
-                        new LvcManifest.Region("b", "B", List.of(1, 0, 0), List.of(2, 1, 1))
+                        new LvcManifest.Region("A", List.of(0, 0, 0), List.of(2, 1, 1)),
+                        new LvcManifest.Region("B", List.of(1, 0, 0), List.of(2, 1, 1))
                 ),
                 Map.of()
         )));
@@ -127,6 +151,74 @@ final class LvcSemanticManifestIntegrationTest
         IntegrationTestSupport.assertEquals("minecraft:stone", chunk.blockStateAtTrackedOrdinal(2), "last tracked block state");
     }
 
+    private static void semanticManifestRejectsDuplicateSubRegionNames()
+    {
+        try
+        {
+            LvcManifest.create(
+                    "Duplicate Regions",
+                    List.of(new LvcManifest.Site(
+                            "main",
+                            "Main",
+                            "minecraft:overworld",
+                            List.of(
+                                    new LvcManifest.Region("Same", List.of(0, 0, 0), List.of(1, 1, 1)),
+                                    new LvcManifest.Region("Same", List.of(2, 0, 0), List.of(1, 1, 1))
+                            ),
+                            Map.of()
+                    ))
+            );
+            throw new AssertionError("duplicate sub-region names should be rejected");
+        }
+        catch (IllegalArgumentException expected)
+        {
+            IntegrationTestSupport.assertTrue(
+                    expected.getMessage().contains("Duplicate LVC region name"),
+                    "duplicate-name error should explain merge identity requirement"
+            );
+        }
+    }
+
+    private static void semanticRegionComparisonDetectsNamesAndBoundsOnly()
+    {
+        LvcManifest baseline = LvcManifest.create("Regions", List.of(new LvcManifest.Site(
+                "main",
+                "Main",
+                "minecraft:overworld",
+                List.of(new LvcManifest.Region(
+                        "Storage", List.of(0, 0, 0), List.of(4, 5, 6))),
+                Map.of("0,0,0", objectId("baseline"))
+        )));
+        LvcManifest contentOnlyChange = baseline.withSiteHashRefs(
+                "main",
+                Map.of("0,0,0", objectId("updated")),
+                Map.of("0,0,0", objectId("tracked"))
+        );
+        LvcManifest renamed = baseline.withSite(
+                "main",
+                baseline.site("main").withRegions(List.of(new LvcManifest.Region(
+                        "Renamed Storage", List.of(0, 0, 0), List.of(4, 5, 6))))
+        );
+        LvcManifest resized = baseline.withSite(
+                "main",
+                baseline.site("main").withRegions(List.of(new LvcManifest.Region(
+                        "Storage", List.of(1, 2, 3), List.of(7, 8, 9))))
+        );
+
+        IntegrationTestSupport.assertTrue(
+                LvcSemanticRepository.sameRegionDefinitions(baseline, contentOnlyChange),
+                "block-content hash changes should not require a structural overlay rebuild"
+        );
+        IntegrationTestSupport.assertTrue(
+                !LvcSemanticRepository.sameRegionDefinitions(baseline, renamed),
+                "renaming a sub-region should require a structural overlay rebuild"
+        );
+        IntegrationTestSupport.assertTrue(
+                !LvcSemanticRepository.sameRegionDefinitions(baseline, resized),
+                "changing sub-region bounds should require a structural overlay rebuild"
+        );
+    }
+
     private static void projectServiceMapsSelectionToSemanticSite()
     {
         AreaSelection selection = areaSelectionFromBoxes(
@@ -143,8 +235,10 @@ final class LvcSemanticManifestIntegrationTest
         IntegrationTestSupport.assertEquals("main", site.id(), "MVP creates one active site");
         IntegrationTestSupport.assertEquals("minecraft:overworld", site.dimension(), "site dimension");
         IntegrationTestSupport.assertEquals(2, site.regions().size(), "selection boxes become explicit regions");
-        IntegrationTestSupport.assertEquals("main_storage", site.regions().get(0).id(), "region id should be stable and safe");
-        IntegrationTestSupport.assertEquals("main_storage_2", site.regions().get(1).id(), "duplicate region ids should be uniqued");
+        IntegrationTestSupport.assertEquals("Main Storage", site.regions().get(0).name(),
+                "first selection name should be the sub-region identity");
+        IntegrationTestSupport.assertEquals("Main/Storage", site.regions().get(1).name(),
+                "distinct exact names should remain distinct identities");
         IntegrationTestSupport.assertEquals(List.of(0, 0, 0), site.regions().get(0).min(), "first region should be relative to placement origin");
         IntegrationTestSupport.assertEquals(List.of(2, 2, 2), site.regions().get(0).size(), "region size should be inclusive of both corners");
         IntegrationTestSupport.assertEquals(List.of(10, 64, 10), placement.origin(), "placement stores the world origin");
@@ -152,15 +246,19 @@ final class LvcSemanticManifestIntegrationTest
 
     private static void projectServiceUpdatesRegionsFromExistingPlacementOrigin()
     {
-        LvcManifest.Region existing = new LvcManifest.Region("line", "Line", List.of(0, 0, 0), List.of(1, 1, 1));
+        LvcManifest.Region existing =
+                new LvcManifest.Region("Line", List.of(0, 0, 0), List.of(1, 1, 1));
         AreaSelection expandedSelection = areaSelectionFromBoxes(
                 "Farm",
                 List.of(boxJson("Line", new BlockPos(10, 64, 10), new BlockPos(26, 64, 10)))
         );
 
-        List<LvcManifest.Region> expanded = LvcProjectService.createRegionsFromSelection(expandedSelection, new BlockPos(10, 64, 10), List.of(existing));
+        List<LvcManifest.Region> expanded =
+                LvcProjectService.createRegionsFromSelection(
+                        expandedSelection, new BlockPos(10, 64, 10));
 
-        IntegrationTestSupport.assertEquals("line", expanded.get(0).id(), "same region name should preserve id while resizing");
+        IntegrationTestSupport.assertEquals(existing.name(), expanded.get(0).name(),
+                "same region name should remain the exact identity while resizing");
         IntegrationTestSupport.assertEquals(List.of(0, 0, 0), expanded.get(0).min(), "update areas should stay relative to existing placement origin");
         IntegrationTestSupport.assertEquals(List.of(17, 1, 1), expanded.get(0).size(), "expanded region size");
 
@@ -168,9 +266,10 @@ final class LvcSemanticManifestIntegrationTest
                 "Farm",
                 List.of(boxJson("Renamed Line", new BlockPos(10, 64, 10), new BlockPos(10, 64, 10)))
         );
-        List<LvcManifest.Region> renamed = LvcProjectService.createRegionsFromSelection(renamedSelection, new BlockPos(10, 64, 10), List.of(existing));
+        List<LvcManifest.Region> renamed =
+                LvcProjectService.createRegionsFromSelection(
+                        renamedSelection, new BlockPos(10, 64, 10));
 
-        IntegrationTestSupport.assertEquals("line", renamed.get(0).id(), "same bounds should preserve id while renaming");
         IntegrationTestSupport.assertEquals("Renamed Line", renamed.get(0).name(), "region display name should update");
     }
 
@@ -231,7 +330,9 @@ final class LvcSemanticManifestIntegrationTest
 
         LvcManifest withRegion = manifest.withSite(
                 "main",
-                manifest.site("main").withRegions(List.of(new LvcManifest.Region("first_area", "First Area", List.of(0, 0, 0), List.of(2, 2, 2))))
+                manifest.site("main").withRegions(List.of(
+                        new LvcManifest.Region(
+                                "First Area", List.of(0, 0, 0), List.of(2, 2, 2))))
         );
         LvcSemanticRepository.writeVersionedProjectFiles(repoDir, withRegion);
         LvcSemanticRepository.CommitResult firstCommit = LvcSemanticRepository.commitSite(

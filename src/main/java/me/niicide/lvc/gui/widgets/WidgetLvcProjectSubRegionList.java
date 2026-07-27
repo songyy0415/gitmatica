@@ -15,17 +15,14 @@ import fi.dy.masa.malilib.util.AlphaNumComparator.AlphaNumStringComparator;
 
 public class WidgetLvcProjectSubRegionList extends WidgetListBase<LvcManifest.Region, WidgetLvcProjectSubRegion>
 {
-    private final List<LvcManifest.Region> regions;
     private final GuiLvcProjectEditor editorGui;
 
     public WidgetLvcProjectSubRegionList(int x, int y, int width, int height,
-                                         List<LvcManifest.Region> regions,
                                          GuiLvcProjectEditor editorGui,
                                          ISelectionListener<LvcManifest.Region> selectionListener)
     {
         super(x, y, width, height, selectionListener);
 
-        this.regions = List.copyOf(regions);
         this.editorGui = editorGui;
         this.browserEntryHeight = 22;
         this.widgetSearchBar = new WidgetSearchBar(x, y + 4, width - 12, 14, 0, Icons.FILE_ICON_SEARCH, LeftRight.LEFT);
@@ -41,7 +38,7 @@ public class WidgetLvcProjectSubRegionList extends WidgetListBase<LvcManifest.Re
     @Override
     protected Collection<LvcManifest.Region> getAllEntries()
     {
-        return this.regions;
+        return this.editorGui.getRegions();
     }
 
     @Override
@@ -54,7 +51,7 @@ public class WidgetLvcProjectSubRegionList extends WidgetListBase<LvcManifest.Re
     @Override
     protected List<String> getEntryStringsForFilter(LvcManifest.Region entry)
     {
-        return List.of(entry.name().toLowerCase(), entry.id().toLowerCase());
+        return List.of(entry.name().toLowerCase());
     }
 
     @Override

@@ -13,6 +13,7 @@ public final class LvcHotkeys
     public static final ConfigHotkey OPEN_PROJECT_BROWSER = new ConfigHotkey("openProjectBrowser", "").apply(HOTKEYS_KEY);
     public static final ConfigHotkey OPEN_PROJECT_MANAGER = new ConfigHotkey("openProjectManager", "").apply(HOTKEYS_KEY);
     public static final ConfigHotkey OPEN_PROJECT_EDITOR = new ConfigHotkey("openProjectEditor", "").apply(HOTKEYS_KEY);
+    public static final ConfigHotkey CONFIGURE_SUB_REGION = new ConfigHotkey("configureSubRegion", "").apply(HOTKEYS_KEY);
     public static final ConfigHotkey DISCARD_CHANGES = new ConfigHotkey("discardChanges", "").apply(HOTKEYS_KEY);
     public static final ConfigHotkey CLEAR_AREA = new ConfigHotkey("clearArea", "").apply(HOTKEYS_KEY);
     public static final ConfigHotkey SAVE_VERSION = new ConfigHotkey("saveVersion", "").apply(HOTKEYS_KEY);
@@ -22,6 +23,7 @@ public final class LvcHotkeys
             OPEN_PROJECT_BROWSER,
             OPEN_PROJECT_MANAGER,
             OPEN_PROJECT_EDITOR,
+            CONFIGURE_SUB_REGION,
             DISCARD_CHANGES,
             CLEAR_AREA,
             SAVE_VERSION,

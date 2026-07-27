@@ -42,8 +42,7 @@ public class WidgetLvcProjectSubRegion extends WidgetListEntryBase<LvcManifest.R
     private int createButton(int x, int y, ButtonType type)
     {
         ButtonGeneric button = new ButtonGeneric(x, y, -1, true, type.getDisplayName());
-        button.setEnabled(false);
-        return this.addButton(button, new ButtonListener()).getX() - 1;
+        return this.addButton(button, new ButtonListener(type, this)).getX() - 1;
     }
 
     @Override
@@ -55,7 +54,9 @@ public class WidgetLvcProjectSubRegion extends WidgetListEntryBase<LvcManifest.R
     @Override
     public void render(GuiContext ctx, int mouseX, int mouseY, boolean selected)
     {
-        selected = this.entry != null && this.entry.id().equals(this.parent.getEditorGui().getSelectedRegionId());
+        selected = this.entry != null &&
+                this.entry.name().equals(
+                        this.parent.getEditorGui().getSelectedRegionName());
 
         if (selected || this.isMouseOver(mouseX, mouseY))
         {
@@ -145,11 +146,22 @@ public class WidgetLvcProjectSubRegion extends WidgetListEntryBase<LvcManifest.R
         }
     }
 
-    private static class ButtonListener implements IButtonActionListener
+    private record ButtonListener(ButtonType type, WidgetLvcProjectSubRegion widget) implements IButtonActionListener
     {
         @Override
         public void actionPerformedWithButton(ButtonBase button, int mouseButton)
         {
+            if (this.widget.entry == null)
+            {
+                return;
+            }
+
+            switch (this.type)
+            {
+                case CONFIGURE -> this.widget.parent.getEditorGui().openRegionEditor(this.widget.entry);
+                case RENAME -> this.widget.parent.getEditorGui().promptRenameRegion(this.widget.entry);
+                case REMOVE -> this.widget.parent.getEditorGui().confirmDeleteRegion(this.widget.entry);
+            }
         }
     }
 }

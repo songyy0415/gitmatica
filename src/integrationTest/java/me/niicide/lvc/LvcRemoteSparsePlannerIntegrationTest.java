@@ -17,6 +17,8 @@ import net.minecraft.nbt.CompoundTag;
 import net.minecraft.nbt.ListTag;
 import net.minecraft.world.level.block.Blocks;
 import me.niicide.lvc.capture.LvcMinecraftWorldReader;
+import me.niicide.lvc.capture.LvcRetiredCoveragePlan;
+import me.niicide.lvc.capture.LvcSiteWorkPlan;
 import me.niicide.lvc.model.LvcChunkCoordinate;
 import me.niicide.lvc.model.LvcIntPosition;
 import me.niicide.lvc.model.LvcManifest;
@@ -40,6 +42,7 @@ final class LvcRemoteSparsePlannerIntegrationTest
         IntegrationTestSupport.run("remote command sparse planner builds block state only schematic", LvcRemoteSparsePlannerIntegrationTest::remoteCommandSparsePlannerBuildsBlockStateOnlySchematic);
         IntegrationTestSupport.run("remote command sparse planner skips untracked gaps", LvcRemoteSparsePlannerIntegrationTest::remoteCommandSparsePlannerSkipsUntrackedGaps);
         IntegrationTestSupport.run("remote command sparse planner rejects unreadable blocks", LvcRemoteSparsePlannerIntegrationTest::remoteCommandSparsePlannerRejectsUnreadableBlocks);
+        IntegrationTestSupport.run("remote sparse planner finds non-air retired coverage chunks", LvcRemoteSparsePlannerIntegrationTest::remoteSparsePlannerFindsNonAirRetiredCoverageChunks);
     }
 
     private static void remoteServuxSparsePlannerTracksVerifierVisibleBlockEntityInventory() throws Exception
@@ -188,7 +191,9 @@ final class LvcRemoteSparsePlannerIntegrationTest
                 new LvcRemoteSparseTargetPlanner.CommandMutation(new BlockPos(1, 0, 0), Blocks.DIRT.defaultBlockState()),
                 new LvcRemoteSparseTargetPlanner.CommandMutation(new BlockPos(2, 0, 0), Blocks.STONE.defaultBlockState())
         ), planner.commandMutations(), "command sparse should queue exact changed block mutations");
-        IntegrationTestSupport.assertTrue(planner.affectedRegionIds().contains("line"), "command sparse should mark changed regions");
+        IntegrationTestSupport.assertTrue(
+                planner.affectedRegionNames().contains("Line"),
+                "command sparse should mark changed regions");
     }
 
     private static void remoteCommandSparsePlannerSkipsUntrackedGaps() throws Exception
@@ -197,8 +202,8 @@ final class LvcRemoteSparsePlannerIntegrationTest
 
         Path repoDir = Files.createTempDirectory("lvc-command-sparse-gaps-");
         LvcManifest.Site site = validatedSingleSite(List.of(
-                new LvcManifest.Region("left", "Left", List.of(0, 0, 0), List.of(1, 1, 1)),
-                new LvcManifest.Region("right", "Right", List.of(2, 0, 0), List.of(1, 1, 1))
+                new LvcManifest.Region("Left", List.of(0, 0, 0), List.of(1, 1, 1)),
+                new LvcManifest.Region("Right", List.of(2, 0, 0), List.of(1, 1, 1))
         ));
         FakeWorldReader targetReader = new FakeWorldReader("minecraft:stone");
         targetReader.setBlock(new LvcIntPosition(2, 0, 0), "minecraft:dirt");
@@ -229,7 +234,10 @@ final class LvcRemoteSparsePlannerIntegrationTest
         IntegrationTestSupport.assertEquals(Blocks.DIRT.defaultBlockState(), right.get(0, 0, 0), "changed right region should be included");
         IntegrationTestSupport.assertEquals(1, session.includedBlocks(), "untracked gap sparse included count");
         IntegrationTestSupport.assertEquals(1, session.structureVoidBlocks(), "untracked gap sparse skipped tracked count");
-        IntegrationTestSupport.assertEquals(Set.of("right"), planner.affectedRegionIds(), "only the changed region should get entity cleanup");
+        IntegrationTestSupport.assertEquals(
+                Set.of("Right"),
+                planner.affectedRegionNames(),
+                "only the changed region should get entity cleanup");
     }
 
     private static void remoteCommandSparsePlannerRejectsUnreadableBlocks() throws Exception
@@ -259,5 +267,37 @@ final class LvcRemoteSparsePlannerIntegrationTest
         }
 
         IntegrationTestSupport.assertEquals(0, planner.scannedBlocks(), "unreadable target should abort before scanning");
+    }
+
+    private static void remoteSparsePlannerFindsNonAirRetiredCoverageChunks() throws Exception
+    {
+        LvcManifest.Site previous = validatedSingleSite(List.of(
+                new LvcManifest.Region("Line", List.of(0, 0, 0), List.of(3, 1, 1))));
+        LvcManifest.Site updated = validatedSingleSite(List.of(
+                new LvcManifest.Region("Line", List.of(0, 0, 0), List.of(1, 1, 1))));
+        LvcRetiredCoveragePlan retiredCoverage = LvcRetiredCoveragePlan.between(previous, updated);
+        LvcIntPosition origin = new LvcIntPosition(10, 20, 30);
+        FakeWorldReader reader = new FakeWorldReader("minecraft:air");
+        reader.setBlock(new LvcIntPosition(11, 20, 30), "minecraft:dirt");
+        LvcRemoteSparseTargetPlanner planner = new LvcRemoteSparseTargetPlanner(
+                LvcWorldBackend.COMMANDS, reader, updated);
+
+        for (LvcSiteWorkPlan.ChunkWork work : retiredCoverage.chunks())
+        {
+            planner.scanRetiredCoverageChunk(work, origin);
+        }
+
+        IntegrationTestSupport.assertEquals(2, planner.scannedRetiredBlocks(),
+                "remote retired scan should inspect every retired position");
+        IntegrationTestSupport.assertEquals(1, planner.retiredNonAirBlocks(),
+                "remote retired scan should count only non-air blocks");
+        IntegrationTestSupport.assertEquals(
+                Set.of(new LvcChunkCoordinate(0, 0, 0)),
+                planner.retiredNonAirChunks(),
+                "remote retired scan should retain only chunks that require an air clear");
+        IntegrationTestSupport.assertEquals(
+                Set.of(new LvcIntPosition(11, 20, 30), new LvcIntPosition(12, 20, 30)),
+                reader.requestedPositions,
+                "remote retired scan should translate project positions through placement origin");
     }
 }

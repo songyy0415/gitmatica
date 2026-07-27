@@ -268,7 +268,9 @@ public final class LvcSemanticProjectOperations
 
         Level captureWorld = LvcWorldAccess.resolveSemanticCaptureWorld(world);
         LvcCapturePublishCommitFlow.ActiveSite activeSite = LvcCapturePublishCommitFlow.readActiveSite(repositoryDirectory, captureWorld);
-        List<LvcManifest.Region> updatedRegions = LvcProjectSelectionStorage.createRegionsFromSelection(selection, activeSite.origin(), activeSite.site().regions());
+        List<LvcManifest.Region> updatedRegions =
+                LvcProjectSelectionStorage.createRegionsFromSelection(
+                        selection, activeSite.origin());
         LvcSemanticRepository.CommitResult result = LvcCapturePublishCommitFlow.updateActiveSiteAreas(
                 repositoryDirectory,
                 activeSite,

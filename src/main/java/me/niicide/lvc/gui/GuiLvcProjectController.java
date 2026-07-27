@@ -41,7 +41,7 @@ final class GuiLvcProjectController
 {
     private static final int COMMIT_DESCRIPTION_DISPLAY_LINES = 4;
     private static final int COMMIT_DESCRIPTION_MAX_LINES = 8;
-    private static final String LOAD_OVERLAY_OPERATION = "LVC Load Overlay";
+    private static final String LOAD_OVERLAY_OPERATION = LvcSemanticOverlayTask.OPERATION_NAME;
     private static final String SEMANTIC_CHECKOUT_UNSUPPORTED_KEY = "litematica.error.lvc_project.semantic_checkout_restore_unimplemented";
     private static final String SEMANTIC_PULL_UNSUPPORTED_KEY = "litematica.error.lvc_project.semantic_pull_restore_unimplemented";
 

@@ -167,7 +167,8 @@ final class LvcAreaWorkflow
                 LvcTaskCallbacks.of(
                         result ->
                         {
-                            controller.refreshTrackingOverlayAfterWorldMutation();
+                            refreshTrackingOverlayAfterDiscard(
+                                    controller, result.regionDefinitionsChanged());
 
                             if (!result.discarded())
                             {
@@ -211,7 +212,8 @@ final class LvcAreaWorkflow
                 LvcTaskCallbacks.of(
                         result ->
                         {
-                            controller.refreshTrackingOverlayAfterWorldMutation();
+                            refreshTrackingOverlayAfterDiscard(
+                                    controller, result.regionDefinitionsChanged());
                             controller.gui.initGui();
                             LvcGuiMessages.show(MessageType.SUCCESS, "litematica.message.lvc_project.discarded_changes",
                                     LvcOperationCoordinator.regionCountText(result.regionCount()));
@@ -222,6 +224,19 @@ final class LvcAreaWorkflow
                 )
         );
         LvcTaskScheduling.scheduleClient(task);
+    }
+
+    private static void refreshTrackingOverlayAfterDiscard(
+            GuiLvcProjectController controller, boolean regionDefinitionsChanged)
+    {
+        if (regionDefinitionsChanged)
+        {
+            controller.loadTrackingOverlay();
+        }
+        else
+        {
+            controller.refreshTrackingOverlayAfterWorldMutation();
+        }
     }
 
     private static void openDiscardConfirm(GuiLvcProjectController controller, Runnable confirmed)

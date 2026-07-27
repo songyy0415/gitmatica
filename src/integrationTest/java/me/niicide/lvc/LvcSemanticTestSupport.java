@@ -48,7 +48,7 @@ final class LvcSemanticTestSupport
                 "main",
                 "Main",
                 "minecraft:overworld",
-                List.of(new LvcManifest.Region("line", "Line", List.of(0, 0, 0), List.of(1, 1, 1))),
+                List.of(new LvcManifest.Region("Line", List.of(0, 0, 0), List.of(1, 1, 1))),
                 Map.of("0,0,0", objectId)
         )));
     }

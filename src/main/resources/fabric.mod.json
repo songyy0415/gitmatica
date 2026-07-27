@@ -40,6 +40,7 @@
 		"malilib": ">=${malilib_version}- <0.30.0-"
 	},
 	"breaks": {
-		"malilib": "<${malilib_version}-"
+		"malilib": "<${malilib_version}-",
+		"techutils": "*"
 	}
 }

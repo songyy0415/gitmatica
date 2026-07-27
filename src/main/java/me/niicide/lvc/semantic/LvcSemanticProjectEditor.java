@@ -3,10 +3,8 @@ package me.niicide.lvc.semantic;
 import java.io.IOException;
 import java.nio.file.Path;
 import java.util.ArrayList;
-import java.util.HashSet;
 import java.util.List;
 import java.util.Objects;
-import java.util.Set;
 import net.minecraft.core.BlockPos;
 import me.niicide.lvc.LvcUserActionException;
 import me.niicide.lvc.model.LvcManifest;
@@ -60,9 +58,10 @@ public final class LvcSemanticProjectEditor
         }
     }
 
-    public static void updateRegion(Path repositoryDirectory, String regionId, String name, BlockPos min, BlockPos size) throws IOException
+    public static void updateRegion(Path repositoryDirectory, String currentName, String name,
+                                    BlockPos min, BlockPos size) throws IOException
     {
-        Objects.requireNonNull(regionId, "regionId");
+        Objects.requireNonNull(currentName, "currentName");
         Objects.requireNonNull(name, "name");
         Objects.requireNonNull(min, "min");
         Objects.requireNonNull(size, "size");
@@ -73,14 +72,16 @@ public final class LvcSemanticProjectEditor
         }
 
         ActiveSemanticProject project = readActiveProject(repositoryDirectory);
+        validateUniqueRegionName(project.site().regions(), currentName, name);
         List<LvcManifest.Region> regions = new ArrayList<>(project.site().regions().size());
         boolean replaced = false;
 
         for (LvcManifest.Region region : project.site().regions())
         {
-            if (region.id().equals(regionId))
+            if (region.name().equals(currentName))
             {
-                regions.add(new LvcManifest.Region(region.id(), name.trim(), blockPosToList(min), blockPosToList(size)));
+                regions.add(new LvcManifest.Region(
+                        name.trim(), blockPosToList(min), blockPosToList(size)));
                 replaced = true;
             }
             else
@@ -91,7 +92,7 @@ public final class LvcSemanticProjectEditor
 
         if (!replaced)
         {
-            throw new IOException("Unknown LVC region id: " + regionId);
+            throw new IOException("Unknown LVC sub-region name: " + currentName);
         }
 
         writeRegions(repositoryDirectory, project, regions);
@@ -109,15 +110,8 @@ public final class LvcSemanticProjectEditor
         }
 
         ActiveSemanticProject project = readActiveProject(repositoryDirectory);
-        Set<String> usedRegionIds = new HashSet<>();
-
-        for (LvcManifest.Region region : project.site().regions())
-        {
-            usedRegionIds.add(region.id());
-        }
-
+        validateUniqueRegionName(project.site().regions(), null, name);
         LvcManifest.Region region = new LvcManifest.Region(
-                uniqueRegionId(name, usedRegionIds),
                 name.trim(),
                 blockPosToList(min),
                 blockPosToList(size)
@@ -128,9 +122,9 @@ public final class LvcSemanticProjectEditor
         return region;
     }
 
-    public static void deleteRegion(Path repositoryDirectory, String regionId) throws IOException
+    public static void deleteRegion(Path repositoryDirectory, String name) throws IOException
     {
-        Objects.requireNonNull(regionId, "regionId");
+        Objects.requireNonNull(name, "name");
 
         ActiveSemanticProject project = readActiveProject(repositoryDirectory);
 
@@ -144,7 +138,7 @@ public final class LvcSemanticProjectEditor
 
         for (LvcManifest.Region region : project.site().regions())
         {
-            if (region.id().equals(regionId))
+            if (region.name().equals(name))
             {
                 removed = true;
             }
@@ -156,7 +150,7 @@ public final class LvcSemanticProjectEditor
 
         if (!removed)
         {
-            throw new IOException("Unknown LVC region id: " + regionId);
+            throw new IOException("Unknown LVC sub-region name: " + name);
         }
 
         writeRegions(repositoryDirectory, project, regions);
@@ -194,6 +188,21 @@ public final class LvcSemanticProjectEditor
         }
     }
 
+    private static void validateUniqueRegionName(
+            List<LvcManifest.Region> regions, String editedRegionName, String name)
+    {
+        String normalizedName = name.trim();
+
+        for (LvcManifest.Region region : regions)
+        {
+            if (!region.name().equals(editedRegionName) &&
+                    region.name().equals(normalizedName))
+            {
+                throw new IllegalArgumentException("LVC sub-region names must be unique: " + normalizedName);
+            }
+        }
+    }
+
     private static List<Integer> blockPosToList(BlockPos pos)
     {
         return List.of(pos.getX(), pos.getY(), pos.getZ());
@@ -207,27 +216,6 @@ public final class LvcSemanticProjectEditor
         }
 
         return new BlockPos(values.get(0), values.get(1), values.get(2));
-    }
-
-    private static String uniqueRegionId(String name, Set<String> usedIds)
-    {
-        String base = name == null ? "" : name.trim().toLowerCase(java.util.Locale.ROOT).replaceAll("[^a-z0-9_-]+", "_");
-
-        if (base.isBlank())
-        {
-            base = "region";
-        }
-
-        String candidate = base;
-        int index = 2;
-
-        while (!usedIds.add(candidate))
-        {
-            candidate = base + "_" + index;
-            index++;
-        }
-
-        return candidate;
     }
 
     private record ActiveSemanticProject(LvcManifest manifest, String siteId,

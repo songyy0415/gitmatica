@@ -115,6 +115,10 @@ final class LvcCommitHistoryPanel
         }
 
         this.drawScrollbar(ctx, visibleHistory);
+    }
+
+    void drawHoveredWidget(GuiContext ctx, int mouseX, int mouseY)
+    {
         this.drawUndoTooltip(ctx, mouseX, mouseY);
     }
 

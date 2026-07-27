@@ -49,8 +49,8 @@ final class LvcSemanticCaptureScanIntegrationTest
     {
         Path repoDir = Files.createTempDirectory("lvc-capture-gaps-");
         LvcManifest.Site site = validatedSingleSite(List.of(
-                new LvcManifest.Region("left", "Left", List.of(0, 0, 0), List.of(1, 1, 1)),
-                new LvcManifest.Region("right", "Right", List.of(2, 0, 0), List.of(1, 1, 1))
+                new LvcManifest.Region("Left", List.of(0, 0, 0), List.of(1, 1, 1)),
+                new LvcManifest.Region("Right", List.of(2, 0, 0), List.of(1, 1, 1))
         ));
         FakeWorldReader reader = new FakeWorldReader("minecraft:stone");
         reader.setBlock(new LvcIntPosition(1, 0, 0), "minecraft:diamond_block");
@@ -68,7 +68,8 @@ final class LvcSemanticCaptureScanIntegrationTest
     private static void captureChangesOnlyTheIntersectingStorageChunkHash() throws Exception
     {
         Path repoDir = Files.createTempDirectory("lvc-capture-change-");
-        LvcManifest.Site site = validatedSingleSite(List.of(new LvcManifest.Region("line", "Line", List.of(0, 0, 0), List.of(17, 1, 1))));
+        LvcManifest.Site site = validatedSingleSite(List.of(
+                new LvcManifest.Region("Line", List.of(0, 0, 0), List.of(17, 1, 1))));
         FakeWorldReader reader = new FakeWorldReader("minecraft:stone");
 
         LvcCaptureEngine.Result first = LvcCaptureEngine.captureSite(repoDir, site, placementAt(0, 0, 0), reader);
@@ -88,7 +89,8 @@ final class LvcSemanticCaptureScanIntegrationTest
     private static void captureAppliesLocalSiteOriginBeforeReadingWorld() throws Exception
     {
         Path repoDir = Files.createTempDirectory("lvc-capture-origin-");
-        LvcManifest.Site site = validatedSingleSite(List.of(new LvcManifest.Region("area", "Area", List.of(0, 0, 0), List.of(16, 1, 16))));
+        LvcManifest.Site site = validatedSingleSite(List.of(
+                new LvcManifest.Region("Area", List.of(0, 0, 0), List.of(16, 1, 16))));
         FakeWorldReader reader = new FakeWorldReader("minecraft:stone");
 
         LvcCaptureEngine.captureSite(repoDir, site, placementAt(5, 64, 5), reader);

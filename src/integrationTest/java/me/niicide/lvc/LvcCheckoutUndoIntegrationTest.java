@@ -15,6 +15,7 @@ import org.eclipse.jgit.lib.Repository;
 import org.eclipse.jgit.revwalk.RevCommit;
 import org.eclipse.jgit.revwalk.RevWalk;
 import me.niicide.lvc.model.LvcIntPosition;
+import me.niicide.lvc.model.LvcManifest;
 import me.niicide.lvc.storage.LvcRepository;
 import me.niicide.lvc.storage.LvcSemanticRepository;
 
@@ -111,18 +112,31 @@ final class LvcCheckoutUndoIntegrationTest
         LvcSemanticRepository.CommitResult commit = createInitialCommit(repoDir, "Dirty Reset", new FakeWorldReader("minecraft:stone"), "DirtyReset");
         Path manifest = repoDir.resolve(LvcSemanticRepository.MANIFEST);
         String originalManifest = Files.readString(manifest, StandardCharsets.UTF_8);
+        LvcManifest originalSemanticManifest = LvcSemanticRepository.readManifest(repoDir);
         Path untracked = repoDir.resolve("local-notes.txt");
 
-        Files.writeString(manifest, "local edits\n", StandardCharsets.UTF_8);
+        LvcManifest.Site originalSite = originalSemanticManifest.site("main");
+        LvcManifest.Region originalRegion = originalSite.regions().get(0);
+        LvcManifest.Region editedRegion = new LvcManifest.Region(
+                "Locally Renamed",
+                List.of(4, 5, 6),
+                List.of(7, 8, 9)
+        );
+        LvcSemanticRepository.writeVersionedProjectFiles(repoDir,
+                originalSemanticManifest.withSite("main", originalSite.withRegions(List.of(editedRegion))));
         Files.writeString(untracked, "untracked local notes\n", StandardCharsets.UTF_8);
 
-        IntegrationTestSupport.assertTrue(LvcProjectService.hasUncommittedChanges(repoDir), "tracked local edits should be reported before reset");
+        IntegrationTestSupport.assertTrue(LvcProjectService.hasUncommittedChanges(repoDir),
+                "sub-region edits should be reported before discard reset");
 
         LvcProjectService.resetWorkingTreeToHead(repoDir);
 
         IntegrationTestSupport.assertTrue(!LvcProjectService.hasUncommittedChanges(repoDir), "reset should clean tracked local edits");
         IntegrationTestSupport.assertEquals(commit.commit().getId(), LvcRepository.resolveHead(repoDir), "reset should leave HEAD at the same commit");
         IntegrationTestSupport.assertEquals(originalManifest, Files.readString(manifest, StandardCharsets.UTF_8), "manifest should be restored from HEAD");
+        IntegrationTestSupport.assertEquals(originalSite.regions(),
+                LvcSemanticRepository.readManifest(repoDir).site("main").regions(),
+                "discard reset should restore every sub-region definition from HEAD");
         IntegrationTestSupport.assertTrue(Files.exists(untracked), "reset to HEAD should leave untracked files alone");
     }
 

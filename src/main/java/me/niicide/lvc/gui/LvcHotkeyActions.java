@@ -30,18 +30,18 @@ public final class LvcHotkeyActions
             return false;
         }
 
+        if (keybind == LvcHotkeys.OPEN_PROJECT_BROWSER.getKeybind())
+        {
+            GuiBase.openGui(new GuiLvcProjectBrowser());
+            return true;
+        }
+
         SchematicPlacement placement = DataManager.getSchematicPlacementManager().getSelectedSchematicPlacement();
         Path repositoryDirectory = selectedRepositoryDirectory(placement);
 
         if (placement == null || repositoryDirectory == null)
         {
             return false;
-        }
-
-        if (keybind == LvcHotkeys.OPEN_PROJECT_BROWSER.getKeybind())
-        {
-            GuiBase.openGui(new GuiLvcProjectBrowser());
-            return true;
         }
 
         if (keybind == LvcHotkeys.OPEN_PROJECT_MANAGER.getKeybind())
@@ -54,6 +54,47 @@ public final class LvcHotkeyActions
         {
             LvcSchematicPlacementRowActions.openProjectEditor(placement);
             return true;
+        }
+
+        if (keybind == LvcHotkeys.CONFIGURE_SUB_REGION.getKeybind())
+        {
+            try
+            {
+                String selectedSubRegionName =
+                        LvcTrackingOverlayService.getSelectedTrackingSubRegion(repositoryDirectory);
+                LvcDiagnostics.debug(
+                        "Gitmatica configure sub-region hotkey invoked repo='{}' selectedRegion='{}'",
+                        repositoryDirectory,
+                        selectedSubRegionName
+                );
+                boolean opened = GuiLvcProjectEditor.openSelectedSubRegionDialog(
+                        repositoryDirectory,
+                        selectedSubRegionName
+                );
+
+                if (!opened)
+                {
+                    LvcGuiMessages.show(
+                            MessageType.ERROR,
+                            "litematica.error.lvc_project_editor.select_sub_region"
+                    );
+                }
+
+                return true;
+            }
+            catch (Exception e)
+            {
+                LvcDiagnostics.warn("Gitmatica configure sub-region hotkey failed repo='{}' region='{}' error='{}'",
+                        repositoryDirectory,
+                        LvcTrackingOverlayService.getSelectedTrackingSubRegion(repositoryDirectory),
+                        e.getMessage());
+                LvcGuiMessages.show(
+                        MessageType.ERROR,
+                        "litematica.error.lvc_project.open_from_placement_failed",
+                        e.getMessage()
+                );
+                return true;
+            }
         }
 
         boolean undoLastSave = keybind == LvcHotkeys.UNDO_LAST_SAVE.getKeybind();

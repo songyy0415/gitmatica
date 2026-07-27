@@ -204,9 +204,10 @@ public final class LvcProjectService
         return true;
     }
 
-    public static void updateSemanticRegion(Path repositoryDirectory, String regionId, String name, BlockPos min, BlockPos size) throws IOException
+    public static void updateSemanticRegion(Path repositoryDirectory, String currentName, String name,
+                                            BlockPos min, BlockPos size) throws IOException
     {
-        LvcSemanticProjectEditor.updateRegion(repositoryDirectory, regionId, name, min, size);
+        LvcSemanticProjectEditor.updateRegion(repositoryDirectory, currentName, name, min, size);
     }
 
     public static LvcManifest.Region createSemanticRegion(Path repositoryDirectory, String name, BlockPos min, BlockPos size) throws IOException
@@ -214,9 +215,9 @@ public final class LvcProjectService
         return LvcSemanticProjectEditor.createRegion(repositoryDirectory, name, min, size);
     }
 
-    public static void deleteSemanticRegion(Path repositoryDirectory, String regionId) throws IOException
+    public static void deleteSemanticRegion(Path repositoryDirectory, String name) throws IOException
     {
-        LvcSemanticProjectEditor.deleteRegion(repositoryDirectory, regionId);
+        LvcSemanticProjectEditor.deleteRegion(repositoryDirectory, name);
     }
 
     public static List<CommitInfo> listCommits(Path repositoryDirectory) throws IOException, GitAPIException
@@ -454,9 +455,10 @@ public final class LvcProjectService
         return LvcProjectSelectionStorage.createMainSiteFromSelection(siteName, dimensionId, selection);
     }
 
-    public static List<LvcManifest.Region> createRegionsFromSelection(AreaSelection selection, BlockPos origin, List<LvcManifest.Region> existingRegions)
+    public static List<LvcManifest.Region> createRegionsFromSelection(
+            AreaSelection selection, BlockPos origin)
     {
-        return LvcProjectSelectionStorage.createRegionsFromSelection(selection, origin, existingRegions);
+        return LvcProjectSelectionStorage.createRegionsFromSelection(selection, origin);
     }
 
     public static LvcSitePlacement createSitePlacement(BlockPos origin, String dimensionId)

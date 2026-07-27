@@ -24,6 +24,7 @@ import net.minecraft.world.level.block.state.BlockState;
 import me.niicide.lvc.LvcDiagnostics;
 import me.niicide.lvc.LvcUserActionException;
 import me.niicide.lvc.capture.LvcMinecraftWorldReader;
+import me.niicide.lvc.capture.LvcRetiredCoveragePlan;
 import me.niicide.lvc.git.LvcProjectGitOps;
 import me.niicide.lvc.model.LvcChunk;
 import me.niicide.lvc.model.LvcChunkCoordinate;
@@ -480,15 +481,19 @@ public final class LvcSemanticCheckoutTask
         @Override
         public void init()
         {
-            LvcDiagnostics.debug(this.handle(), "semantic checkout apply initialized target={} branch='{}' chunks={} regions={} blockEntityOnlyRestore={}",
+            LvcRetiredCoveragePlan retiredCoverage = LvcRetiredCoveragePlan.between(
+                    this.checkout.currentSite, this.checkout.targetSite);
+            LvcDiagnostics.debug(this.handle(), "semantic checkout apply initialized target={} branch='{}' chunks={} regions={} retiredChunks={} retiredBlocks={} blockEntityOnlyRestore={}",
                     this.checkout.targetCommit.getName(), this.targetBranchName == null ? "<detached>" : this.targetBranchName,
-                    this.chunkRefs.size(), this.checkout.targetSite.regions().size(), true);
+                    this.chunkRefs.size(), this.checkout.targetSite.regions().size(),
+                    retiredCoverage.chunkCount(), retiredCoverage.blockCount(), true);
             this.restoreEngine = new LvcSemanticRestoreEngine(
                     this.checkout.world,
                     this.checkout.targetSite,
                     this.checkout.origin,
                     this.chunkRefs,
                     objectId -> this.checkout.readChunk(this.checkout.targetCommit, objectId),
+                    retiredCoverage,
                     this::markWorldMutation,
                     projectPos -> { },
                     LvcSemanticRestoreEngine.Options.checkout(this.checkout.targetCommit.getName()));

@@ -5,6 +5,7 @@ import static me.niicide.lvc.LvcIntegrationFixtures.placementAt;
 import static me.niicide.lvc.LvcIntegrationFixtures.player;
 import static me.niicide.lvc.LvcIntegrationFixtures.singleLineSite;
 import static me.niicide.lvc.LvcIntegrationFixtures.twoBlockSite;
+import static me.niicide.lvc.LvcIntegrationFixtures.twoNamedBlockRegions;
 import static me.niicide.lvc.LvcRepositoryTestSupport.*;
 
 import java.nio.file.Files;
@@ -19,6 +20,7 @@ import me.niicide.lvc.git.LvcProjectGitOps;
 import me.niicide.lvc.git.LvcMergeConflictException;
 import me.niicide.lvc.model.LvcChunk;
 import me.niicide.lvc.model.LvcIntPosition;
+import me.niicide.lvc.model.LvcManifest;
 import me.niicide.lvc.storage.LvcChunkStore;
 import me.niicide.lvc.storage.LvcRepository;
 import me.niicide.lvc.storage.LvcSemanticRepository;
@@ -37,6 +39,12 @@ final class LvcMergeIntegrationTest
         IntegrationTestSupport.run("merge branch cancels semantic conflicts without moving head", LvcMergeIntegrationTest::mergeBranchCancelsSemanticConflictsWithoutMovingHead);
         IntegrationTestSupport.run("merge branch conflicts when same inventory changes differently", LvcMergeIntegrationTest::mergeBranchConflictsWhenSameInventoryChangesDifferently);
         IntegrationTestSupport.run("merge branch conflict resolution accepts base incoming and yours", LvcMergeIntegrationTest::mergeBranchConflictResolutionAcceptsBaseIncomingAndYours);
+        IntegrationTestSupport.run("merge branch combines independent sub-region renames", LvcMergeIntegrationTest::mergeBranchCombinesIndependentSubRegionRenames);
+        IntegrationTestSupport.run("merge branch combines independent sub-region bounds changes", LvcMergeIntegrationTest::mergeBranchCombinesIndependentSubRegionBoundsChanges);
+        IntegrationTestSupport.run("merge branch merges blocks within expanded tracking area", LvcMergeIntegrationTest::mergeBranchMergesBlocksWithinExpandedTrackingArea);
+        IntegrationTestSupport.run("merge branch conflicts when same sub-region bounds change differently", LvcMergeIntegrationTest::mergeBranchConflictsWhenSameSubRegionBoundsChangeDifferently);
+        IntegrationTestSupport.run("structural conflict choice still merges block payloads", LvcMergeIntegrationTest::structuralConflictChoiceStillMergesBlockPayloads);
+        IntegrationTestSupport.run("merge branch applies one source to every block conflict", LvcMergeIntegrationTest::mergeBranchAppliesOneSourceToEveryBlockConflict);
     }
 
     private static void mergeBranchFastForwardsCurrentBranch() throws Exception
@@ -67,7 +75,7 @@ final class LvcMergeIntegrationTest
     {
         Path repoDir = Files.createTempDirectory("lvc-semantic-merge-");
         FakeWorldReader reader = new FakeWorldReader("minecraft:stone");
-        LvcSemanticRepository.CommitResult initial = LvcSemanticRepository.initProject(repoDir, "Semantic Merge", twoBlockSite(), placementAt(0, 0, 0), reader, player("MergeInitial"));
+        LvcSemanticRepository.CommitResult initial = LvcSemanticRepository.initProject(repoDir, "Semantic Merge", twoNamedBlockRegions(), placementAt(0, 0, 0), reader, player("MergeInitial"));
         String branchName = LvcProjectService.createAndCheckoutBranch(repoDir, "feature/semantic");
 
         reader.setBlock(new LvcIntPosition(1, 0, 0), "minecraft:gold_block");
@@ -129,7 +137,8 @@ final class LvcMergeIntegrationTest
         }
         catch (LvcMergeConflictException expected)
         {
-            IntegrationTestSupport.assertEquals(LvcMergeConflictException.Reason.BLOCK_PAYLOAD, expected.reason(), "same-block semantic conflict should be typed as block payload");
+            IntegrationTestSupport.assertEquals(LvcMergeConflictException.Reason.BLOCK_PAYLOAD, expected.reason(),
+                    "block conflicts should remain block-payload conflicts after definitions merge");
             IntegrationTestSupport.assertTrue(expected.getMessage().contains("conflict"), "merge conflict error should explain conflict context");
         }
 
@@ -164,7 +173,8 @@ final class LvcMergeIntegrationTest
         }
         catch (LvcMergeConflictException expected)
         {
-            IntegrationTestSupport.assertEquals(LvcMergeConflictException.Reason.BLOCK_PAYLOAD, expected.reason(), "same-inventory semantic conflict should be typed as block payload");
+            IntegrationTestSupport.assertEquals(LvcMergeConflictException.Reason.BLOCK_PAYLOAD, expected.reason(),
+                    "inventory conflicts should remain block-payload conflicts after definitions merge");
             IntegrationTestSupport.assertTrue(expected.getMessage().contains("conflict"), "inventory merge conflict error should explain conflict context");
         }
 
@@ -211,8 +221,237 @@ final class LvcMergeIntegrationTest
 
             LvcChunk mergedChunk = readOnlyChunk(repoDir);
             IntegrationTestSupport.assertEquals(expectedResolvedConflictState(resolution), mergedChunk.blockStateAtTrackedOrdinal(0), "resolved conflict should choose requested side");
-            IntegrationTestSupport.assertEquals("minecraft:emerald_block", mergedChunk.blockStateAtTrackedOrdinal(1), "resolved conflict should still keep non-conflicting incoming edit");
+            IntegrationTestSupport.assertEquals("minecraft:emerald_block",
+                    mergedChunk.blockStateAtTrackedOrdinal(1),
+                    "non-conflicting blocks should still merge independently inside a conflicted sub-region");
             IntegrationTestSupport.assertTrue(!LvcProjectService.hasUncommittedChanges(repoDir), "resolved conflict merge should leave working tree clean");
         }
+    }
+
+    private static void mergeBranchCombinesIndependentSubRegionRenames() throws Exception
+    {
+        Path repoDir = Files.createTempDirectory("lvc-semantic-merge-region-renames-");
+        FakeWorldReader reader = new FakeWorldReader("minecraft:stone");
+        LvcSemanticRepository.initProject(repoDir, "Semantic Region Renames", twoNamedBlockRegions(),
+                placementAt(0, 0, 0), reader, player("RegionRenameInitial"));
+        String branchName = LvcProjectService.createAndCheckoutBranch(repoDir, "feature/rename-right");
+
+        renameRegionInWorkingManifest(repoDir, "Right", "Feature Right");
+        commitCurrent(repoDir, reader, "RegionRenameFeature", "rename right");
+
+        LvcProjectService.checkoutBranchToWorkingTree(repoDir, LvcProjectService.DEFAULT_BRANCH);
+        renameRegionInWorkingManifest(repoDir, "Left", "Current Left");
+        commitCurrent(repoDir, reader, "RegionRenameMain", "rename left");
+
+        LvcProjectService.BranchMergeResult result = LvcProjectService.mergeBranch(
+                repoDir, branchName, player("RegionRenameMerger"));
+        List<String> names = LvcSemanticRepository.readManifest(repoDir).site("main").regions().stream()
+                .map(LvcManifest.Region::name)
+                .toList();
+
+        IntegrationTestSupport.assertEquals(LvcProjectService.BranchMergeStatus.MERGED, result.status(),
+                "independent sub-region renames should merge");
+        IntegrationTestSupport.assertEquals(List.of("Current Left", "Feature Right"), names,
+                "renaming uses delete-plus-add identity and preserves independent renamed regions");
+    }
+
+    private static void mergeBranchCombinesIndependentSubRegionBoundsChanges() throws Exception
+    {
+        Path repoDir = Files.createTempDirectory("lvc-semantic-merge-region-bounds-");
+        FakeWorldReader reader = new FakeWorldReader("minecraft:stone");
+        LvcSemanticRepository.initProject(repoDir, "Semantic Region Bounds", twoNamedBlockRegions(),
+                placementAt(0, 0, 0), reader, player("RegionBoundsInitial"));
+        String branchName = LvcProjectService.createAndCheckoutBranch(repoDir, "feature/move-right");
+
+        moveRegionInWorkingManifest(repoDir, "Right", List.of(11, 0, 0));
+        commitCurrent(repoDir, reader, "RegionBoundsFeature", "move right");
+
+        LvcProjectService.checkoutBranchToWorkingTree(repoDir, LvcProjectService.DEFAULT_BRANCH);
+        moveRegionInWorkingManifest(repoDir, "Left", List.of(10, 0, 0));
+        commitCurrent(repoDir, reader, "RegionBoundsMain", "move left");
+
+        LvcProjectService.BranchMergeResult result = LvcProjectService.mergeBranch(
+                repoDir, branchName, player("RegionBoundsMerger"));
+        List<LvcManifest.Region> regions = LvcSemanticRepository.readManifest(repoDir)
+                .site("main")
+                .regions();
+
+        IntegrationTestSupport.assertEquals(LvcProjectService.BranchMergeStatus.MERGED, result.status(),
+                "independent sub-region bounds changes should merge");
+        IntegrationTestSupport.assertEquals(List.of(10, 0, 0), regions.get(0).min(),
+                "merge should keep the current branch bounds change");
+        IntegrationTestSupport.assertEquals(List.of(11, 0, 0), regions.get(1).min(),
+                "merge should include the incoming branch bounds change");
+    }
+
+    private static void mergeBranchMergesBlocksWithinExpandedTrackingArea() throws Exception
+    {
+        Path repoDir = Files.createTempDirectory("lvc-semantic-merge-expanded-region-");
+        FakeWorldReader reader = new FakeWorldReader("minecraft:stone");
+        LvcSemanticRepository.initProject(repoDir, "Semantic Expanded Region", singleLineSite(),
+                placementAt(0, 0, 0), reader, player("ExpandedRegionInitial"));
+        String branchName = LvcProjectService.createAndCheckoutBranch(repoDir, "feature/expand-line");
+
+        resizeRegionInWorkingManifest(repoDir, "Line", List.of(2, 1, 1));
+        reader.setBlock(new LvcIntPosition(1, 0, 0), "minecraft:gold_block");
+        commitCurrent(repoDir, reader, "ExpandedRegionFeature", "expand line and add block");
+
+        LvcProjectService.checkoutBranchToWorkingTree(repoDir, LvcProjectService.DEFAULT_BRANCH);
+        reader.setBlock(new LvcIntPosition(0, 0, 0), "minecraft:dirt");
+        commitCurrent(repoDir, reader, "ExpandedRegionMain", "change original block");
+
+        LvcProjectService.BranchMergeResult result = LvcProjectService.mergeBranch(
+                repoDir, branchName, player("ExpandedRegionMerger"));
+        LvcManifest.Site mergedSite = LvcSemanticRepository.readManifest(repoDir).site("main");
+        LvcChunk mergedChunk = readOnlyChunk(repoDir);
+
+        IntegrationTestSupport.assertEquals(LvcProjectService.BranchMergeStatus.MERGED, result.status(),
+                "expanded sub-region and independent block change should merge");
+        IntegrationTestSupport.assertEquals(List.of(2, 1, 1), mergedSite.regions().get(0).size(),
+                "structural merge should establish the expanded tracking area first");
+        IntegrationTestSupport.assertEquals("minecraft:dirt",
+                mergedChunk.blockStateAtTrackedOrdinal(0),
+                "block merge should retain the current change inside the original area");
+        IntegrationTestSupport.assertEquals("minecraft:gold_block",
+                mergedChunk.blockStateAtTrackedOrdinal(1),
+                "block merge should include incoming content from the newly tracked area");
+    }
+
+    private static void mergeBranchConflictsWhenSameSubRegionBoundsChangeDifferently() throws Exception
+    {
+        Path repoDir = Files.createTempDirectory("lvc-semantic-merge-region-bounds-conflict-");
+        FakeWorldReader reader = new FakeWorldReader("minecraft:stone");
+        LvcSemanticRepository.initProject(repoDir, "Semantic Region Bounds Conflict", twoNamedBlockRegions(),
+                placementAt(0, 0, 0), reader, player("RegionBoundsConflictInitial"));
+        String branchName = LvcProjectService.createAndCheckoutBranch(repoDir, "feature/move-right-conflict");
+
+        moveRegionInWorkingManifest(repoDir, "Right", List.of(2, 0, 0));
+        commitCurrent(repoDir, reader, "RegionBoundsConflictFeature", "move right to two");
+
+        LvcProjectService.checkoutBranchToWorkingTree(repoDir, LvcProjectService.DEFAULT_BRANCH);
+        moveRegionInWorkingManifest(repoDir, "Right", List.of(3, 0, 0));
+        LvcSemanticRepository.CommitResult mainCommit = commitCurrent(
+                repoDir, reader, "RegionBoundsConflictMain", "move right to three");
+
+        try
+        {
+            LvcProjectService.mergeBranch(repoDir, branchName, player("RegionBoundsConflictMerger"));
+            throw new AssertionError("different bounds changes to the same sub-region should conflict");
+        }
+        catch (LvcMergeConflictException expected)
+        {
+            IntegrationTestSupport.assertEquals(LvcMergeConflictException.Reason.SUBREGION, expected.reason(),
+                    "same-name bounds conflicts should be typed as sub-region conflicts");
+        }
+
+        IntegrationTestSupport.assertEquals(mainCommit.commit().getId(), LvcRepository.resolveHead(repoDir),
+                "bounds conflict cancel must not move HEAD");
+        IntegrationTestSupport.assertTrue(!LvcProjectService.hasUncommittedChanges(repoDir),
+                "bounds conflict cancel must leave the working tree clean");
+    }
+
+    private static void structuralConflictChoiceStillMergesBlockPayloads() throws Exception
+    {
+        Path repoDir = Files.createTempDirectory("lvc-semantic-merge-structural-choice-");
+        FakeWorldReader reader = new FakeWorldReader("minecraft:stone");
+        LvcSemanticRepository.initProject(repoDir, "Semantic Structural Choice", singleLineSite(),
+                placementAt(0, 0, 0), reader, player("StructuralChoiceInitial"));
+        String branchName = LvcProjectService.createAndCheckoutBranch(repoDir, "feature/expand-line-to-two");
+
+        resizeRegionInWorkingManifest(repoDir, "Line", List.of(2, 1, 1));
+        reader.setBlock(new LvcIntPosition(1, 0, 0), "minecraft:gold_block");
+        commitCurrent(repoDir, reader, "StructuralChoiceFeature", "expand line to two");
+
+        LvcProjectService.checkoutBranchToWorkingTree(repoDir, LvcProjectService.DEFAULT_BRANCH);
+        resizeRegionInWorkingManifest(repoDir, "Line", List.of(3, 1, 1));
+        reader.setBlock(new LvcIntPosition(0, 0, 0), "minecraft:dirt");
+        commitCurrent(repoDir, reader, "StructuralChoiceMain", "expand line to three and change first block");
+
+        LvcProjectService.mergeBranch(
+                repoDir,
+                branchName,
+                player("StructuralChoiceMerger"),
+                LvcProjectService.BranchMergeConflictResolution.INCOMING
+        );
+        LvcManifest.Site mergedSite = LvcSemanticRepository.readManifest(repoDir).site("main");
+        LvcChunk mergedChunk = readOnlyChunk(repoDir);
+
+        IntegrationTestSupport.assertEquals(List.of(2, 1, 1),
+                mergedSite.regions().get(0).size(),
+                "incoming should select only the conflicting sub-region definition");
+        IntegrationTestSupport.assertEquals("minecraft:dirt",
+                mergedChunk.blockStateAtTrackedOrdinal(0),
+                "definition resolution must not replace non-conflicting current block changes");
+        IntegrationTestSupport.assertEquals("minecraft:gold_block",
+                mergedChunk.blockStateAtTrackedOrdinal(1),
+                "definition resolution should retain incoming content in the expanded area");
+    }
+
+    private static void mergeBranchAppliesOneSourceToEveryBlockConflict() throws Exception
+    {
+        Path repoDir = Files.createTempDirectory("lvc-semantic-merge-all-region-conflicts-");
+        FakeWorldReader reader = new FakeWorldReader("minecraft:stone");
+        LvcSemanticRepository.initProject(repoDir, "Semantic All Region Conflicts", twoNamedBlockRegions(),
+                placementAt(0, 0, 0), reader, player("AllConflictInitial"));
+        String branchName = LvcProjectService.createAndCheckoutBranch(repoDir, "feature/all-conflicts");
+
+        reader.setBlock(new LvcIntPosition(0, 0, 0), "minecraft:gold_block");
+        reader.setBlock(new LvcIntPosition(1, 0, 0), "minecraft:emerald_block");
+        commitCurrent(repoDir, reader, "AllConflictFeature", "incoming changes both regions");
+
+        LvcProjectService.checkoutBranchToWorkingTree(repoDir, LvcProjectService.DEFAULT_BRANCH);
+        reader.setBlock(new LvcIntPosition(0, 0, 0), "minecraft:dirt");
+        reader.setBlock(new LvcIntPosition(1, 0, 0), "minecraft:diamond_block");
+        commitCurrent(repoDir, reader, "AllConflictMain", "current changes both regions");
+
+        LvcProjectService.mergeBranch(repoDir, branchName, player("AllConflictMerger"),
+                LvcProjectService.BranchMergeConflictResolution.INCOMING);
+        LvcChunk mergedChunk = readOnlyChunk(repoDir);
+
+        IntegrationTestSupport.assertEquals("minecraft:gold_block",
+                mergedChunk.blockStateAtTrackedOrdinal(0),
+                "incoming choice should apply to the first conflicted sub-region");
+        IntegrationTestSupport.assertEquals("minecraft:emerald_block",
+                mergedChunk.blockStateAtTrackedOrdinal(1),
+                "incoming choice should apply to every conflicted sub-region");
+    }
+
+    private static void renameRegionInWorkingManifest(Path repoDir, String oldName, String newName) throws Exception
+    {
+        LvcManifest manifest = LvcSemanticRepository.readManifest(repoDir);
+        LvcManifest.Site site = manifest.site("main");
+        List<LvcManifest.Region> regions = site.regions().stream()
+                .map(region -> region.name().equals(oldName) ?
+                        new LvcManifest.Region(newName, region.min(), region.size()) :
+                        region)
+                .toList();
+        LvcSemanticRepository.writeVersionedProjectFiles(repoDir,
+                manifest.withSite("main", site.withRegions(regions)));
+    }
+
+    private static void moveRegionInWorkingManifest(Path repoDir, String name, List<Integer> min) throws Exception
+    {
+        LvcManifest manifest = LvcSemanticRepository.readManifest(repoDir);
+        LvcManifest.Site site = manifest.site("main");
+        List<LvcManifest.Region> regions = site.regions().stream()
+                .map(region -> region.name().equals(name) ?
+                        new LvcManifest.Region(region.name(), min, region.size()) :
+                        region)
+                .toList();
+        LvcSemanticRepository.writeVersionedProjectFiles(repoDir,
+                manifest.withSite("main", site.withRegions(regions)));
+    }
+
+    private static void resizeRegionInWorkingManifest(Path repoDir, String name, List<Integer> size) throws Exception
+    {
+        LvcManifest manifest = LvcSemanticRepository.readManifest(repoDir);
+        LvcManifest.Site site = manifest.site("main");
+        List<LvcManifest.Region> regions = site.regions().stream()
+                .map(region -> region.name().equals(name) ?
+                        new LvcManifest.Region(region.name(), region.min(), size) :
+                        region)
+                .toList();
+        LvcSemanticRepository.writeVersionedProjectFiles(repoDir,
+                manifest.withSite("main", site.withRegions(regions)));
     }
 }

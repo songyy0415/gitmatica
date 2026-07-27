@@ -84,6 +84,7 @@ public final class LvcTrackingOverlayService
     private static final Gson GSON = new GsonBuilder().setPrettyPrinting().create();
     private static final Map<Path, TrackingOverlayEntry> ACTIVE_TRACKING_OVERLAYS = new HashMap<>();
     private static final Map<Path, BlockPos> TRACKING_OVERLAY_ORIGIN_CACHE = new HashMap<>();
+    private static final Map<Path, String> TRACKING_OVERLAY_SUB_REGION_SELECTION_CACHE = new HashMap<>();
     @Nullable private static final Method SCHEMATIC_ENTITY_LOOKUP_REMOVE_BY_UUID = resolveSchematicEntityLookupRemoveByUuid();
 
     private LvcTrackingOverlayService()
@@ -106,6 +107,15 @@ public final class LvcTrackingOverlayService
     public record TrackingOverlayRevisionTarget(String headCommitId, @Nullable String sourceCommitId,
                                                 boolean airSchematic)
     {
+    }
+
+    public record TrackingOverlayManifestSource(LvcManifest manifest, @Nullable String commitId,
+                                                boolean committedHead, boolean workingDefinitions)
+    {
+        public TrackingOverlayManifestSource
+        {
+            Objects.requireNonNull(manifest, "manifest");
+        }
     }
 
     public static LvcProjectService.TrackingOverlay loadTrackingOverlay(Path repositoryDirectory, String projectName,
@@ -133,6 +143,7 @@ public final class LvcTrackingOverlayService
         LitematicaSchematic schematic = writeAndReloadSemanticTrackingSchematic(repositoryDirectory, manifest, siteId, placementState, overlayName, lootPreviewWorld);
         BlockPos origin = LvcProjectPositions.blockPosFromList(placementState.origin());
         SchematicPlacement placement = SchematicPlacement.createFor(schematic, origin, overlayName, true, true);
+        restoreTrackingOverlaySubRegionSelection(repositoryDirectory, placement);
         ClientLevel verifierWorld = clientLevel;
 
         if (clientLevel != null && !LvcMinecraftWorldReader.dimensionId(clientLevel).equals(placementState.dimension()))
@@ -141,7 +152,8 @@ public final class LvcTrackingOverlayService
         }
 
         LvcProjectService.TrackingOverlay overlay = addTrackingOverlay(repositoryDirectory, placement, verifierWorld, completionListener, startVerifier);
-        trackOverlay(repositoryDirectory, overlay, currentOverlayDescriptor(repositoryDirectory, siteId, placementState.dimension(),
+        trackOverlay(repositoryDirectory, overlay, currentOverlayDescriptor(
+                repositoryDirectory, manifest, siteId, placementState.dimension(),
                 placement.getSchematicFile(), overlayName));
         return overlay;
     }
@@ -157,17 +169,19 @@ public final class LvcTrackingOverlayService
         removeTrackingOverlay(repositoryDirectory, false);
     }
 
-    private static void removeTrackingOverlay(Path repositoryDirectory, boolean preserveOriginCache)
+    private static void removeTrackingOverlay(Path repositoryDirectory, boolean preservePlacementState)
     {
         Objects.requireNonNull(repositoryDirectory, "repositoryDirectory");
 
-        if (preserveOriginCache)
+        if (preservePlacementState)
         {
-            rememberCurrentTrackingOverlayOrigin(repositoryDirectory);
+            rememberCurrentTrackingOverlayState(repositoryDirectory);
         }
         else
         {
-            TRACKING_OVERLAY_ORIGIN_CACHE.remove(trackingOverlayKey(repositoryDirectory));
+            Path key = trackingOverlayKey(repositoryDirectory);
+            TRACKING_OVERLAY_ORIGIN_CACHE.remove(key);
+            TRACKING_OVERLAY_SUB_REGION_SELECTION_CACHE.remove(key);
         }
 
         TrackingOverlayEntry entry = ACTIVE_TRACKING_OVERLAYS.remove(trackingOverlayKey(repositoryDirectory));
@@ -206,15 +220,8 @@ public final class LvcTrackingOverlayService
                                                                                        @Nullable ICompletionListener completionListener) throws IOException
     {
         Objects.requireNonNull(repositoryDirectory, "repositoryDirectory");
-
-        if (hasTrackedGitChanges(repositoryDirectory))
-        {
-            LvcDiagnostics.debug("LvcTrackingOverlayService: refused reusable overlay for dirty repository '{}'", repositoryDirectory);
-            return null;
-        }
-
         Path key = trackingOverlayKey(repositoryDirectory);
-        LvcManifest manifest = LvcSemanticRepository.readManifest(repositoryDirectory);
+        LvcManifest manifest = resolveTrackingOverlayManifestSource(repositoryDirectory).manifest();
         String siteId = LvcSemanticRepository.defaultSiteId(manifest);
         LvcManifest.Site site = manifest.site(siteId);
 
@@ -255,7 +262,8 @@ public final class LvcTrackingOverlayService
         }
 
         LvcProjectService.TrackingOverlay restoredOverlay = wrapExistingPlacement(restoredPlacement);
-        trackOverlay(repositoryDirectory, restoredOverlay, currentOverlayDescriptor(repositoryDirectory, siteId, currentPlacementDimension(site),
+        trackOverlay(repositoryDirectory, restoredOverlay, currentOverlayDescriptor(
+                repositoryDirectory, manifest, siteId, currentPlacementDimension(site),
                 restoredPlacement.getSchematicFile(), expectedName));
         attachCompletionListener(restoredOverlay, completionListener);
         LvcDiagnostics.debug("LvcTrackingOverlayService: attached restart-persisted tracking overlay for '{}'", repositoryDirectory);
@@ -271,7 +279,7 @@ public final class LvcTrackingOverlayService
             return false;
         }
 
-        LvcManifest manifest = LvcSemanticRepository.readManifest(repositoryDirectory);
+        LvcManifest manifest = resolveTrackingOverlayManifestSource(repositoryDirectory).manifest();
         Path cacheFile = currentSemanticTrackingCacheFile(repositoryDirectory);
 
         if (cacheFile == null)
@@ -332,6 +340,114 @@ public final class LvcTrackingOverlayService
         }
 
         return projectName;
+    }
+
+    public static TrackingOverlayManifestSource resolveTrackingOverlayManifestSource(
+            Path repositoryDirectory) throws IOException
+    {
+        Objects.requireNonNull(repositoryDirectory, "repositoryDirectory");
+        ObjectId head = LvcRepository.resolveHead(repositoryDirectory);
+
+        if (head == null)
+        {
+            return new TrackingOverlayManifestSource(
+                    LvcSemanticRepository.readManifest(repositoryDirectory), null, false, true);
+        }
+
+        boolean dirty;
+
+        try
+        {
+            dirty = LvcProjectService.hasUncommittedChanges(repositoryDirectory);
+        }
+        catch (Exception e)
+        {
+            throw new IOException("Failed to inspect Gitmatica project changes", e);
+        }
+
+        if (!dirty)
+        {
+            return new TrackingOverlayManifestSource(
+                    LvcSemanticRepository.readManifest(repositoryDirectory), head.getName(), false, false);
+        }
+
+        LvcManifest committedManifest = readCommitManifest(repositoryDirectory, head.getName());
+
+        try
+        {
+            LvcManifest workingManifest = LvcSemanticRepository.readManifest(repositoryDirectory);
+            String workingDefinition = LvcSemanticRepository.trackingOverlayDefinitionId(workingManifest);
+            String committedDefinition = LvcSemanticRepository.trackingOverlayDefinitionId(committedManifest);
+
+            if (!workingDefinition.equals(committedDefinition))
+            {
+                LvcDiagnostics.debug("LvcTrackingOverlayService: using working-tree overlay definitions for dirty repository '{}'",
+                        repositoryDirectory);
+                return new TrackingOverlayManifestSource(
+                        combineTrackingOverlayManifest(committedManifest, workingManifest),
+                        head.getName(),
+                        true,
+                        true
+                );
+            }
+        }
+        catch (IOException | RuntimeException e)
+        {
+            LvcDiagnostics.debug("LvcTrackingOverlayService: working manifest unavailable while resolving dirty overlay repo='{}' error='{}'",
+                    repositoryDirectory, e.getMessage());
+        }
+
+        return new TrackingOverlayManifestSource(committedManifest, head.getName(), true, false);
+    }
+
+    private static LvcManifest combineTrackingOverlayManifest(LvcManifest committedManifest,
+                                                              LvcManifest workingManifest)
+    {
+        Map<String, LvcManifest.Site> committedSites = new HashMap<>();
+
+        for (LvcManifest.Site site : committedManifest.sites())
+        {
+            committedSites.put(site.id(), site);
+        }
+
+        List<LvcManifest.Site> overlaySites = new ArrayList<>(workingManifest.sites().size());
+
+        for (LvcManifest.Site workingSite : workingManifest.sites())
+        {
+            LvcManifest.Site committedSite = committedSites.get(workingSite.id());
+
+            if (committedSite == null)
+            {
+                overlaySites.add(new LvcManifest.Site(
+                        workingSite.id(),
+                        workingSite.name(),
+                        workingSite.dimension(),
+                        workingSite.regions(),
+                        workingSite.hashIndex(),
+                        Map.of(),
+                        Map.of()
+                ));
+            }
+            else
+            {
+                overlaySites.add(new LvcManifest.Site(
+                        workingSite.id(),
+                        workingSite.name(),
+                        workingSite.dimension(),
+                        workingSite.regions(),
+                        committedSite.hashIndex(),
+                        committedSite.fullHashes(),
+                        committedSite.trackedHashes()
+                ));
+            }
+        }
+
+        return new LvcManifest(
+                workingManifest.format(),
+                workingManifest.name(),
+                workingManifest.content(),
+                overlaySites
+        ).validate();
     }
 
     public static TrackingOverlayRevisionTarget resolveTrackingOverlayRevisionTarget(
@@ -419,9 +535,11 @@ public final class LvcTrackingOverlayService
 
         long cacheTime = Files.getLastModifiedTime(cacheFile).toMillis();
         long manifestTime = Files.getLastModifiedTime(repositoryDirectory.resolve(LvcSemanticRepository.MANIFEST)).toMillis();
-        LvcManifest manifest = LvcSemanticRepository.readManifest(repositoryDirectory);
+        LvcManifest manifest = resolveTrackingOverlayManifestSource(repositoryDirectory).manifest();
+        String definitionId = LvcSemanticRepository.trackingOverlayDefinitionId(manifest);
 
-        if (!trackingOverlayDisplayNameForCommit(manifest.name(), head.getName()).equals(descriptor.overlayName()))
+        if (!trackingOverlayDisplayNameForCommit(manifest.name(), head.getName()).equals(descriptor.overlayName()) ||
+                !definitionId.equals(descriptor.definitionId()))
         {
             return false;
         }
@@ -492,6 +610,7 @@ public final class LvcTrackingOverlayService
 
     public static LvcProjectService.TrackingOverlay addSemanticTrackingOverlay(Path repositoryDirectory,
                                                                                LitematicaSchematic schematic,
+                                                                               LvcManifest sourceManifest,
                                                                                String siteId,
                                                                                LvcSitePlacement placementState,
                                                                                String overlayName,
@@ -501,13 +620,14 @@ public final class LvcTrackingOverlayService
     {
         return addSemanticTrackingOverlay(repositoryDirectory, schematic, siteId, placementState, overlayName,
                 clientLevel, completionListener, startVerifier,
-                currentOverlayDescriptor(repositoryDirectory, siteId, placementState.dimension(),
+                currentOverlayDescriptor(repositoryDirectory, sourceManifest, siteId, placementState.dimension(),
                         schematic.getFile(), overlayName));
     }
 
     public static LvcProjectService.TrackingOverlay addSemanticTrackingOverlayForRevision(
             Path repositoryDirectory,
             LitematicaSchematic schematic,
+            LvcManifest sourceManifest,
             String siteId,
             LvcSitePlacement placementState,
             String overlayName,
@@ -520,7 +640,8 @@ public final class LvcTrackingOverlayService
         Objects.requireNonNull(revision, "revision");
         Objects.requireNonNull(descriptorCommitId, "descriptorCommitId");
         OverlayDescriptor descriptor = overlayDescriptor(descriptorCommitId, siteId, placementState.dimension(),
-                schematic.getFile(), overlayName, revision);
+                schematic.getFile(), overlayName, revision,
+                LvcSemanticRepository.trackingOverlayDefinitionId(sourceManifest));
         return addSemanticTrackingOverlay(repositoryDirectory, schematic, siteId, placementState, overlayName,
                 clientLevel, completionListener, startVerifier, descriptor);
     }
@@ -538,6 +659,7 @@ public final class LvcTrackingOverlayService
     {
         BlockPos origin = LvcProjectPositions.blockPosFromList(placementState.origin());
         SchematicPlacement placement = SchematicPlacement.createFor(schematic, origin, overlayName, true, true);
+        restoreTrackingOverlaySubRegionSelection(repositoryDirectory, placement);
         ClientLevel verifierWorld = clientLevel;
 
         if (clientLevel != null && !LvcMinecraftWorldReader.dimensionId(clientLevel).equals(placementState.dimension()))
@@ -612,7 +734,7 @@ public final class LvcTrackingOverlayService
 
             if (placement != null)
             {
-                cacheTrackingOverlayOrigin(repositoryDirectory, placement.getOrigin());
+                cacheTrackingOverlayState(repositoryDirectory, placement);
             }
 
             return placement;
@@ -757,20 +879,6 @@ public final class LvcTrackingOverlayService
         return repositoryDirectory != null ? repositoryDirectory.normalize() : null;
     }
 
-    private static boolean hasTrackedGitChanges(Path repositoryDirectory)
-    {
-        try
-        {
-            return LvcProjectService.hasUncommittedChanges(repositoryDirectory);
-        }
-        catch (Exception e)
-        {
-            LvcDiagnostics.debug("LvcTrackingOverlayService: treating overlay cache as non-reusable because dirty check failed repo='{}' error='{}'",
-                    repositoryDirectory, e.getMessage());
-            return true;
-        }
-    }
-
     public static boolean focusTrackingOverlay(Path repositoryDirectory)
     {
         Objects.requireNonNull(repositoryDirectory, "repositoryDirectory");
@@ -853,6 +961,37 @@ public final class LvcTrackingOverlayService
         return updated;
     }
 
+    @Nullable
+    public static String getSelectedTrackingSubRegion(Path repositoryDirectory)
+    {
+        Objects.requireNonNull(repositoryDirectory, "repositoryDirectory");
+        SchematicPlacement placement = findTrackingPlacement(repositoryDirectory);
+        return placement != null ?
+                placement.getSelectedSubRegionName() :
+                TRACKING_OVERLAY_SUB_REGION_SELECTION_CACHE.get(trackingOverlayKey(repositoryDirectory));
+    }
+
+    public static void setSelectedTrackingSubRegion(Path repositoryDirectory, @Nullable String regionName)
+    {
+        Objects.requireNonNull(repositoryDirectory, "repositoryDirectory");
+        SchematicPlacement placement = findTrackingPlacement(repositoryDirectory);
+        Path key = trackingOverlayKey(repositoryDirectory);
+
+        if (regionName == null)
+        {
+            TRACKING_OVERLAY_SUB_REGION_SELECTION_CACHE.remove(key);
+        }
+        else
+        {
+            TRACKING_OVERLAY_SUB_REGION_SELECTION_CACHE.put(key, regionName);
+        }
+
+        if (placement != null)
+        {
+            placement.setSelectedSubRegionName(regionName);
+        }
+    }
+
     public static boolean focusTrackingOverlay(Path repositoryDirectory, SchematicPlacement placement)
     {
         Objects.requireNonNull(repositoryDirectory, "repositoryDirectory");
@@ -891,7 +1030,7 @@ public final class LvcTrackingOverlayService
     private static void trackOverlay(Path repositoryDirectory, LvcProjectService.TrackingOverlay overlay,
                                      @Nullable OverlayDescriptor descriptor)
     {
-        cacheTrackingOverlayOrigin(repositoryDirectory, overlay.placement().getOrigin());
+        cacheTrackingOverlayState(repositoryDirectory, overlay.placement());
         ACTIVE_TRACKING_OVERLAYS.put(trackingOverlayKey(repositoryDirectory), new TrackingOverlayEntry(overlay, descriptor));
 
         if (descriptor != null)
@@ -911,7 +1050,7 @@ public final class LvcTrackingOverlayService
         TRACKING_OVERLAY_ORIGIN_CACHE.put(trackingOverlayKey(repositoryDirectory), origin);
     }
 
-    private static void rememberCurrentTrackingOverlayOrigin(Path repositoryDirectory)
+    private static void rememberCurrentTrackingOverlayState(Path repositoryDirectory)
     {
         try
         {
@@ -919,13 +1058,50 @@ public final class LvcTrackingOverlayService
 
             if (placement != null)
             {
-                cacheTrackingOverlayOrigin(repositoryDirectory, placement.getOrigin());
+                cacheTrackingOverlayState(repositoryDirectory, placement);
             }
         }
         catch (RuntimeException | LinkageError e)
         {
-            LvcDiagnostics.debug("LvcTrackingOverlayService: skipped tracking overlay origin remember repo='{}' error='{}'",
+            LvcDiagnostics.debug("LvcTrackingOverlayService: skipped tracking overlay state remember repo='{}' error='{}'",
                     repositoryDirectory, e.getMessage());
+        }
+    }
+
+    private static void cacheTrackingOverlayState(Path repositoryDirectory, SchematicPlacement placement)
+    {
+        cacheTrackingOverlayOrigin(repositoryDirectory, placement.getOrigin());
+        Path key = trackingOverlayKey(repositoryDirectory);
+        String selectedRegionName = placement.getSelectedSubRegionName();
+
+        if (selectedRegionName == null)
+        {
+            TRACKING_OVERLAY_SUB_REGION_SELECTION_CACHE.remove(key);
+        }
+        else
+        {
+            TRACKING_OVERLAY_SUB_REGION_SELECTION_CACHE.put(key, selectedRegionName);
+        }
+    }
+
+    private static void restoreTrackingOverlaySubRegionSelection(Path repositoryDirectory,
+                                                                 SchematicPlacement placement)
+    {
+        Path key = trackingOverlayKey(repositoryDirectory);
+        String selectedRegionName = TRACKING_OVERLAY_SUB_REGION_SELECTION_CACHE.get(key);
+
+        if (selectedRegionName == null)
+        {
+            return;
+        }
+
+        if (placement.getRelativeSubRegionPlacement(selectedRegionName) != null)
+        {
+            placement.setSelectedSubRegionName(selectedRegionName);
+        }
+        else
+        {
+            TRACKING_OVERLAY_SUB_REGION_SELECTION_CACHE.remove(key);
         }
     }
 
@@ -1312,7 +1488,7 @@ public final class LvcTrackingOverlayService
         }
 
         String commitId = head.getName();
-        LvcManifest manifest = readCommitManifest(repositoryDirectory, commitId);
+        LvcManifest manifest = resolveTrackingOverlayManifestSource(repositoryDirectory).manifest();
         String siteId = LvcSemanticRepository.defaultSiteId(manifest);
         LvcManifest.Site site = manifest.site(siteId);
         String overlayName = trackingOverlayDisplayNameForCommit(manifest.name(), commitId);
@@ -1331,7 +1507,15 @@ public final class LvcTrackingOverlayService
         }
 
         String dimension = currentPlacementDimension(site);
-        OverlayDescriptor descriptor = currentOverlayDescriptor(repositoryDirectory, siteId, dimension, cacheFile, overlayName);
+        OverlayDescriptor descriptor = overlayDescriptor(
+                commitId,
+                siteId,
+                dimension,
+                cacheFile,
+                overlayName,
+                TrackingOverlayRevision.CURRENT,
+                LvcSemanticRepository.trackingOverlayDefinitionId(manifest)
+        );
         return new OverlayTarget(repositoryDirectory.toAbsolutePath().normalize(), commitId, siteId, dimension,
                 cacheFile, overlayName, descriptor);
     }
@@ -1363,10 +1547,12 @@ public final class LvcTrackingOverlayService
     }
 
     @Nullable
-    private static OverlayDescriptor currentOverlayDescriptor(Path repositoryDirectory, String siteId,
-                                                             String dimension,
-                                                             @Nullable Path cacheFile,
-                                                             String overlayName) throws IOException
+    private static OverlayDescriptor currentOverlayDescriptor(Path repositoryDirectory,
+                                                              LvcManifest sourceManifest,
+                                                              String siteId,
+                                                              String dimension,
+                                                              @Nullable Path cacheFile,
+                                                              String overlayName) throws IOException
     {
         ObjectId head = LvcRepository.resolveHead(repositoryDirectory);
 
@@ -1375,14 +1561,22 @@ public final class LvcTrackingOverlayService
             return null;
         }
 
-        return overlayDescriptor(head.getName(), siteId, dimension, cacheFile, overlayName,
-                TrackingOverlayRevision.CURRENT);
+        return overlayDescriptor(
+                head.getName(),
+                siteId,
+                dimension,
+                cacheFile,
+                overlayName,
+                TrackingOverlayRevision.CURRENT,
+                LvcSemanticRepository.trackingOverlayDefinitionId(sourceManifest)
+        );
     }
 
     @Nullable
     private static OverlayDescriptor overlayDescriptor(String commitId, String siteId, String dimension,
                                                        @Nullable Path cacheFile, String overlayName,
-                                                       TrackingOverlayRevision revision)
+                                                       TrackingOverlayRevision revision,
+                                                       String definitionId)
     {
         if (cacheFile == null)
         {
@@ -1390,7 +1584,8 @@ public final class LvcTrackingOverlayService
         }
 
         return new OverlayDescriptor(commitId, siteId, dimension,
-                cacheFile.toAbsolutePath().normalize().toString(), overlayName, revision.serializedName);
+                cacheFile.toAbsolutePath().normalize().toString(), overlayName,
+                revision.serializedName, definitionId);
     }
 
     @Nullable
@@ -1743,7 +1938,8 @@ public final class LvcTrackingOverlayService
     }
 
     private record OverlayDescriptor(String commitId, String siteId, String dimension,
-                                     String cacheFile, String overlayName, @Nullable String revision)
+                                     String cacheFile, String overlayName, @Nullable String revision,
+                                     @Nullable String definitionId)
     {
         private boolean matches(OverlayTarget target)
         {
@@ -1753,7 +1949,8 @@ public final class LvcTrackingOverlayService
                     Objects.equals(this.dimension, target.dimension()) &&
                     descriptorCacheFile != null &&
                     pathsEqual(target.cacheFile(), descriptorCacheFile) &&
-                    Objects.equals(this.overlayName, target.overlayName());
+                    Objects.equals(this.overlayName, target.overlayName()) &&
+                    Objects.equals(this.definitionId, target.descriptor().definitionId());
         }
 
         private boolean matchesPlacement(Path repositoryDirectory, SchematicPlacement placement)

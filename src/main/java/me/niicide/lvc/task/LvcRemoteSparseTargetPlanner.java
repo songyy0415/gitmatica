@@ -12,10 +12,14 @@ import java.util.Set;
 import javax.annotation.Nullable;
 import net.minecraft.core.BlockPos;
 import net.minecraft.world.level.block.state.BlockState;
+import me.niicide.lvc.capture.LvcSiteWorkPlan;
 import me.niicide.lvc.capture.LvcWorldReader;
+import me.niicide.lvc.model.LvcChunk;
+import me.niicide.lvc.model.LvcChunkCoordinate;
 import me.niicide.lvc.model.LvcIntPosition;
 import me.niicide.lvc.model.LvcManifest;
 import me.niicide.lvc.semantic.LvcSemanticSchematicBuilder;
+import me.niicide.lvc.semantic.LvcTrackedBlockCursor;
 import me.niicide.lvc.storage.LvcChunkCodec;
 import me.niicide.lvc.world.LvcWorldBackend;
 
@@ -26,8 +30,11 @@ public final class LvcRemoteSparseTargetPlanner
     private final LvcManifest.Site site;
     private final List<BlockPos> furnaceXpCleanupCandidates = new ArrayList<>();
     private final List<CommandMutation> commandMutations = new ArrayList<>();
-    private final Set<String> affectedRegionIds = new HashSet<>();
+    private final Set<String> affectedRegionNames = new HashSet<>();
+    private final Set<LvcChunkCoordinate> retiredNonAirChunks = new HashSet<>();
     private int scannedBlocks;
+    private int scannedRetiredBlocks;
+    private int retiredNonAirBlocks;
     private int stateMismatches;
     private int blockEntityMismatches;
     private int ignoredBlockEntityTargets;
@@ -84,6 +91,34 @@ public final class LvcRemoteSparseTargetPlanner
         return false;
     }
 
+    public void scanRetiredCoverageChunk(LvcSiteWorkPlan.ChunkWork work, LvcIntPosition origin) throws IOException
+    {
+        Objects.requireNonNull(work, "work");
+        Objects.requireNonNull(origin, "origin");
+
+        for (LvcTrackedBlockCursor.Position position : LvcTrackedBlockCursor.positions(
+                work.coordinate(), origin, work.mask(),
+                LvcChunk.DEFAULT_SIZE, LvcChunk.DEFAULT_SIZE, LvcChunk.DEFAULT_SIZE))
+        {
+            if (!this.reader.canReadAt(position.worldPos()))
+            {
+                throw new IOException("LVC remote retired coverage scan cannot read block at " +
+                        position.blockPos());
+            }
+
+            this.scannedRetiredBlocks++;
+            String currentBlockState = LvcChunkCodec.canonicalTrackedBlockState(
+                    this.reader.blockStateAt(position.worldPos()));
+
+            if (!"minecraft:air".equals(currentBlockState))
+            {
+                this.retiredNonAirBlocks++;
+                this.retiredNonAirChunks.add(work.coordinate());
+                this.addFurnaceXpCleanupCandidateIfNeeded(currentBlockState, position.blockPos());
+            }
+        }
+    }
+
     private boolean blockEntityMatchesTrackedPayload(LvcIntPosition worldPos, @Nullable byte[] targetBlockEntity) throws IOException
     {
         byte[] targetTrackedNbt = targetBlockEntity == null ? null :
@@ -105,6 +140,21 @@ public final class LvcRemoteSparseTargetPlanner
         return this.stateMismatches;
     }
 
+    public int scannedRetiredBlocks()
+    {
+        return this.scannedRetiredBlocks;
+    }
+
+    public int retiredNonAirBlocks()
+    {
+        return this.retiredNonAirBlocks;
+    }
+
+    public Set<LvcChunkCoordinate> retiredNonAirChunks()
+    {
+        return Collections.unmodifiableSet(this.retiredNonAirChunks);
+    }
+
     public int blockEntityMismatches()
     {
         return this.blockEntityMismatches;
@@ -120,9 +170,9 @@ public final class LvcRemoteSparseTargetPlanner
         return Collections.unmodifiableList(this.furnaceXpCleanupCandidates);
     }
 
-    public Set<String> affectedRegionIds()
+    public Set<String> affectedRegionNames()
     {
-        return Collections.unmodifiableSet(this.affectedRegionIds);
+        return Collections.unmodifiableSet(this.affectedRegionNames);
     }
 
     public List<CommandMutation> commandMutations()
@@ -162,7 +212,7 @@ public final class LvcRemoteSparseTargetPlanner
                     projectPos.y() >= min.y() && projectPos.y() < min.y() + size.y() &&
                     projectPos.z() >= min.z() && projectPos.z() < min.z() + size.z())
             {
-                this.affectedRegionIds.add(region.id());
+                this.affectedRegionNames.add(region.name());
             }
         }
     }

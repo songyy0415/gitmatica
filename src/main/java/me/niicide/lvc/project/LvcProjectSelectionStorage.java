@@ -7,7 +7,6 @@ import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
-import javax.annotation.Nullable;
 import net.minecraft.core.BlockPos;
 import me.niicide.lvc.model.LvcManifest;
 import me.niicide.lvc.model.LvcSitePlacement;
@@ -28,16 +27,16 @@ public final class LvcProjectSelectionStorage
         validateProjectName(siteName);
 
         BlockPos origin = selection.getEffectiveOrigin();
-        List<LvcManifest.Region> regions = createRegionsFromSelection(selection, origin, List.of());
+        List<LvcManifest.Region> regions = createRegionsFromSelection(selection, origin);
 
         return new LvcManifest.Site("main", siteName, dimensionId, regions, Map.of());
     }
 
-    public static List<LvcManifest.Region> createRegionsFromSelection(AreaSelection selection, BlockPos origin, List<LvcManifest.Region> existingRegions)
+    public static List<LvcManifest.Region> createRegionsFromSelection(
+            AreaSelection selection, BlockPos origin)
     {
         Objects.requireNonNull(selection, "selection");
         Objects.requireNonNull(origin, "origin");
-        Objects.requireNonNull(existingRegions, "existingRegions");
 
         List<Box> boxes = new ArrayList<>(getValidBoxes(selection));
         boxes.sort(Comparator.comparing(box -> box.getName() == null ? "" : box.getName()));
@@ -48,7 +47,7 @@ public final class LvcProjectSelectionStorage
         }
 
         List<LvcManifest.Region> regions = new ArrayList<>();
-        Set<String> usedRegionIds = new HashSet<>();
+        Set<String> usedRegionNames = new HashSet<>();
 
         for (Box box : boxes)
         {
@@ -65,20 +64,19 @@ public final class LvcProjectSelectionStorage
             BlockPos relativeMin = min.subtract(origin);
             BlockPos size = max.subtract(min).offset(1, 1, 1);
             String regionName = box.getName();
-            String regionBoundsKey = regionBoundsKey(LvcProjectPositions.blockPosToList(relativeMin), LvcProjectPositions.blockPosToList(size));
-            String regionId = matchingExistingRegionId(regionName, regionBoundsKey, existingRegions, usedRegionIds);
 
-            if (regionId == null)
+            if (regionName == null || regionName.isBlank())
             {
-                regionId = uniqueRegionId(regionName, usedRegionIds);
+                throw new IllegalArgumentException("LVC sub-region name must not be blank");
             }
-            else
+
+            if (!usedRegionNames.add(regionName))
             {
-                usedRegionIds.add(regionId);
+                throw new IllegalArgumentException(
+                        "LVC sub-region names must be unique: " + regionName);
             }
 
             regions.add(new LvcManifest.Region(
-                    regionId,
                     regionName,
                     LvcProjectPositions.blockPosToList(relativeMin),
                     LvcProjectPositions.blockPosToList(size)
@@ -112,56 +110,4 @@ public final class LvcProjectSelectionStorage
         return PositionUtils.getValidBoxes(selection);
     }
 
-    @Nullable
-    private static String matchingExistingRegionId(String regionName, String regionBoundsKey, List<LvcManifest.Region> existingRegions, Set<String> usedRegionIds)
-    {
-        for (LvcManifest.Region region : existingRegions)
-        {
-            if (!usedRegionIds.contains(region.id()) && region.name().equals(regionName))
-            {
-                return region.id();
-            }
-        }
-
-        for (LvcManifest.Region region : existingRegions)
-        {
-            if (!usedRegionIds.contains(region.id()) && regionBoundsKey(region).equals(regionBoundsKey))
-            {
-                return region.id();
-            }
-        }
-
-        return null;
-    }
-
-    private static String regionBoundsKey(LvcManifest.Region region)
-    {
-        return regionBoundsKey(region.min(), region.size());
-    }
-
-    private static String regionBoundsKey(List<Integer> min, List<Integer> size)
-    {
-        return min + "|" + size;
-    }
-
-    private static String uniqueRegionId(String name, Set<String> usedIds)
-    {
-        String base = name == null ? "" : name.trim().toLowerCase(java.util.Locale.ROOT).replaceAll("[^a-z0-9_-]+", "_");
-
-        if (base.isBlank())
-        {
-            base = "region";
-        }
-
-        String candidate = base;
-        int index = 2;
-
-        while (!usedIds.add(candidate))
-        {
-            candidate = base + "_" + index;
-            index++;
-        }
-
-        return candidate;
-    }
 }

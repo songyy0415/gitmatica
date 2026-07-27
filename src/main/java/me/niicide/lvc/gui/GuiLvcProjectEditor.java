@@ -1,24 +1,41 @@
 package me.niicide.lvc.gui;
 
+import java.io.IOException;
 import java.nio.file.Path;
 import java.util.List;
+import java.util.Optional;
 import javax.annotation.Nullable;
 import net.minecraft.client.Minecraft;
+import net.minecraft.client.multiplayer.ClientLevel;
 import net.minecraft.core.BlockPos;
 import net.minecraft.world.entity.player.Player;
 import net.minecraft.world.level.Level;
 import me.niicide.lvc.LvcDiagnostics;
+import me.niicide.lvc.LvcFriendlyErrors.Operation;
 import me.niicide.lvc.LvcProjectService;
 import me.niicide.lvc.gui.widgets.WidgetLvcProjectSubRegion;
 import me.niicide.lvc.gui.widgets.WidgetLvcProjectSubRegionList;
 import me.niicide.lvc.model.LvcManifest;
+import me.niicide.lvc.overlay.LvcTrackingOverlayService;
+import me.niicide.lvc.task.LvcOperationHandle;
+import me.niicide.lvc.task.LvcRefreshMarker;
+import me.niicide.lvc.task.LvcSemanticOverlayTask;
+import me.niicide.lvc.task.LvcTaskCallbacks;
+import me.niicide.lvc.task.LvcTaskRegistry;
+import me.niicide.lvc.task.LvcTaskScheduling;
 
 import fi.dy.masa.litematica.Reference;
 import fi.dy.masa.litematica.config.Configs;
+import fi.dy.masa.litematica.data.DataManager;
+import fi.dy.masa.litematica.gui.GuiMaterialList;
 import fi.dy.masa.litematica.gui.GuiMainMenu;
 import fi.dy.masa.litematica.gui.Icons;
+import fi.dy.masa.litematica.materials.MaterialListAreaAnalyzer;
+import fi.dy.masa.litematica.selection.AreaSelection;
+import fi.dy.masa.litematica.selection.Box;
 import fi.dy.masa.litematica.selection.SelectionMode;
 import fi.dy.masa.malilib.gui.GuiBase;
+import fi.dy.masa.malilib.gui.GuiConfirmAction;
 import fi.dy.masa.malilib.gui.GuiListBase;
 import fi.dy.masa.malilib.gui.GuiTextFieldGeneric;
 import fi.dy.masa.malilib.gui.GuiTextFieldInteger;
@@ -73,7 +90,7 @@ public class GuiLvcProjectEditor extends GuiListBase<LvcManifest.Region, WidgetL
     private final Path repositoryDirectory;
     private String projectName;
     @Nullable private LvcProjectService.ProjectEditorState state;
-    @Nullable private String selectedRegionId;
+    @Nullable private String selectedRegionName;
     private String statusText = "";
     private int statusColor = STATUS_COLOR;
 
@@ -104,8 +121,13 @@ public class GuiLvcProjectEditor extends GuiListBase<LvcManifest.Region, WidgetL
     @Override
     protected WidgetLvcProjectSubRegionList createListWidget(int listX, int listY)
     {
-        List<LvcManifest.Region> regions = this.state != null ? this.state.regions() : List.of();
-        return new WidgetLvcProjectSubRegionList(listX, listY, this.getBrowserWidth(), this.getBrowserHeight(), regions, this, this);
+        return new WidgetLvcProjectSubRegionList(
+                listX, listY, this.getBrowserWidth(), this.getBrowserHeight(), this, this);
+    }
+
+    public List<LvcManifest.Region> getRegions()
+    {
+        return this.state != null ? this.state.regions() : List.of();
     }
 
     @Override
@@ -202,22 +224,27 @@ public class GuiLvcProjectEditor extends GuiListBase<LvcManifest.Region, WidgetL
     {
         if (this.state == null)
         {
-            this.selectedRegionId = null;
+            this.selectRegion(null);
             return;
         }
 
-        if (this.selectedRegionId != null)
+        String selectedRegionName = this.selectedRegionName != null ?
+                this.selectedRegionName :
+                LvcTrackingOverlayService.getSelectedTrackingSubRegion(this.repositoryDirectory);
+
+        if (selectedRegionName != null)
         {
             for (LvcManifest.Region region : this.state.regions())
             {
-                if (region.id().equals(this.selectedRegionId))
+                if (region.name().equals(selectedRegionName))
                 {
+                    this.selectRegion(selectedRegionName);
                     return;
                 }
             }
         }
 
-        this.selectedRegionId = this.state.regions().isEmpty() ? null : this.state.regions().get(0).id();
+        this.selectRegion(null);
     }
 
     private void createTopButtons()
@@ -398,6 +425,470 @@ public class GuiLvcProjectEditor extends GuiListBase<LvcManifest.Region, WidgetL
         GuiBase.openGui(new GuiMainMenu());
     }
 
+    private void promptNewRegion()
+    {
+        if (!this.canEditRegions())
+        {
+            return;
+        }
+
+        GuiBase.openGui(new GuiLvcTextInputDialog(
+                128,
+                "litematica.gui.title.lvc_project_editor.new_sub_region",
+                "",
+                this,
+                this::validateRegionName,
+                (java.util.function.Consumer<String>) this::createRegion
+        ));
+    }
+
+    private void createRegion(String name)
+    {
+        if (!this.canEditRegions())
+        {
+            return;
+        }
+
+        Minecraft minecraft = Minecraft.getInstance();
+        Player player = minecraft.player;
+
+        if (player == null)
+        {
+            LvcGuiMessages.show(MessageType.ERROR, "litematica.error.lvc_project.no_player");
+            return;
+        }
+
+        if (minecraft.level == null)
+        {
+            LvcGuiMessages.show(MessageType.ERROR, "litematica.error.lvc_project.no_world");
+            return;
+        }
+
+        if (this.state == null)
+        {
+            this.setErrorStatus(StringUtils.translate("litematica.error.lvc_project_editor.unknown_error"));
+            return;
+        }
+
+        try
+        {
+            BlockPos playerPosition =
+                    fi.dy.masa.malilib.util.position.PositionUtils.getEntityBlockPos(player);
+            BlockPos regionMin = playerPosition.subtract(this.state.placementOrigin());
+            LvcManifest.Region region = LvcProjectService.createSemanticRegion(
+                    this.repositoryDirectory,
+                    name,
+                    regionMin,
+                    new BlockPos(1, 1, 1)
+            );
+            this.selectRegion(region.name());
+            this.setSavedMessage(StringUtils.translate("litematica.message.lvc_project_editor.region_created", region.name()));
+            this.refreshAfterRegionDefinitionChange();
+        }
+        catch (Exception e)
+        {
+            this.setErrorStatus(e.getMessage());
+        }
+    }
+
+    public void promptRenameRegion(LvcManifest.Region region)
+    {
+        if (!this.canEditRegions())
+        {
+            return;
+        }
+
+        GuiBase.openGui(new GuiLvcTextInputDialog(
+                128,
+                "litematica.gui.title.lvc_project_editor.rename_sub_region",
+                region.name(),
+                this,
+                value -> this.validateRegionName(region.name(), value),
+                (java.util.function.Consumer<String>) value ->
+                        this.renameRegion(region.name(), value)
+        ));
+    }
+
+    private void renameRegion(String currentName, String name)
+    {
+        if (!this.canEditRegions())
+        {
+            return;
+        }
+
+        LvcManifest.Region region = this.regionByName(currentName);
+
+        if (region == null)
+        {
+            return;
+        }
+
+        try
+        {
+            LvcProjectService.updateSemanticRegion(
+                    this.repositoryDirectory,
+                    currentName,
+                    name,
+                    blockPosFromList(region.min()),
+                    blockPosFromList(region.size())
+            );
+            this.selectRegion(name.trim());
+            this.clearStatus();
+            this.refreshAfterRegionDefinitionChange();
+            LvcGuiMessages.show(
+                    MessageType.SUCCESS,
+                    "litematica.message.lvc_project_editor.region_renamed",
+                    name.trim()
+            );
+        }
+        catch (Exception e)
+        {
+            this.setErrorStatus(e.getMessage());
+        }
+    }
+
+    public void openRegionEditor(LvcManifest.Region region)
+    {
+        if (!this.canEditRegions())
+        {
+            return;
+        }
+
+        this.selectRegion(region.name());
+        GuiBase.openGui(new GuiLvcProjectSubRegionDialog(
+                this,
+                region,
+                this.state.placementOrigin(),
+                (min, size) -> this.updateRegionBounds(region.name(), min, size)
+        ));
+    }
+
+    static boolean openSelectedSubRegionDialog(Path repositoryDirectory,
+                                               @Nullable String selectedRegionName) throws IOException
+    {
+        LvcProjectService.ProjectEditorState state =
+                LvcProjectService.readSemanticProjectEditorState(repositoryDirectory);
+        LvcManifest.Region selectedRegion =
+                selectedRegionName == null && state.regions().size() == 1 ?
+                        state.regions().getFirst() :
+                        null;
+
+        if (selectedRegionName != null)
+        {
+            for (LvcManifest.Region region : state.regions())
+            {
+                if (region.name().equals(selectedRegionName))
+                {
+                    selectedRegion = region;
+                    break;
+                }
+            }
+        }
+
+        if (selectedRegion == null)
+        {
+            return false;
+        }
+
+        LvcManifest.Region region = selectedRegion;
+        GuiBase.openGui(new GuiLvcProjectSubRegionDialog(
+                GuiUtils.getCurrentScreen(),
+                region,
+                state.placementOrigin(),
+                (min, size) -> updateRegionBoundsFromHotkey(
+                        repositoryDirectory,
+                        state.projectName(),
+                        region.name(),
+                        min,
+                        size
+                )
+        ));
+        return true;
+    }
+
+    private static boolean updateRegionBoundsFromHotkey(Path repositoryDirectory, String projectName,
+                                                        String regionName, BlockPos min, BlockPos size)
+    {
+        if (LvcTaskRegistry.hasActiveOperation())
+        {
+            LvcGuiMessages.show(
+                    MessageType.ERROR,
+                    "litematica.error.lvc_project.operation_running",
+                    LvcTaskRegistry.activeOperationName()
+            );
+            return false;
+        }
+
+        try
+        {
+            LvcProjectService.updateSemanticRegion(
+                    repositoryDirectory, regionName, regionName, min, size);
+            LvcGuiMessages.show(
+                    MessageType.SUCCESS,
+                    "litematica.message.lvc_project_editor.region_updated"
+            );
+            refreshTrackingOverlayFromWorkingTree(repositoryDirectory, projectName);
+            return true;
+        }
+        catch (Exception e)
+        {
+            LvcGuiMessages.show(
+                    MessageType.ERROR,
+                    "litematica.error.lvc_project_editor.save_failed",
+                    e.getMessage()
+            );
+            return false;
+        }
+    }
+
+    private boolean updateRegionBounds(String regionName, BlockPos min, BlockPos size)
+    {
+        if (!this.canEditRegions())
+        {
+            return false;
+        }
+
+        LvcManifest.Region region = this.regionByName(regionName);
+
+        if (region == null)
+        {
+            return false;
+        }
+
+        try
+        {
+            LvcProjectService.updateSemanticRegion(
+                    this.repositoryDirectory, region.name(), region.name(), min, size);
+            this.setSavedStatus("litematica.message.lvc_project_editor.region_updated");
+            this.refreshAfterRegionDefinitionChange();
+            return true;
+        }
+        catch (Exception e)
+        {
+            this.setErrorStatus(e.getMessage());
+            return false;
+        }
+    }
+
+    private void refreshAfterRegionDefinitionChange()
+    {
+        this.initGui();
+        this.refreshTrackingOverlayFromWorkingTree();
+    }
+
+    private void refreshTrackingOverlayFromWorkingTree()
+    {
+        refreshTrackingOverlayFromWorkingTree(this.repositoryDirectory, this.projectName);
+    }
+
+    private static void refreshTrackingOverlayFromWorkingTree(Path repositoryDirectory, String projectName)
+    {
+        ClientLevel clientLevel = Minecraft.getInstance().level;
+
+        if (clientLevel == null)
+        {
+            LvcGuiMessages.show(MessageType.ERROR, "litematica.error.lvc_project.no_world");
+            return;
+        }
+
+        Optional<LvcOperationHandle> handle = LvcTaskRegistry.tryAcquireBackground(
+                LvcSemanticOverlayTask.OPERATION_NAME, repositoryDirectory);
+
+        if (handle.isEmpty())
+        {
+            LvcGuiMessages.show(MessageType.ERROR, "litematica.error.lvc_project.operation_running",
+                    LvcTaskRegistry.activeOperationName());
+            return;
+        }
+
+        LvcSemanticOverlayTask task = LvcSemanticOverlayTask.workingTreeRebuild(
+                handle.get(),
+                repositoryDirectory,
+                projectName,
+                clientLevel,
+                null,
+                true,
+                LvcTaskCallbacks.of(
+                        overlay -> clearRefreshMarkerAfterRegionDefinitionChange(repositoryDirectory),
+                        e -> LvcGuiMessages.showTaskError(
+                                Operation.LOAD_OVERLAY,
+                                "litematica.error.lvc_project.tracking_failed",
+                                e
+                        ),
+                        () -> LvcDiagnostics.debug(
+                                "GuiLvcProjectEditor: working-tree overlay refresh aborted repo='{}'",
+                                repositoryDirectory)
+                )
+        );
+        LvcTaskScheduling.scheduleForWorld(clientLevel, task);
+    }
+
+    private static void clearRefreshMarkerAfterRegionDefinitionChange(Path repositoryDirectory)
+    {
+        try
+        {
+            LvcRefreshMarker.delete(repositoryDirectory);
+        }
+        catch (Exception e)
+        {
+            LvcDiagnostics.warn(
+                    "GuiLvcProjectEditor: failed to clear overlay refresh marker repo='{}' error='{}'",
+                    repositoryDirectory,
+                    e.getMessage()
+            );
+        }
+    }
+
+    public void confirmDeleteRegion(LvcManifest.Region region)
+    {
+        if (!this.canEditRegions())
+        {
+            return;
+        }
+
+        if (this.getRegions().size() <= 1)
+        {
+            LvcGuiMessages.show(
+                    MessageType.ERROR,
+                    "litematica.error.lvc_project_editor.region_required"
+            );
+            return;
+        }
+
+        GuiBase.openGui(new GuiConfirmAction(
+                420,
+                "litematica.gui.title.lvc_project_editor.confirm_delete_region",
+                new DeleteRegionConfirmListener(this, region.name()),
+                this,
+                "litematica.gui.message.lvc_project_editor.confirm_delete_region",
+                region.name()
+        ));
+    }
+
+    private void deleteRegion(String regionName)
+    {
+        if (!this.canEditRegions())
+        {
+            return;
+        }
+
+        try
+        {
+            LvcProjectService.deleteSemanticRegion(this.repositoryDirectory, regionName);
+            this.selectRegion(null);
+            this.setSavedStatus("litematica.message.lvc_project_editor.region_deleted");
+            this.refreshAfterRegionDefinitionChange();
+        }
+        catch (Exception e)
+        {
+            this.setErrorStatus(e.getMessage());
+        }
+    }
+
+    private void promptSaveVersion()
+    {
+        if (this.state == null || this.state.regions().isEmpty())
+        {
+            this.addMessage(MessageType.ERROR, "litematica.error.lvc_project.no_tracking_areas");
+            return;
+        }
+
+        GuiLvcProjectManager.openSaveVersionFromCurrentScreen(this.repositoryDirectory, this.projectName);
+    }
+
+    private void analyzeArea()
+    {
+        if (this.state == null || this.state.regions().isEmpty())
+        {
+            this.addMessage(MessageType.ERROR, "litematica.error.lvc_project.no_tracking_areas");
+            return;
+        }
+
+        AreaSelection selection = new AreaSelection();
+        selection.setName(this.projectName);
+        selection.setExplicitOrigin(this.state.placementOrigin());
+
+        for (LvcManifest.Region region : this.state.regions())
+        {
+            BlockPos min = this.state.placementOrigin().offset(blockPosFromList(region.min()));
+            BlockPos size = blockPosFromList(region.size());
+            BlockPos max = min.offset(size.getX() - 1, size.getY() - 1, size.getZ() - 1);
+            selection.addSubRegionBox(new Box(min, max, region.name()), false);
+        }
+
+        MaterialListAreaAnalyzer materialList = new MaterialListAreaAnalyzer(selection);
+        DataManager.setMaterialList(materialList);
+        GuiBase.openGui(new GuiMaterialList(materialList));
+        materialList.reCreateMaterialList();
+    }
+
+    private boolean canEditRegions()
+    {
+        if (LvcTaskRegistry.hasActiveOperation())
+        {
+            this.addMessage(MessageType.ERROR, "litematica.error.lvc_project.operation_running",
+                    LvcTaskRegistry.activeOperationName());
+            return false;
+        }
+
+        return true;
+    }
+
+    @Nullable
+    private String validateRegionName(String value)
+    {
+        return this.validateRegionName(null, value);
+    }
+
+    @Nullable
+    private String validateRegionName(@Nullable String editedRegionName, String value)
+    {
+        if (value == null || value.isBlank())
+        {
+            return StringUtils.translate("litematica.error.lvc_project_editor.region_name_required");
+        }
+
+        if (this.state != null)
+        {
+            String normalized = value.trim();
+
+            for (LvcManifest.Region region : this.state.regions())
+            {
+                if (!region.name().equals(editedRegionName) &&
+                        region.name().equals(normalized))
+                {
+                    return StringUtils.translate("litematica.error.lvc_project_editor.region_name_duplicate", normalized);
+                }
+            }
+        }
+
+        return null;
+    }
+
+    @Nullable
+    private LvcManifest.Region regionByName(String regionName)
+    {
+        if (this.state == null)
+        {
+            return null;
+        }
+
+        for (LvcManifest.Region region : this.state.regions())
+        {
+            if (region.name().equals(regionName))
+            {
+                return region;
+            }
+        }
+
+        return null;
+    }
+
+    private static BlockPos blockPosFromList(List<Integer> values)
+    {
+        return new BlockPos(values.get(0), values.get(1), values.get(2));
+    }
+
     private void updateIntegerField(FieldKind kind, String value)
     {
         try
@@ -528,7 +1019,12 @@ public class GuiLvcProjectEditor extends GuiListBase<LvcManifest.Region, WidgetL
 
     private void setSavedStatus(String key)
     {
-        this.statusText = StringUtils.translate(key);
+        this.setSavedMessage(StringUtils.translate(key));
+    }
+
+    private void setSavedMessage(String message)
+    {
+        this.statusText = message;
         this.statusColor = SUCCESS_COLOR;
     }
 
@@ -690,15 +1186,23 @@ public class GuiLvcProjectEditor extends GuiListBase<LvcManifest.Region, WidgetL
     }
 
     @Nullable
-    public String getSelectedRegionId()
+    public String getSelectedRegionName()
     {
-        return this.selectedRegionId;
+        return this.selectedRegionName;
     }
 
     @Override
     public void onSelectionChange(LvcManifest.Region entry)
     {
-        this.selectedRegionId = entry.id();
+        this.selectRegion(entry != null && !entry.name().equals(this.selectedRegionName) ?
+                entry.name() :
+                null);
+    }
+
+    private void selectRegion(@Nullable String regionName)
+    {
+        this.selectedRegionName = regionName;
+        LvcTrackingOverlayService.setSelectedTrackingSubRegion(this.repositoryDirectory, regionName);
     }
 
     private String ellipsizeToWidth(String text, int maxWidth)
@@ -772,9 +1276,7 @@ public class GuiLvcProjectEditor extends GuiListBase<LvcManifest.Region, WidgetL
         {
             return this != CHANGE_SELECTION_MODE &&
                     this != CHANGE_CORNER_MODE &&
-                    this != NEW_SUB_REGION &&
-                    this != SAVE_VERSION &&
-                    this != ANALYZE_AREA;
+                    this != SAVE_VERSION;
         }
     }
 
@@ -792,6 +1294,9 @@ public class GuiLvcProjectEditor extends GuiListBase<LvcManifest.Region, WidgetL
         {
             switch (this.type)
             {
+                case NEW_SUB_REGION -> this.gui.promptNewRegion();
+                case SAVE_VERSION -> this.gui.promptSaveVersion();
+                case ANALYZE_AREA -> this.gui.analyzeArea();
                 case SET_ORIGIN_TO_PLAYER -> this.gui.setOriginToPlayer();
                 case MANUAL_ORIGIN -> this.gui.setSavedStatus("litematica.message.lvc_project_editor.metadata_locked");
                 case PROJECT_MANAGER -> this.gui.openProjectManager();
@@ -800,6 +1305,23 @@ public class GuiLvcProjectEditor extends GuiListBase<LvcManifest.Region, WidgetL
                 {
                 }
             }
+        }
+    }
+
+    private record DeleteRegionConfirmListener(GuiLvcProjectEditor gui, String regionName)
+            implements fi.dy.masa.malilib.interfaces.IConfirmationListener
+    {
+        @Override
+        public boolean onActionConfirmed()
+        {
+            this.gui.deleteRegion(this.regionName);
+            return true;
+        }
+
+        @Override
+        public boolean onActionCancelled()
+        {
+            return true;
         }
     }
 

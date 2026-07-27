@@ -3,23 +3,15 @@ package me.niicide.lvc.git;
 import java.io.IOException;
 import java.nio.file.Path;
 import java.util.ArrayList;
-import java.util.Arrays;
-import java.util.BitSet;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
-import java.util.TreeMap;
-import java.util.TreeSet;
 import javax.annotation.Nullable;
 import org.eclipse.jgit.lib.Repository;
 import org.eclipse.jgit.revwalk.RevCommit;
-import me.niicide.lvc.LvcDiagnostics;
 import me.niicide.lvc.LvcProjectService;
-import me.niicide.lvc.model.LvcChunk;
 import me.niicide.lvc.model.LvcManifest;
-import me.niicide.lvc.storage.LvcChunkCodec;
-import me.niicide.lvc.storage.LvcChunkStore;
 import me.niicide.lvc.storage.LvcSemanticRepository;
 
 final class LvcSemanticMergeEngine
@@ -28,38 +20,60 @@ final class LvcSemanticMergeEngine
     {
     }
 
-    static LvcSemanticMergeResult merge(Path repositoryDirectory, Repository repository, RevCommit baseCommit,
-                                        RevCommit currentCommit, RevCommit sourceCommit,
-                                        @Nullable LvcProjectService.BranchMergeConflictResolution conflictResolution) throws IOException
+    static LvcSemanticMergeResult merge(Path repositoryDirectory, Repository repository,
+                                        RevCommit baseCommit, RevCommit currentCommit,
+                                        RevCommit sourceCommit,
+                                        @Nullable LvcProjectService.BranchMergeConflictResolution resolution)
+            throws IOException
     {
         LvcManifest baseManifest = LvcSemanticRepository.readCommitManifest(repository, baseCommit);
         LvcManifest currentManifest = LvcSemanticRepository.readCommitManifest(repository, currentCommit);
         LvcManifest sourceManifest = LvcSemanticRepository.readCommitManifest(repository, sourceCommit);
-        LvcManifest metadata = chooseManifestMetadata(baseManifest, currentManifest, sourceManifest, conflictResolution);
+        LvcManifest metadata = chooseManifestMetadata(
+                baseManifest, currentManifest, sourceManifest, resolution);
         Map<String, LvcManifest.Site> baseSites = sitesById(baseManifest);
         Map<String, LvcManifest.Site> currentSites = sitesById(currentManifest);
         Map<String, LvcManifest.Site> sourceSites = sitesById(sourceManifest);
         List<LvcManifest.Site> mergedSites = new ArrayList<>(metadata.sites().size());
         int mergedChunks = 0;
 
-        for (LvcManifest.Site templateSite : metadata.sites())
+        for (LvcManifest.Site metadataSite : metadata.sites())
         {
-            LvcMergeSiteResult siteMerge = mergeSite(repositoryDirectory, repository, baseCommit, currentCommit, sourceCommit,
-                    baseSites.get(templateSite.id()), currentSites.get(templateSite.id()), sourceSites.get(templateSite.id()), conflictResolution);
-            mergedSites.add(templateSite.withHashRefs(siteMerge.fullHashes(), siteMerge.trackedHashes()));
+            LvcMergeSiteResult siteMerge = mergeSite(
+                    repositoryDirectory,
+                    repository,
+                    baseCommit,
+                    currentCommit,
+                    sourceCommit,
+                    metadataSite,
+                    baseSites.get(metadataSite.id()),
+                    currentSites.get(metadataSite.id()),
+                    sourceSites.get(metadataSite.id()),
+                    resolution
+            );
+            LvcManifest.Site mergedSite = metadataSite
+                    .withRegions(siteMerge.regions())
+                    .withHashRefs(siteMerge.fullHashes(), siteMerge.trackedHashes());
+            mergedSites.add(mergedSite);
             mergedChunks += siteMerge.mergedChunks();
         }
 
-        return new LvcSemanticMergeResult(new LvcManifest(metadata.format(), metadata.name(), metadata.content(), mergedSites), mergedChunks);
+        return new LvcSemanticMergeResult(
+                new LvcManifest(metadata.format(), metadata.name(), metadata.content(), mergedSites),
+                mergedChunks
+        );
     }
 
-    private static LvcManifest chooseManifestMetadata(LvcManifest baseManifest, LvcManifest currentManifest,
-                                                      LvcManifest sourceManifest,
-                                                      @Nullable LvcProjectService.BranchMergeConflictResolution conflictResolution) throws LvcMergeConflictException
+    private static LvcManifest chooseManifestMetadata(
+            LvcManifest baseManifest,
+            LvcManifest currentManifest,
+            LvcManifest sourceManifest,
+            @Nullable LvcProjectService.BranchMergeConflictResolution resolution)
+            throws LvcMergeConflictException
     {
-        String baseJson = baseManifest.toJson();
-        String currentJson = currentManifest.toJson();
-        String sourceJson = sourceManifest.toJson();
+        String baseJson = metadataJson(baseManifest);
+        String currentJson = metadataJson(currentManifest);
+        String sourceJson = metadataJson(sourceManifest);
 
         if (currentJson.equals(sourceJson))
         {
@@ -76,13 +90,15 @@ final class LvcSemanticMergeEngine
             return currentManifest;
         }
 
-        if (conflictResolution == null)
+        if (resolution == null)
         {
-            throw new LvcMergeConflictException(LvcMergeConflictException.Reason.MANIFEST_METADATA,
-                    "LVC manifest metadata changed on both branches");
+            throw new LvcMergeConflictException(
+                    LvcMergeConflictException.Reason.MANIFEST_METADATA,
+                    "LVC manifest metadata changed on both branches"
+            );
         }
 
-        return switch (conflictResolution)
+        return switch (resolution)
         {
             case BASE -> baseManifest;
             case INCOMING -> sourceManifest;
@@ -90,420 +106,169 @@ final class LvcSemanticMergeEngine
         };
     }
 
-    private static LvcMergeSiteResult mergeSite(Path repositoryDirectory, Repository repository, RevCommit baseCommit,
-                                                RevCommit currentCommit, RevCommit sourceCommit,
-                                                @Nullable LvcManifest.Site baseSite, @Nullable LvcManifest.Site currentSite,
-                                                @Nullable LvcManifest.Site sourceSite,
-                                                @Nullable LvcProjectService.BranchMergeConflictResolution conflictResolution) throws IOException
+    private static String metadataJson(LvcManifest manifest)
+    {
+        List<LvcManifest.Site> sites = manifest.sites().stream()
+                .map(site -> site.withRegions(List.of()))
+                .toList();
+        return new LvcManifest(
+                manifest.format(), manifest.name(), manifest.content(), sites).toJson();
+    }
+
+    private static LvcMergeSiteResult mergeSite(
+            Path repositoryDirectory,
+            Repository repository,
+            RevCommit baseCommit,
+            RevCommit currentCommit,
+            RevCommit sourceCommit,
+            LvcManifest.Site metadataSite,
+            @Nullable LvcManifest.Site baseSite,
+            @Nullable LvcManifest.Site currentSite,
+            @Nullable LvcManifest.Site sourceSite,
+            @Nullable LvcProjectService.BranchMergeConflictResolution resolution)
+            throws IOException
     {
         if (baseSite == null)
         {
             if (currentSite == null && sourceSite == null)
             {
-                return new LvcMergeSiteResult(Map.of(), Map.of(), 0);
+                return emptySite();
             }
 
             if (currentSite == null)
             {
-                LvcMergeObjectResolver.ensureSiteObjects(repositoryDirectory, repository, sourceCommit, sourceSite);
-                return new LvcMergeSiteResult(sourceSite.fullHashes(), sourceSite.trackedHashesForComparison(), 0);
+                return retainedSite(
+                        repositoryDirectory, repository, sourceCommit, sourceSite);
             }
 
-            if (sourceSite == null || sameRefs(currentSite, sourceSite))
+            if (sourceSite == null || sameSite(currentSite, sourceSite))
             {
-                LvcMergeObjectResolver.ensureSiteObjects(repositoryDirectory, repository, currentCommit, currentSite);
-                return new LvcMergeSiteResult(currentSite.fullHashes(), currentSite.trackedHashesForComparison(), 0);
+                return retainedSite(
+                        repositoryDirectory, repository, currentCommit, currentSite);
             }
 
-            return resolvedSite(repositoryDirectory, repository, baseCommit, currentCommit, sourceCommit,
-                    baseSite, currentSite, sourceSite, conflictResolution, LvcMergeConflictException.Reason.SITE_ADD,
-                    "LVC site was added differently on both branches: " + currentSite.id());
+            return resolveWholeSite(
+                    repositoryDirectory,
+                    repository,
+                    baseCommit,
+                    currentCommit,
+                    sourceCommit,
+                    null,
+                    currentSite,
+                    sourceSite,
+                    resolution,
+                    LvcMergeConflictException.Reason.SITE_ADD,
+                    "LVC site was added differently on both branches: " + currentSite.id()
+            );
         }
 
         if (currentSite == null || sourceSite == null)
         {
-            return resolvedSite(repositoryDirectory, repository, baseCommit, currentCommit, sourceCommit,
-                    baseSite, currentSite, sourceSite, conflictResolution, LvcMergeConflictException.Reason.SITE_DELETE,
-                    "LVC site was deleted on one branch and changed on another: " + baseSite.id());
+            return resolveWholeSite(
+                    repositoryDirectory,
+                    repository,
+                    baseCommit,
+                    currentCommit,
+                    sourceCommit,
+                    baseSite,
+                    currentSite,
+                    sourceSite,
+                    resolution,
+                    LvcMergeConflictException.Reason.SITE_DELETE,
+                    "LVC site was deleted on one branch and changed on another: " + baseSite.id()
+            );
         }
 
-        TreeMap<String, String> fullHashes = new TreeMap<>();
-        TreeMap<String, String> trackedHashes = new TreeMap<>();
-        TreeSet<String> keys = new TreeSet<>();
-        keys.addAll(baseSite.fullHashes().keySet());
-        keys.addAll(currentSite.fullHashes().keySet());
-        keys.addAll(sourceSite.fullHashes().keySet());
-        int mergedChunks = 0;
-
-        for (String key : keys)
-        {
-            LvcMergeChunkRef baseRef = chunkRef(baseSite, key);
-            LvcMergeChunkRef currentRef = chunkRef(currentSite, key);
-            LvcMergeChunkRef sourceRef = chunkRef(sourceSite, key);
-            LvcMergeChunkResult merged = mergeChunkRef(repositoryDirectory, repository, baseCommit, currentCommit, sourceCommit,
-                    key, baseRef, currentRef, sourceRef, conflictResolution);
-
-            if (merged.ref() != null)
-            {
-                fullHashes.put(key, merged.ref().fullHash());
-                trackedHashes.put(key, merged.ref().trackedHash());
-            }
-
-            if (merged.mergedChunk())
-            {
-                mergedChunks++;
-            }
-        }
-
-        return new LvcMergeSiteResult(Map.copyOf(fullHashes), Map.copyOf(trackedHashes), mergedChunks);
+        LvcRegionMergeResult regionMerge = LvcRegionMergeEngine.merge(
+                repositoryDirectory,
+                repository,
+                baseCommit,
+                currentCommit,
+                sourceCommit,
+                metadataSite,
+                baseSite,
+                currentSite,
+                sourceSite,
+                resolution
+        );
+        LvcManifest.Site site = regionMerge.site();
+        return new LvcMergeSiteResult(
+                site.fullHashes(),
+                site.trackedHashesForComparison(),
+                regionMerge.mergedChunks(),
+                site.regions()
+        );
     }
 
-    private static LvcMergeSiteResult resolvedSite(Path repositoryDirectory, Repository repository, RevCommit baseCommit,
-                                                   RevCommit currentCommit, RevCommit sourceCommit,
-                                                   @Nullable LvcManifest.Site baseSite, @Nullable LvcManifest.Site currentSite,
-                                                   @Nullable LvcManifest.Site sourceSite,
-                                                   @Nullable LvcProjectService.BranchMergeConflictResolution conflictResolution,
-                                                   LvcMergeConflictException.Reason reason, String conflictMessage) throws IOException
+    private static LvcMergeSiteResult resolveWholeSite(
+            Path repositoryDirectory,
+            Repository repository,
+            RevCommit baseCommit,
+            RevCommit currentCommit,
+            RevCommit sourceCommit,
+            @Nullable LvcManifest.Site baseSite,
+            @Nullable LvcManifest.Site currentSite,
+            @Nullable LvcManifest.Site sourceSite,
+            @Nullable LvcProjectService.BranchMergeConflictResolution resolution,
+            LvcMergeConflictException.Reason reason,
+            String conflictMessage) throws IOException
     {
-        if (conflictResolution == null)
+        if (resolution == null)
         {
             throw new LvcMergeConflictException(reason, conflictMessage);
         }
 
-        LvcManifest.Site selectedSite = switch (conflictResolution)
+        LvcManifest.Site selectedSite = switch (resolution)
         {
             case BASE -> baseSite;
             case INCOMING -> sourceSite;
             case YOURS -> currentSite;
         };
-        RevCommit selectedCommit = switch (conflictResolution)
+        RevCommit selectedCommit = switch (resolution)
         {
             case BASE -> baseCommit;
             case INCOMING -> sourceCommit;
             case YOURS -> currentCommit;
         };
-
-        LvcMergeObjectResolver.ensureSiteObjects(repositoryDirectory, repository, selectedCommit, selectedSite);
 
         if (selectedSite == null)
         {
-            return new LvcMergeSiteResult(Map.of(), Map.of(), 0);
+            return emptySite();
         }
 
-        return new LvcMergeSiteResult(selectedSite.fullHashes(), selectedSite.trackedHashesForComparison(), 0);
+        return retainedSite(
+                repositoryDirectory, repository, selectedCommit, selectedSite);
     }
 
-    private static LvcMergeChunkResult mergeChunkRef(Path repositoryDirectory, Repository repository, RevCommit baseCommit,
-                                                     RevCommit currentCommit, RevCommit sourceCommit, String chunkKey,
-                                                     @Nullable LvcMergeChunkRef baseRef, @Nullable LvcMergeChunkRef currentRef,
-                                                     @Nullable LvcMergeChunkRef sourceRef,
-                                                     @Nullable LvcProjectService.BranchMergeConflictResolution conflictResolution) throws IOException
+    private static LvcMergeSiteResult retainedSite(
+            Path repositoryDirectory,
+            Repository repository,
+            RevCommit commit,
+            LvcManifest.Site site) throws IOException
     {
-        if (Objects.equals(currentRef, sourceRef))
-        {
-            LvcMergeObjectResolver.ensureObject(repositoryDirectory, repository, currentCommit, sourceCommit, baseCommit, currentRef);
-            return new LvcMergeChunkResult(currentRef, false);
-        }
-
-        if (Objects.equals(currentRef, baseRef))
-        {
-            LvcMergeObjectResolver.ensureObject(repositoryDirectory, repository, sourceCommit, currentCommit, baseCommit, sourceRef);
-            return new LvcMergeChunkResult(sourceRef, false);
-        }
-
-        if (Objects.equals(sourceRef, baseRef))
-        {
-            LvcMergeObjectResolver.ensureObject(repositoryDirectory, repository, currentCommit, sourceCommit, baseCommit, currentRef);
-            return new LvcMergeChunkResult(currentRef, false);
-        }
-
-        if (currentRef == null || sourceRef == null)
-        {
-            return resolveChunkRef(repositoryDirectory, repository, baseCommit, currentCommit, sourceCommit,
-                    baseRef, currentRef, sourceRef, conflictResolution, LvcMergeConflictException.Reason.CHUNK_DELETE,
-                    "LVC chunk was deleted on one branch and changed on another: " + chunkKey);
-        }
-
-        if (baseRef == null)
-        {
-            if (Objects.equals(currentRef.trackedHash(), sourceRef.trackedHash()))
-            {
-                LvcMergeChunkRef selected = chooseSameTrackedRef(baseRef, currentRef, sourceRef);
-                LvcMergeObjectResolver.ensureObject(repositoryDirectory, repository, currentCommit, sourceCommit, baseCommit, selected);
-                return new LvcMergeChunkResult(selected, false);
-            }
-
-            return resolveChunkRef(repositoryDirectory, repository, baseCommit, currentCommit, sourceCommit,
-                    baseRef, currentRef, sourceRef, conflictResolution, LvcMergeConflictException.Reason.CHUNK_ADD,
-                    "LVC chunk was added differently on both branches: " + chunkKey);
-        }
-
-        if (Objects.equals(currentRef.trackedHash(), sourceRef.trackedHash()))
-        {
-            LvcMergeChunkRef selected = chooseSameTrackedRef(baseRef, currentRef, sourceRef);
-            LvcMergeObjectResolver.ensureObject(repositoryDirectory, repository, currentCommit, sourceCommit, baseCommit, selected);
-            return new LvcMergeChunkResult(selected, false);
-        }
-
-        return new LvcMergeChunkResult(mergeChunkContent(repositoryDirectory, repository, baseCommit, currentCommit, sourceCommit,
-                chunkKey, baseRef, currentRef, sourceRef, conflictResolution), true);
-    }
-
-    private static LvcMergeChunkResult resolveChunkRef(Path repositoryDirectory, Repository repository, RevCommit baseCommit,
-                                                       RevCommit currentCommit, RevCommit sourceCommit,
-                                                       @Nullable LvcMergeChunkRef baseRef, @Nullable LvcMergeChunkRef currentRef,
-                                                       @Nullable LvcMergeChunkRef sourceRef,
-                                                       @Nullable LvcProjectService.BranchMergeConflictResolution conflictResolution,
-                                                       LvcMergeConflictException.Reason reason, String conflictMessage) throws IOException
-    {
-        if (conflictResolution == null)
-        {
-            throw new LvcMergeConflictException(reason, conflictMessage);
-        }
-
-        LvcMergeChunkRef selectedRef = switch (conflictResolution)
-        {
-            case BASE -> baseRef;
-            case INCOMING -> sourceRef;
-            case YOURS -> currentRef;
-        };
-        RevCommit selectedCommit = switch (conflictResolution)
-        {
-            case BASE -> baseCommit;
-            case INCOMING -> sourceCommit;
-            case YOURS -> currentCommit;
-        };
-
-        LvcMergeObjectResolver.ensureObject(repositoryDirectory, repository, selectedCommit, null, null, selectedRef);
-        return new LvcMergeChunkResult(selectedRef, false);
-    }
-
-    private static LvcMergeChunkRef chooseSameTrackedRef(@Nullable LvcMergeChunkRef baseRef,
-                                                        LvcMergeChunkRef currentRef,
-                                                        LvcMergeChunkRef sourceRef)
-    {
-        if (baseRef != null && Objects.equals(currentRef.fullHash(), baseRef.fullHash()))
-        {
-            return sourceRef;
-        }
-
-        return currentRef;
-    }
-
-    private static LvcMergeChunkRef mergeChunkContent(Path repositoryDirectory, Repository repository, RevCommit baseCommit,
-                                                      RevCommit currentCommit, RevCommit sourceCommit, String chunkKey,
-                                                      LvcMergeChunkRef baseRef, LvcMergeChunkRef currentRef,
-                                                      LvcMergeChunkRef sourceRef,
-                                                      @Nullable LvcProjectService.BranchMergeConflictResolution conflictResolution) throws IOException
-    {
-        LvcChunk baseChunk = LvcMergeObjectResolver.readChunk(repository, baseCommit, baseRef.fullHash());
-        LvcChunk currentChunk = LvcMergeObjectResolver.readChunk(repository, currentCommit, currentRef.fullHash());
-        LvcChunk sourceChunk = LvcMergeObjectResolver.readChunk(repository, sourceCommit, sourceRef.fullHash());
-
-        if (!compatibleChunks(baseChunk, currentChunk, sourceChunk))
-        {
-            LvcMergeChunkResult resolved = resolveChunkRef(repositoryDirectory, repository, baseCommit, currentCommit, sourceCommit,
-                    baseRef, currentRef, sourceRef, conflictResolution, LvcMergeConflictException.Reason.CHUNK_SHAPE,
-                    "LVC chunk shape changed on both branches: " + chunkKey);
-            return resolved.ref();
-        }
-
-        Map<Integer, LvcMergeBlockPayload> basePayloads = payloadsByMaskIndex(baseChunk);
-        Map<Integer, LvcMergeBlockPayload> currentPayloads = payloadsByMaskIndex(currentChunk);
-        Map<Integer, LvcMergeBlockPayload> sourcePayloads = payloadsByMaskIndex(sourceChunk);
-        BitSet mask = baseChunk.trackedMask();
-        List<String> states = new ArrayList<>(mask.cardinality());
-        List<LvcChunk.BlockEntityRecord> blockEntities = new ArrayList<>();
-        List<LvcChunk.EntityRecord> entities = chooseEntityPayload(chunkKey, baseChunk, currentChunk, sourceChunk, conflictResolution);
-
-        for (int maskIndex = mask.nextSetBit(0); maskIndex >= 0; maskIndex = mask.nextSetBit(maskIndex + 1))
-        {
-            LvcMergeBlockPayload basePayload = basePayloads.get(maskIndex);
-            LvcMergeBlockPayload currentPayload = currentPayloads.get(maskIndex);
-            LvcMergeBlockPayload sourcePayload = sourcePayloads.get(maskIndex);
-            LvcMergeBlockPayload selected = choosePayload(chunkKey, maskIndex, basePayload, currentPayload, sourcePayload, conflictResolution);
-
-            states.add(selected.blockState());
-
-            if (selected.blockEntityNbt() != null)
-            {
-                blockEntities.add(new LvcChunk.BlockEntityRecord(maskIndex, selected.blockEntityNbt()));
-            }
-        }
-
-        LvcChunk mergedChunk = LvcChunk.fromTrackedContent(
-                baseChunk.sizeX(),
-                baseChunk.sizeY(),
-                baseChunk.sizeZ(),
-                mask,
-                states,
-                blockEntities,
-                entities
+        LvcMergeObjectResolver.ensureSiteObjects(
+                repositoryDirectory, repository, commit, site);
+        return new LvcMergeSiteResult(
+                site.fullHashes(),
+                site.trackedHashesForComparison(),
+                0,
+                site.regions()
         );
-        byte[] hashContentBytes = LvcChunkCodec.encodeHashContent(mergedChunk);
-        String fullHash = LvcChunkStore.objectId(hashContentBytes);
-        String trackedHash = LvcChunkStore.objectId(LvcChunkCodec.encodeTrackedContent(mergedChunk));
-        LvcChunkStore.writeObjectIfMissing(repositoryDirectory, fullHash, LvcChunkCodec.encodeStorageBytes(hashContentBytes));
-        LvcDiagnostics.debug("LvcSemanticMergeEngine: semantic chunk merge chunk='{}' object='{}' tracked='{}'", chunkKey, fullHash, trackedHash);
-        return new LvcMergeChunkRef(fullHash, trackedHash);
     }
 
-    private static LvcMergeBlockPayload choosePayload(String chunkKey, int maskIndex, LvcMergeBlockPayload basePayload,
-                                                      LvcMergeBlockPayload currentPayload, LvcMergeBlockPayload sourcePayload,
-                                                      @Nullable LvcProjectService.BranchMergeConflictResolution conflictResolution) throws LvcMergeConflictException
+    private static LvcMergeSiteResult emptySite()
     {
-        boolean currentChanged = !trackedPayloadEquals(currentPayload, basePayload);
-        boolean sourceChanged = !trackedPayloadEquals(sourcePayload, basePayload);
-
-        if (trackedPayloadEquals(currentPayload, sourcePayload))
-        {
-            return currentPayload;
-        }
-
-        if (currentChanged == false)
-        {
-            return sourcePayload;
-        }
-
-        if (sourceChanged == false)
-        {
-            return currentPayload;
-        }
-
-        if (conflictResolution == null)
-        {
-            LvcDiagnostics.debug("LvcSemanticMergeEngine: tracked payload conflict chunk='{}' index={} baseState='{}' currentState='{}' sourceState='{}' baseBE={} currentBE={} sourceBE={}",
-                    chunkKey, maskIndex, canonicalState(basePayload), canonicalState(currentPayload), canonicalState(sourcePayload),
-                    basePayload.blockEntityNbt() != null, currentPayload.blockEntityNbt() != null, sourcePayload.blockEntityNbt() != null);
-            throw new LvcMergeConflictException(LvcMergeConflictException.Reason.BLOCK_PAYLOAD,
-                    "LVC chunk conflict at " + chunkKey + " index " + maskIndex);
-        }
-
-        return switch (conflictResolution)
-        {
-            case BASE -> basePayload;
-            case INCOMING -> sourcePayload;
-            case YOURS -> currentPayload;
-        };
+        return new LvcMergeSiteResult(Map.of(), Map.of(), 0, List.of());
     }
 
-    private static List<LvcChunk.EntityRecord> chooseEntityPayload(String chunkKey, LvcChunk baseChunk,
-                                                                   LvcChunk currentChunk, LvcChunk sourceChunk,
-                                                                   @Nullable LvcProjectService.BranchMergeConflictResolution conflictResolution)
+    private static boolean sameSite(LvcManifest.Site currentSite, LvcManifest.Site sourceSite)
     {
-        if (conflictResolution != null)
-        {
-            return switch (conflictResolution)
-            {
-                case BASE -> baseChunk.entities();
-                case INCOMING -> sourceChunk.entities();
-                case YOURS -> currentChunk.entities();
-            };
-        }
-
-        boolean currentChanged = !entityPayloadEquals(currentChunk.entities(), baseChunk.entities());
-        boolean sourceChanged = !entityPayloadEquals(sourceChunk.entities(), baseChunk.entities());
-
-        if (!currentChanged && sourceChanged)
-        {
-            return sourceChunk.entities();
-        }
-
-        if (currentChanged && sourceChanged)
-        {
-            LvcDiagnostics.debug("LvcSemanticMergeEngine: hidden entity payload changed on both sides chunk='{}'; kept current side entities={}",
-                    chunkKey, currentChunk.entities().size());
-        }
-
-        return currentChunk.entities();
-    }
-
-    private static String canonicalState(LvcMergeBlockPayload payload)
-    {
-        return LvcChunkCodec.canonicalTrackedBlockState(payload.blockState());
-    }
-
-    private static boolean trackedPayloadEquals(LvcMergeBlockPayload left, LvcMergeBlockPayload right)
-    {
-        return Objects.equals(canonicalState(left), canonicalState(right)) &&
-                Arrays.equals(left.blockEntityNbt(), right.blockEntityNbt());
-    }
-
-    private static boolean entityPayloadEquals(List<LvcChunk.EntityRecord> left, List<LvcChunk.EntityRecord> right)
-    {
-        if (left.size() != right.size())
-        {
-            return false;
-        }
-
-        for (int i = 0; i < left.size(); i++)
-        {
-            if (!Arrays.equals(left.get(i).canonicalNbt(), right.get(i).canonicalNbt()))
-            {
-                return false;
-            }
-        }
-
-        return true;
-    }
-
-    private static boolean compatibleChunks(LvcChunk baseChunk, LvcChunk currentChunk, LvcChunk sourceChunk)
-    {
-        return !(baseChunk.sizeX() != currentChunk.sizeX() || baseChunk.sizeX() != sourceChunk.sizeX() ||
-                baseChunk.sizeY() != currentChunk.sizeY() || baseChunk.sizeY() != sourceChunk.sizeY() ||
-                baseChunk.sizeZ() != currentChunk.sizeZ() || baseChunk.sizeZ() != sourceChunk.sizeZ() ||
-                !baseChunk.trackedMask().equals(currentChunk.trackedMask()) ||
-                !baseChunk.trackedMask().equals(sourceChunk.trackedMask()));
-    }
-
-    private static Map<Integer, LvcMergeBlockPayload> payloadsByMaskIndex(LvcChunk chunk)
-    {
-        Map<Integer, byte[]> blockEntities = new HashMap<>();
-        Map<Integer, LvcMergeBlockPayload> payloads = new HashMap<>();
-        BitSet mask = chunk.trackedMask();
-        int ordinal = 0;
-
-        for (LvcChunk.BlockEntityRecord record : chunk.blockEntities())
-        {
-            blockEntities.put(record.index(), record.canonicalNbt());
-        }
-
-        for (int maskIndex = mask.nextSetBit(0); maskIndex >= 0; maskIndex = mask.nextSetBit(maskIndex + 1))
-        {
-            payloads.put(maskIndex, new LvcMergeBlockPayload(
-                    chunk.blockStateAtTrackedOrdinal(ordinal),
-                    blockEntities.get(maskIndex)
-            ));
-            ordinal++;
-        }
-
-        return payloads;
-    }
-
-    private static boolean sameRefs(LvcManifest.Site currentSite, LvcManifest.Site sourceSite)
-    {
-        return Objects.equals(currentSite.fullHashes(), sourceSite.fullHashes()) &&
-                Objects.equals(currentSite.trackedHashesForComparison(), sourceSite.trackedHashesForComparison());
-    }
-
-    @Nullable
-    private static LvcMergeChunkRef chunkRef(LvcManifest.Site site, String key)
-    {
-        String fullHash = site.fullHashes().get(key);
-
-        if (fullHash == null)
-        {
-            return null;
-        }
-
-        String trackedHash = site.trackedHashesForComparison().get(key);
-
-        if (trackedHash == null)
-        {
-            trackedHash = fullHash;
-        }
-
-        return new LvcMergeChunkRef(fullHash, trackedHash);
+        return Objects.equals(currentSite.regions(), sourceSite.regions()) &&
+                Objects.equals(currentSite.fullHashes(), sourceSite.fullHashes()) &&
+                Objects.equals(
+                        currentSite.trackedHashesForComparison(),
+                        sourceSite.trackedHashesForComparison()
+                );
     }
 
     private static Map<String, LvcManifest.Site> sitesById(LvcManifest manifest)
@@ -523,11 +288,10 @@ record LvcSemanticMergeResult(LvcManifest manifest, int mergedChunks)
 {
 }
 
-record LvcMergeSiteResult(Map<String, String> fullHashes, Map<String, String> trackedHashes, int mergedChunks)
-{
-}
-
-record LvcMergeChunkResult(@Nullable LvcMergeChunkRef ref, boolean mergedChunk)
+record LvcMergeSiteResult(Map<String, String> fullHashes,
+                          Map<String, String> trackedHashes,
+                          int mergedChunks,
+                          List<LvcManifest.Region> regions)
 {
 }
 

@@ -84,6 +84,13 @@ public class GuiLvcProjectManager extends GuiBase implements ICompletionListener
         this.updateTitle();
     }
 
+    static void openSaveVersionFromCurrentScreen(Path repositoryDirectory, String projectName)
+    {
+        GuiLvcProjectManager operationHost = new GuiLvcProjectManager(repositoryDirectory, projectName);
+        operationHost.initialOverlayAttempted = true;
+        operationHost.handleHotkeyAction(GuiLvcProjectButtonType.SAVE_VERSION);
+    }
+
     void handleHotkeyAction(GuiLvcProjectButtonType action)
     {
         if (this.controller.prepareHotkeyAction())
@@ -316,6 +323,13 @@ public class GuiLvcProjectManager extends GuiBase implements ICompletionListener
         }
     }
 
+    @Override
+    protected void drawHoveredWidget(GuiContext ctx, int mouseX, int mouseY)
+    {
+        super.drawHoveredWidget(ctx, mouseX, mouseY);
+        this.historyPanel.drawHoveredWidget(ctx, mouseX, mouseY);
+    }
+
     private boolean beginScrollbarDrag(int mouseX, int mouseY)
     {
         if (this.historyPanel.isMouseOverScrollbar(mouseX, mouseY))
@@ -432,6 +446,11 @@ public class GuiLvcProjectManager extends GuiBase implements ICompletionListener
         if (type == GuiLvcProjectButtonType.CHECKOUT_VERSION)
         {
             button.setHoverStrings("litematica.gui.button.hover.lvc_project.load_version_soft");
+        }
+
+        if (type == GuiLvcProjectButtonType.PUSH || type == GuiLvcProjectButtonType.PULL)
+        {
+            button.setHoverStrings("litematica.gui.button.hover.lvc_project.push_pull_planned");
         }
 
         if (this.isDulledAction(type))

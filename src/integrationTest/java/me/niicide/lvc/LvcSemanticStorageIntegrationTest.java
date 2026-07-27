@@ -11,6 +11,7 @@ final class LvcSemanticStorageIntegrationTest
         LvcSemanticChunkStorageIntegrationTest.runAll();
         LvcSemanticManifestIntegrationTest.runAll();
         LvcSemanticCaptureScanIntegrationTest.runAll();
+        LvcRetiredCoverageIntegrationTest.runAll();
         LvcSemanticRepositoryLifecycleIntegrationTest.runAll();
         LvcSemanticOverlayCacheIntegrationTest.runAll();
         LvcSemanticSchematicIntegrationTest.runAll();
