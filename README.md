@@ -8,6 +8,11 @@ and on compatible Servux servers.
 This repository is the standalone-addon migration of Gitmatica. Install it
 alongside the matching Minecraft 26.2 releases of Litematica and MaLiLib.
 
+## Documentation
+
+See the [Gitmatica wiki](https://github.com/Arnavpmr/gitmatica/wiki) for usage
+notes and project documentation.
+
 ## Development
 
 Use Java 25:
