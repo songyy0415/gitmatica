@@ -1,4 +1,4 @@
-# Litematica Version Control — Archived
+# Litematica Version Control
 
 > [!IMPORTANT]
 > This repository contains Gitmatica's former Litematica-fork implementation
@@ -9,14 +9,9 @@
 > Litematica addon. Use the active repository for current releases,
 > documentation, issues, and contributions.
 
-## About This Archive
+## About
 
-This repository preserves the last 26.2-era fork code for historical reference.
-It will not receive new features, bug fixes, compatibility updates, or support.
-
-This implementation added Git-backed version control for Minecraft builds
-directly to Litematica, including in-game commits, branches, merging, restores,
-remotes, change viewing, and inventory-aware change tracking.
+A Litematica fork that adds Git-backed version control for Minecraft builds, with in-game commits, branches, merging, restores, remotes, diff viewing, and inventory-aware change tracking. It is built for technical builds where exact block, state, and container changes matter. Project history is stored in normal Git repos, making collaboration, storing to git servers and rollback workflows easier.
 
 ## License
 
