@@ -1,6 +1,7 @@
 package me.niicide.lvc;
 
 import me.niicide.lvc.diff.LvcSpatialDiffGroupsIntegrationTest;
+import fi.dy.masa.litematica.render.LvcOverlayRendererIntegrationTest;
 import fi.dy.masa.litematica.schematic.verifier.LvcVerifierHiddenMismatchIntegrationTest;
 
 final class LvcIntegrationTestSuite
@@ -13,6 +14,7 @@ final class LvcIntegrationTestSuite
     {
         LvcSpatialDiffGroupsIntegrationTest.runAll();
         LvcVerifierHiddenMismatchIntegrationTest.runAll();
+        LvcOverlayRendererIntegrationTest.runAll();
         LvcRepositoryIntegrationTest.runAll();
         LvcFriendlyErrorsIntegrationTest.runAll();
         LvcTaskRegistryIntegrationTest.runAll();

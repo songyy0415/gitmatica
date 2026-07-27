@@ -519,11 +519,11 @@ public class GuiLvcChangeViewer extends GuiListBase<GuiLvcChangeViewer.ChangeEnt
     {
         for (int index = this.inventoryPreviewSelections.size() - 1; index >= 0; --index)
         {
-            BlockMismatch mismatch = this.inventoryPreviewSelections.get(index).mismatch();
+            VerifierInventoryPreview preview = this.inventoryPreviewSelections.get(index).inventoryPreview();
 
-            if (mismatch != null && mismatch.hasInventoryPreview())
+            if (preview != null)
             {
-                return mismatch.getInventoryPreview();
+                return preview;
             }
         }
 
@@ -564,7 +564,7 @@ public class GuiLvcChangeViewer extends GuiListBase<GuiLvcChangeViewer.ChangeEnt
 
     private void updateInventoryPreviewSelection(ChangeEntry selectedEntry)
     {
-        if (this.isInventoryPreviewEntry(selectedEntry))
+        if (selectedEntry.inventoryPreview() != null)
         {
             this.inventoryPreviewSelections.remove(selectedEntry);
 
@@ -581,7 +581,7 @@ public class GuiLvcChangeViewer extends GuiListBase<GuiLvcChangeViewer.ChangeEnt
     {
         Set<ChangeEntry> selections = this.getListWidget().getSelectedEntries();
         this.inventoryPreviewSelections.removeIf(entry ->
-                !selections.contains(entry) || !this.selectionStillExists(entry) || !this.isInventoryPreviewEntry(entry));
+                !selections.contains(entry) || !this.selectionStillExists(entry) || entry.inventoryPreview() == null);
 
         if (this.inventoryPreviewSelections.isEmpty())
         {
@@ -591,14 +591,6 @@ public class GuiLvcChangeViewer extends GuiListBase<GuiLvcChangeViewer.ChangeEnt
         {
             SAVED_INVENTORY_PREVIEW_SELECTIONS.put(this.verifier, List.copyOf(this.inventoryPreviewSelections));
         }
-    }
-
-    private boolean isInventoryPreviewEntry(ChangeEntry entry)
-    {
-        BlockMismatch mismatch = entry.mismatch();
-        return entry.type() == ChangeEntry.Type.DATA &&
-               entry.kind() == Kind.INVENTORIES_CHANGED &&
-               mismatch != null && mismatch.hasInventoryPreview();
     }
 
     private void normalizeSelectionHierarchy(ChangeEntry selectedEntry)
@@ -936,6 +928,15 @@ public class GuiLvcChangeViewer extends GuiListBase<GuiLvcChangeViewer.ChangeEnt
         public BlockMismatch mismatch()
         {
             return this.data != null ? this.data.mismatch() : null;
+        }
+
+        @Nullable
+        public VerifierInventoryPreview inventoryPreview()
+        {
+            BlockMismatch mismatch = this.mismatch();
+            return this.type == Type.DATA && this.kind == Kind.INVENTORIES_CHANGED && mismatch != null
+                    ? mismatch.getInventoryPreview()
+                    : null;
         }
 
         public enum Type
@@ -1569,21 +1570,18 @@ class WidgetLvcChangeViewerEntry extends WidgetListEntrySortable<GuiLvcChangeVie
     @Nullable
     VerifierInventoryPreview hoveredInventoryPreview(int mouseX, int mouseY)
     {
-        if (!this.isMouseOver(mouseX, mouseY) || !this.canShowInventoryPreview() ||
+        if (!this.isMouseOver(mouseX, mouseY) ||
             (this.buttonIgnore != null && mouseX >= this.buttonIgnore.getX()))
         {
             return null;
         }
 
-        BlockMismatch mismatch = this.entry.mismatch();
-        return mismatch != null ? mismatch.getInventoryPreview() : null;
+        return this.entry.inventoryPreview();
     }
 
     private boolean canShowInventoryPreview()
     {
-        return this.entry.type() == GuiLvcChangeViewer.ChangeEntry.Type.DATA &&
-               this.entry.mismatch() != null &&
-               this.entry.mismatch().hasInventoryPreview();
+        return this.entry.inventoryPreview() != null;
     }
 
     private record ChangeMismatchInfo(BlockState stateBefore, BlockState stateAfter, ItemStack stackBefore,

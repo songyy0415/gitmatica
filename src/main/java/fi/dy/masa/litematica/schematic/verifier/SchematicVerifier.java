@@ -955,6 +955,7 @@ public class SchematicVerifier extends TaskBase implements IInfoHudRenderer
     {
         BlockPos pos = new BlockPos(x, y, z);
         this.hiddenBlockMismatches.remove(pos);
+        this.removeInventoryMismatchIfContainerChanged(pos, stateSchematic, stateClient);
 
         if (stateClient != stateSchematic && (stateClient.isAir() == false || stateSchematic.isAir() == false))
         {
@@ -1029,6 +1030,18 @@ public class SchematicVerifier extends TaskBase implements IInfoHudRenderer
                 ++this.correctStatesCount;
             }
         }
+    }
+
+    void removeInventoryMismatchIfContainerChanged(BlockPos pos, BlockState stateSchematic, BlockState stateClient)
+    {
+        if (stateSchematic.getBlock() == stateClient.getBlock() &&
+            stateSchematic.hasBlockEntity() && stateClient.hasBlockEntity())
+        {
+            return;
+        }
+
+        this.removeInventoryMismatchAt(pos);
+        this.hiddenInventoryMismatches.remove(pos);
     }
 
     private void checkInventories(BlockPos pos, BlockState stateSchematic, BlockState stateClient,

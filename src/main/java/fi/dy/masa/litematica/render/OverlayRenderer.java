@@ -603,8 +603,6 @@ public class OverlayRenderer
 
     private void renderBlockInfoOverlay(GuiContext ctx, RayTraceWrapper traceWrapper)
     {
-        BlockState air = Blocks.AIR.defaultBlockState();
-        BlockState voidAir = Blocks.VOID_AIR.defaultBlockState();
         Level worldSchematic = SchematicWorldHandler.getSchematicWorld();
         Level worldClient = WorldUtils.getBestWorld(ctx.mc());
         BlockPos pos = traceWrapper.getBlockHitResult().getBlockPos();
@@ -637,10 +635,11 @@ public class OverlayRenderer
             invHeight = RenderUtils.renderInventoryOverlay(ctx, align, LeftRight.LEFT, offY, worldSchematic, pos);
         }
 
-        // Not just a missing block
-        if (stateSchematic != stateClient && stateClient != air && stateSchematic != air && stateSchematic != voidAir)
+        SchematicPlacement placement = DataManager.getSchematicPlacementManager().getSelectedSchematicPlacement();
+        boolean semanticTrackingPlacement = LvcTrackingOverlayService.isSemanticTrackingPlacement(placement);
+
+        if (shouldRenderBlockComparison(semanticTrackingPlacement, stateSchematic, stateClient))
         {
-            SchematicPlacement placement = DataManager.getSchematicPlacementManager().getSelectedSchematicPlacement();
             BlockMismatchInfo info = this.createBlockMismatchInfo(placement, stateSchematic, stateClient);
             this.getOverlayPosition(align, info.getTotalWidth(), info.getTotalHeight(), offY, invHeight);
             info.toggleUseBackgroundMask(true);
@@ -660,6 +659,21 @@ public class OverlayRenderer
             info.toggleUseBackgroundMask(true);
             info.render(ctx, this.blockInfoX, this.blockInfoY);
         }
+    }
+
+    static boolean shouldRenderBlockComparison(boolean semanticTrackingPlacement,
+                                               BlockState stateSchematic,
+                                               BlockState stateClient)
+    {
+        BlockState air = Blocks.AIR.defaultBlockState();
+
+        if (stateSchematic == stateClient || stateSchematic == Blocks.VOID_AIR.defaultBlockState())
+        {
+            return false;
+        }
+
+        return semanticTrackingPlacement ||
+               (stateSchematic != air && stateClient != air);
     }
 
     private BlockMismatchInfo createBlockMismatchInfo(@Nullable SchematicPlacement placement,
@@ -728,26 +742,42 @@ public class OverlayRenderer
 
         BlockPos pos = traceWrapper.getBlockHitResult().getBlockPos();
         BlockState stateClient = mc.level.getBlockState(pos);
-        BlockState voidAir = Blocks.VOID_AIR.defaultBlockState();
 
         Level worldSchematic = SchematicWorldHandler.getSchematicWorld();
         BlockState stateSchematic = worldSchematic.getBlockState(pos);
         String ul = GuiBase.TXT_UNDERLINE;
+        SchematicPlacement placement = DataManager.getSchematicPlacementManager().getSelectedSchematicPlacement();
+        boolean semanticTrackingPlacement = LvcTrackingOverlayService.isSemanticTrackingPlacement(placement);
+        boolean renderComparison = shouldRenderBlockComparison(semanticTrackingPlacement, stateSchematic, stateClient);
+        String schematicHeading = blockInfoLineHeading(semanticTrackingPlacement, renderComparison, true);
+        String clientHeading = blockInfoLineHeading(semanticTrackingPlacement, renderComparison, false);
 
-        if (stateSchematic != stateClient && stateClient.isAir() == false && stateSchematic.isAir() == false && stateSchematic != voidAir)
+        if (renderComparison)
         {
-            this.blockInfoLines.add(ul + "Schematic:");
+            this.blockInfoLines.add(ul + schematicHeading + ":");
             this.addBlockInfoLines(stateSchematic);
 
             this.blockInfoLines.add("");
-            this.blockInfoLines.add(ul + "Client:");
+            this.blockInfoLines.add(ul + clientHeading + ":");
             this.addBlockInfoLines(stateClient);
         }
         else if (traceWrapper.getHitType() == RayTraceWrapper.HitType.SCHEMATIC_BLOCK)
         {
-            this.blockInfoLines.add(ul + "Schematic:");
+            this.blockInfoLines.add(ul + schematicHeading + ":");
             this.addBlockInfoLines(stateSchematic);
         }
+    }
+
+    static String blockInfoLineHeading(boolean semanticTrackingPlacement,
+                                       boolean renderComparison,
+                                       boolean schematicSide)
+    {
+        if (semanticTrackingPlacement && renderComparison)
+        {
+            return schematicSide ? "Before" : "After";
+        }
+
+        return schematicSide ? "Schematic" : "Client";
     }
 
     private void addBlockInfoLines(BlockState state)

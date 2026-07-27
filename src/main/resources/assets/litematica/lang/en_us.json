@@ -1232,7 +1232,7 @@
     "litematica.gui.button.lvc_project.checkout_version": "Checkout Version",
     "litematica.gui.button.lvc_project.load": "Load Version",
     "litematica.gui.button.hover.lvc_project.load_version_soft": "Hold shift to load overlay only",
-    "litematica.gui.button.hover.lvc_project.push_pull_planned": "Push/pull is planned for next release. Please push/pull with an external tool",
+    "litematica.gui.button.hover.lvc_project.push_pull_planned": "Push/pull is planned for next release. Please use an external tool.",
     "litematica.gui.button.lvc_project.view_changes": "View Changes",
     "litematica.gui.button.lvc_project.view_diffs": "View Diffs",
     "litematica.gui.button.lvc_project.revert_changes": "Revert Changes",
