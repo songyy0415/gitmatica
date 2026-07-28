@@ -21,6 +21,3 @@ Use Java 25:
 env JAVA_HOME=/home/arnav/.jdks/temurin-25.0.3 ./gradlew build
 env JAVA_HOME=/home/arnav/.jdks/temurin-25.0.3 ./gradlew integrationTest
 ```
-
-The VS Code launch configurations prepare Loom automatically and run Minecraft
-with the addon, Litematica, and MaLiLib on the development classpath.
