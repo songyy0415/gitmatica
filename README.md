@@ -18,6 +18,6 @@ notes and project documentation.
 Use Java 25:
 
 ```sh
-env JAVA_HOME=/home/arnav/.jdks/temurin-25.0.3 ./gradlew build
-env JAVA_HOME=/home/arnav/.jdks/temurin-25.0.3 ./gradlew integrationTest
+env JAVA_HOME=/home/USER/.jdks/temurin-25.0.3 ./gradlew build
+env JAVA_HOME=/home/USER/.jdks/temurin-25.0.3 ./gradlew integrationTest
 ```
