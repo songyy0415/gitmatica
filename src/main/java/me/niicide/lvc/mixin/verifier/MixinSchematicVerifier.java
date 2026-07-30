@@ -25,6 +25,7 @@ import net.minecraft.client.multiplayer.ClientLevel;
 import net.minecraft.core.BlockPos;
 import net.minecraft.world.level.Level;
 import net.minecraft.world.level.block.state.BlockState;
+import net.minecraft.world.level.chunk.ChunkAccess;
 
 import fi.dy.masa.litematica.config.Configs;
 import fi.dy.masa.litematica.config.Hotkeys;
@@ -37,6 +38,7 @@ import fi.dy.masa.litematica.schematic.verifier.SchematicVerifier.MismatchType;
 import fi.dy.masa.malilib.util.WorldUtils;
 import fi.dy.masa.malilib.interfaces.ICompletionListener;
 import fi.dy.masa.malilib.util.GuiUtils;
+import fi.dy.masa.malilib.util.position.IntBoundingBox;
 import fi.dy.masa.litematica.world.WorldSchematic;
 import me.niicide.lvc.integration.litematica.verifier.GitmaticaVerifier;
 import me.niicide.lvc.integration.litematica.verifier.GitmaticaVerifierState;
@@ -91,7 +93,10 @@ abstract class MixinSchematicVerifier implements GitmaticaVerifier
             int y,
             int z,
             BlockState expected,
-            BlockState found)
+            BlockState found,
+            ChunkAccess chunkClient,
+            ChunkAccess chunkSchematic,
+            IntBoundingBox box)
     {
         this.checkBlockStates(x, y, z, expected, found);
         BlockPos position = new BlockPos(x, y, z);
@@ -112,11 +117,21 @@ abstract class MixinSchematicVerifier implements GitmaticaVerifier
 
         if (foundWorld != null)
         {
-            BlockState authoritativeFound = foundWorld.getBlockState(position);
+            ChunkAccess foundChunk = chunkClient;
+
+            if (foundWorld != this.worldClient &&
+                foundWorld.getChunkSource().hasChunk(position.getX() >> 4, position.getZ() >> 4))
+            {
+                foundChunk = foundWorld.getChunk(position.getX() >> 4, position.getZ() >> 4);
+            }
+
+            BlockState authoritativeFound = foundChunk.getBlockState(position);
             this.gitmatica$state.compareInventory(
                     position,
                     expected,
                     authoritativeFound,
+                    chunkSchematic,
+                    foundChunk,
                     this.worldSchematic,
                     foundWorld);
         }

@@ -43,7 +43,7 @@ public class WidgetLvcChangeViewerEntry extends WidgetListEntrySortable<LvcChang
     private static final int STATE_COLUMN_PADDING = 40;
     private static final String HEADER_BEFORE = "gitmatica.gui.label.lvc_change_viewer.before";
     private static final String HEADER_AFTER = "gitmatica.gui.label.lvc_change_viewer.after";
-    private static final String HEADER_COUNT = "litematica.gui.label.schematic_verifier.count()";
+    private static final String HEADER_COUNT = "litematica.gui.label.schematic_verifier.count";
 
     private static int maxNameLengthBefore;
     private static int maxNameLengthAfter;

@@ -11,6 +11,7 @@ import net.minecraft.core.BlockPos;
 import net.minecraft.world.Container;
 import net.minecraft.world.level.Level;
 import net.minecraft.world.level.block.entity.BlockEntity;
+import net.minecraft.world.level.chunk.ChunkAccess;
 import net.minecraft.world.level.block.state.BlockState;
 
 import fi.dy.masa.litematica.schematic.verifier.SchematicVerifier.BlockMismatch;
@@ -45,13 +46,15 @@ public final class GitmaticaVerifierState
             BlockPos position,
             BlockState expectedState,
             BlockState foundState,
+            ChunkAccess expectedChunk,
+            ChunkAccess foundChunk,
             WorldSchematic expectedWorld,
             Level foundWorld)
     {
         this.removeInventoryMismatch(position);
 
-        BlockEntity expectedBlockEntity = expectedWorld.getBlockEntity(position);
-        BlockEntity foundBlockEntity = foundWorld.getBlockEntity(position);
+        BlockEntity expectedBlockEntity = expectedChunk.getBlockEntity(position);
+        BlockEntity foundBlockEntity = foundChunk.getBlockEntity(position);
 
         if (!(expectedBlockEntity instanceof Container expectedContainer) ||
             !(foundBlockEntity instanceof Container foundContainer) ||
