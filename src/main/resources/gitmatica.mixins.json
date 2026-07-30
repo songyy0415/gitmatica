@@ -15,6 +15,7 @@
     "inventory.MixinClientPacketListenerInventory",
     "inventory.MixinGuiGraphicsExtractorVerifierInventory",
     "inventory.MixinGuiRendererVerifierInventory",
+    "inventory.MixinInventoryOverlayVerifierEmptySlots",
     "inventory.MixinInventoryOverlayVerifierInventory",
     "inventory.MixinMinecraftGui",
     "inventory.MixinMultiPlayerGameModeInventory",

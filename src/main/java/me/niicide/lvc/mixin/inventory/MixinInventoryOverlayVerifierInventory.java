@@ -11,7 +11,6 @@ import net.minecraft.world.item.ItemStack;
 import org.spongepowered.asm.mixin.Mixin;
 import org.spongepowered.asm.mixin.injection.At;
 import org.spongepowered.asm.mixin.injection.Inject;
-import org.spongepowered.asm.mixin.injection.Redirect;
 import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
 import me.niicide.lvc.integration.litematica.verifier.VerifierInventoryOverlay;
 import fi.dy.masa.malilib.render.GuiContext;
@@ -42,13 +41,6 @@ public class MixinInventoryOverlayVerifierInventory
         {
             original.call(ctx, stack, x, y, scale, mouseX, mouseY);
         }
-    }
-
-    @Redirect(method = "renderInventoryStacks(Lfi/dy/masa/malilib/render/GuiContext;Lfi/dy/masa/malilib/render/InventoryOverlayType;Lnet/minecraft/world/Container;IIIIILjava/util/Set;DD)V",
-              at = @At(value = "INVOKE", target = "Lnet/minecraft/world/item/ItemStack;isEmpty()Z"))
-    private static boolean gitmatica_allowVerifierGhostSlots(ItemStack stack)
-    {
-        return VerifierInventoryOverlay.infoOverlayInstance == null && stack.isEmpty();
     }
 
     @WrapWithCondition(method = "renderInventoryStacks(Lfi/dy/masa/malilib/render/GuiContext;Lfi/dy/masa/malilib/render/InventoryOverlayType;Lnet/minecraft/world/Container;IIIIILjava/util/Set;DD)V",
