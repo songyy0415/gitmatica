@@ -1,8 +1,8 @@
 package me.niicide.lvc.integration.litematica.verifier;
 
 /**
- * Distinguishes Gitmatica's post-scan verifier start from a user-initiated
- * Litematica start, preventing the start interception mixin from recursing.
+ * Distinguishes Gitmatica-owned verifier starts from user-initiated Litematica
+ * starts, preventing the start interception mixin from recursing.
  */
 public final class GitmaticaVerifierStartGuard
 {

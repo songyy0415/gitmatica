@@ -9,7 +9,6 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.List;
-import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
 import java.util.UUID;
@@ -37,6 +36,7 @@ import me.niicide.lvc.semantic.LvcSemanticSchematicBuilder;
 import me.niicide.lvc.project.LvcProjectPositions;
 import me.niicide.lvc.task.LvcRefreshMarker;
 import me.niicide.lvc.world.LvcWorldAccess;
+import me.niicide.lvc.integration.litematica.verifier.GitmaticaVerifierStartGuard;
 import fi.dy.masa.litematica.data.DataManager;
 import fi.dy.masa.litematica.data.SchematicHolder;
 import fi.dy.masa.litematica.render.LitematicaRenderer;
@@ -1216,7 +1216,7 @@ public final class LvcTrackingOverlayService
 
         if (clientLevel != null && schematicWorld != null && LvcMinecraftWorldReader.dimensionId(clientLevel).equals(target.dimension()))
         {
-            verifier.startVerification(clientLevel, schematicWorld, overlay.placement(), completionListener);
+            GitmaticaVerifierStartGuard.runDirectly(() -> verifier.startVerification(clientLevel, schematicWorld, overlay.placement(), completionListener));
             verifierStarted = true;
         }
         else
@@ -1555,7 +1555,7 @@ public final class LvcTrackingOverlayService
 
         if (startVerifier && clientLevel != null && schematicWorld != null)
         {
-            verifier.startVerification(clientLevel, schematicWorld, placement, completionListener);
+            GitmaticaVerifierStartGuard.runDirectly(() -> verifier.startVerification(clientLevel, schematicWorld, placement, completionListener));
             verifierStarted = true;
         }
 

@@ -16,6 +16,7 @@ final class LvcIntegrationTestSuite
         LvcRepositoryIntegrationTest.runAll();
         LvcFriendlyErrorsIntegrationTest.runAll();
         LvcTaskRegistryIntegrationTest.runAll();
+        LvcVerifierStartGuardIntegrationTest.runAll();
         LvcOperationRecoveryIntegrationTest.runAll();
         LvcSemanticStorageIntegrationTest.runAll();
     }
