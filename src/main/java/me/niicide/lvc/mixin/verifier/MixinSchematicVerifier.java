@@ -94,6 +94,9 @@ abstract class MixinSchematicVerifier implements GitmaticaVerifier
             BlockState found)
     {
         this.checkBlockStates(x, y, z, expected, found);
+        BlockPos position = new BlockPos(x, y, z);
+        this.gitmatica$state.removeInventoryMismatchIfContainerChanged(
+                position, expected, found);
 
         if (!expected.hasBlockEntity() || !found.hasBlockEntity() || this.worldSchematic == null)
         {
@@ -109,7 +112,6 @@ abstract class MixinSchematicVerifier implements GitmaticaVerifier
 
         if (foundWorld != null)
         {
-            BlockPos position = new BlockPos(x, y, z);
             BlockState authoritativeFound = foundWorld.getBlockState(position);
             this.gitmatica$state.compareInventory(
                     position,

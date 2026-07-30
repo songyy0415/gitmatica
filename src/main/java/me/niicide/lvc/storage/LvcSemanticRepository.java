@@ -26,6 +26,7 @@ import me.niicide.lvc.LvcPlayerIdentity;
 public final class LvcSemanticRepository
 {
     public static final String MANIFEST = "lvc.json";
+    private static final String INITIAL_COMMIT_MESSAGE = "Created Project";
 
     private LvcSemanticRepository()
     {
@@ -52,7 +53,8 @@ public final class LvcSemanticRepository
         LvcManifest capturedManifest = initialManifest.withSiteHashRefs(site.id(), capture.fullHashes(), capture.trackedHashes());
 
         writeVersionedProjectFiles(repositoryDirectory, capturedManifest);
-        RevCommit commit = commitSemanticFiles(repositoryDirectory, player, "init", true);
+        RevCommit commit = commitSemanticFiles(
+                repositoryDirectory, player, INITIAL_COMMIT_MESSAGE, true);
 
         if (commit == null)
         {
@@ -76,7 +78,8 @@ public final class LvcSemanticRepository
         LvcManifest capturedManifest = initialManifest.withSiteHashRefs(site.id(), capture.fullHashes(), capture.trackedHashes());
 
         writeVersionedProjectFiles(repositoryDirectory, capturedManifest);
-        RevCommit commit = commitSemanticFiles(repositoryDirectory, player, "init", true);
+        RevCommit commit = commitSemanticFiles(
+                repositoryDirectory, player, INITIAL_COMMIT_MESSAGE, true);
 
         if (commit == null)
         {

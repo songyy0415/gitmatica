@@ -135,7 +135,6 @@ public final class LvcVerifierStartWorkflow
         refreshGui.run();
         LvcDiagnostics.debug(handle.get(), "Gitmatica verifier cleared stale rows before preflight repo='{}' placement='{}' errors={} inventoryErrors={}",
                 repositoryDirectory, placement.getName(), staleErrors, staleInventoryErrors);
-        LvcGuiMessages.show(MessageType.INFO, "gitmatica.message.lvc_project.task_started", "LVC Start Verification");
 
         return true;
     }
@@ -187,7 +186,6 @@ public final class LvcVerifierStartWorkflow
         refreshGui.run();
         LvcDiagnostics.debug(handle.get(), "Gitmatica remote verifier cleared stale rows before backend scan repo='{}' placement='{}' errors={} inventoryErrors={}",
                 repositoryDirectory, placement.getName(), staleErrors, staleInventoryErrors);
-        LvcGuiMessages.show(MessageType.INFO, "gitmatica.message.lvc_project.task_started", "LVC Start Verification");
         return true;
     }
 

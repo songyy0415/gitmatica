@@ -84,6 +84,10 @@ final class LvcSemanticRepositoryLifecycleIntegrationTest
                 RevCommit commit = revWalk.parseCommit(headId);
                 Set<String> files = committedFiles(repository, commit);
 
+                IntegrationTestSupport.assertEquals(
+                        "Created Project",
+                        commit.getFullMessage().strip(),
+                        "semantic init should use the player-facing initial commit message");
                 IntegrationTestSupport.assertTrue(files.contains(LvcSemanticRepository.MANIFEST), "semantic commit should include lvc.json");
                 IntegrationTestSupport.assertTrue(!files.contains("README.md"), "semantic commit should not include generated README");
                 IntegrationTestSupport.assertTrue(files.stream().anyMatch(path -> path.endsWith(LvcHashIndexCodec.EXTENSION)), "semantic commit should include hash index");

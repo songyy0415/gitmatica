@@ -29,7 +29,6 @@ import fi.dy.masa.litematica.schematic.verifier.SchematicVerifier.MismatchType;
 import fi.dy.masa.litematica.schematic.verifier.SchematicVerifier.MismatchRenderPos;
 import me.niicide.lvc.integration.litematica.verifier.VerifierInventoryPreview;
 import me.niicide.lvc.integration.litematica.verifier.GitmaticaVerifiers;
-import me.niicide.lvc.integration.litematica.verifier.VerifierMismatchMetadata;
 import fi.dy.masa.litematica.util.BlockInfoListType;
 import fi.dy.masa.malilib.gui.GuiListBase;
 import fi.dy.masa.malilib.gui.Message.MessageType;
@@ -497,11 +496,11 @@ public class GuiLvcChangeViewer extends GuiListBase<LvcChangeEntry, WidgetLvcCha
     {
         for (int index = this.inventoryPreviewSelections.size() - 1; index >= 0; --index)
         {
-            BlockMismatch mismatch = this.inventoryPreviewSelections.get(index).mismatch();
+            VerifierInventoryPreview preview = this.inventoryPreviewSelections.get(index).inventoryPreview();
 
-            if (mismatch != null && VerifierMismatchMetadata.inventoryPreview(mismatch) != null)
+            if (preview != null)
             {
-                return VerifierMismatchMetadata.inventoryPreview(mismatch);
+                return preview;
             }
         }
 
@@ -550,7 +549,7 @@ public class GuiLvcChangeViewer extends GuiListBase<LvcChangeEntry, WidgetLvcCha
 
     private void updateInventoryPreviewSelection(LvcChangeEntry selectedEntry)
     {
-        if (this.isInventoryPreviewEntry(selectedEntry))
+        if (selectedEntry.inventoryPreview() != null)
         {
             this.inventoryPreviewSelections.remove(selectedEntry);
 
@@ -567,17 +566,9 @@ public class GuiLvcChangeViewer extends GuiListBase<LvcChangeEntry, WidgetLvcCha
     {
         Set<LvcChangeEntry> selections = this.getListWidget().getSelectedEntries();
         this.inventoryPreviewSelections.removeIf(entry ->
-                !selections.contains(entry) || !this.selectionStillExists(entry) || !this.isInventoryPreviewEntry(entry));
+                !selections.contains(entry) || !this.selectionStillExists(entry) || entry.inventoryPreview() == null);
 
         SAVED_STATE.saveInventoryPreviewSelections(this.verifier, this.inventoryPreviewSelections);
-    }
-
-    private boolean isInventoryPreviewEntry(LvcChangeEntry entry)
-    {
-        BlockMismatch mismatch = entry.mismatch();
-        return entry.type() == LvcChangeEntry.Type.DATA &&
-               entry.kind() == Kind.INVENTORIES_CHANGED &&
-               mismatch != null && VerifierMismatchMetadata.inventoryPreview(mismatch) != null;
     }
 
     private void normalizeSelectionHierarchy(LvcChangeEntry selectedEntry)

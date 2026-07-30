@@ -19,7 +19,6 @@ import fi.dy.masa.litematica.schematic.verifier.SchematicVerifier;
 import fi.dy.masa.litematica.schematic.verifier.SchematicVerifier.BlockMismatch;
 import fi.dy.masa.litematica.schematic.verifier.SchematicVerifier.SortCriteria;
 import me.niicide.lvc.integration.litematica.verifier.VerifierInventoryPreview;
-import me.niicide.lvc.integration.litematica.verifier.VerifierMismatchMetadata;
 import fi.dy.masa.litematica.util.ItemUtils;
 import fi.dy.masa.malilib.gui.GuiBase;
 import fi.dy.masa.malilib.gui.button.ButtonBase;
@@ -274,14 +273,13 @@ public class WidgetLvcChangeViewerEntry extends WidgetListEntrySortable<LvcChang
     @Nullable
     VerifierInventoryPreview hoveredInventoryPreview(int mouseX, int mouseY)
     {
-        if (!this.isMouseOver(mouseX, mouseY) || !this.canShowInventoryPreview() ||
+        if (!this.isMouseOver(mouseX, mouseY) ||
                 (this.buttonHide != null && mouseX >= this.buttonHide.getX()))
         {
             return null;
         }
 
-        BlockMismatch mismatch = this.entry.mismatch();
-        return mismatch != null ? VerifierMismatchMetadata.inventoryPreview(mismatch) : null;
+        return this.entry.inventoryPreview();
     }
 
     private ButtonGeneric createButton(int x, int y)
@@ -376,9 +374,7 @@ public class WidgetLvcChangeViewerEntry extends WidgetListEntrySortable<LvcChang
 
     private boolean canShowInventoryPreview()
     {
-        return this.entry.type() == LvcChangeEntry.Type.DATA &&
-                this.entry.mismatch() != null &&
-                VerifierMismatchMetadata.inventoryPreview(this.entry.mismatch()) != null;
+        return this.entry.inventoryPreview() != null;
     }
 
     private record HideButtonListener(LvcChangeEntry entry,

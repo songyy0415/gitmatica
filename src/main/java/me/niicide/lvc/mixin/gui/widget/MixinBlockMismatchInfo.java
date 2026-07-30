@@ -7,7 +7,6 @@ import org.spongepowered.asm.mixin.injection.ModifyArg;
 import fi.dy.masa.litematica.data.DataManager;
 import fi.dy.masa.litematica.gui.widgets.WidgetSchematicVerificationResult.BlockMismatchInfo;
 import fi.dy.masa.litematica.schematic.placement.SchematicPlacement;
-import me.niicide.lvc.integration.litematica.verifier.GitmaticaVerifiers;
 import me.niicide.lvc.overlay.LvcTrackingOverlayService;
 
 @Mixin(BlockMismatchInfo.class)
@@ -46,9 +45,6 @@ abstract class MixinBlockMismatchInfo
         SchematicPlacement placement = DataManager.getSchematicPlacementManager()
                 .getSelectedSchematicPlacement();
 
-        return LvcTrackingOverlayService.isSemanticTrackingPlacement(placement) &&
-               placement.hasVerifier() &&
-               GitmaticaVerifiers.extension(placement.getSchematicVerifier())
-                       .gitmatica$isChangeInfoHud();
+        return LvcTrackingOverlayService.isSemanticTrackingPlacement(placement);
     }
 }

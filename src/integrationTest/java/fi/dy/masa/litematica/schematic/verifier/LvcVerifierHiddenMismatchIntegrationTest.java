@@ -1,14 +1,29 @@
 package fi.dy.masa.litematica.schematic.verifier;
 
+import java.lang.reflect.Field;
 import java.util.List;
 import java.util.Map;
 
+import net.minecraft.DetectedVersion;
+import net.minecraft.SharedConstants;
 import net.minecraft.core.BlockPos;
+import net.minecraft.core.Direction;
+import net.minecraft.server.Bootstrap;
+import net.minecraft.world.level.block.Blocks;
+import net.minecraft.world.level.block.ChestBlock;
+import net.minecraft.world.level.block.state.BlockState;
 
 import fi.dy.masa.litematica.schematic.verifier.SchematicVerifier.BlockMismatch;
 import fi.dy.masa.litematica.schematic.verifier.SchematicVerifier.MismatchRenderPos;
 import fi.dy.masa.litematica.schematic.verifier.SchematicVerifier.MismatchType;
+import me.niicide.lvc.diff.LvcSpatialDiffGroups;
+import me.niicide.lvc.diff.LvcSpatialDiffGroups.Group;
+import me.niicide.lvc.diff.LvcSpatialDiffGroups.Kind;
+import me.niicide.lvc.diff.LvcSpatialDiffGroups.PositionedChange;
+import me.niicide.lvc.diff.LvcVerifierDiffGroups.Entry;
+import me.niicide.lvc.gui.widgets.LvcChangeEntry;
 import me.niicide.lvc.integration.litematica.verifier.GitmaticaVerifierState;
+import me.niicide.lvc.integration.litematica.verifier.VerifierInventoryPreview;
 import me.niicide.lvc.integration.litematica.verifier.VerifierMismatchMetadata;
 import me.niicide.lvc.integration.litematica.verifier.VerifierRenderFilter;
 
@@ -24,10 +39,16 @@ public final class LvcVerifierHiddenMismatchIntegrationTest
 
     public static void runAll() throws Exception
     {
+        SharedConstants.setVersion(DetectedVersion.BUILT_IN);
+        Bootstrap.bootStrap();
         run("hidden mismatch state restores cleanly",
                 LvcVerifierHiddenMismatchIntegrationTest::hiddenStateRestores);
         run("inventory metadata follows identity copies",
                 LvcVerifierHiddenMismatchIntegrationTest::inventoryMetadataUsesIdentity);
+        run("change viewer inventory previews require the inventory subgroup",
+                LvcVerifierHiddenMismatchIntegrationTest::inventoryPreviewsRequireInventorySubgroup);
+        run("removed containers discard stale inventory mismatch rows",
+                LvcVerifierHiddenMismatchIntegrationTest::removedContainersDiscardInventoryMismatches);
         run("render filters are immutable and revisioned",
                 LvcVerifierHiddenMismatchIntegrationTest::renderFiltersAreRevisioned);
     }
@@ -71,6 +92,69 @@ public final class LvcVerifierHiddenMismatchIntegrationTest
 
         VerifierMismatchMetadata.remove(inventory);
         VerifierMismatchMetadata.remove(copy);
+    }
+
+    private static void inventoryPreviewsRequireInventorySubgroup()
+    {
+        BlockPos position = new BlockPos(3, 4, 5);
+        BlockState chest = Blocks.CHEST.defaultBlockState();
+        VerifierInventoryPreview preview = new VerifierInventoryPreview(
+                position, null, null);
+        BlockMismatch mismatch = VerifierMismatchMetadata.inventoryMismatch(
+                chest, chest, position, preview);
+        Entry data = new Entry(mismatch, List.of(position));
+        Group<Entry> group = LvcSpatialDiffGroups.build(List.of(
+                new PositionedChange<>(
+                        position, Kind.INVENTORIES_CHANGED, data))).getFirst();
+
+        assertEquals(
+                preview,
+                LvcChangeEntry.data(
+                        group, 1, Kind.INVENTORIES_CHANGED, data).inventoryPreview(),
+                "inventory subgroup rows should expose their inventory preview");
+        assertTrue(
+                LvcChangeEntry.data(
+                        group, 1, Kind.BLOCKS_REMOVED, data).inventoryPreview() == null,
+                "non-inventory subgroup rows must not expose attached container previews");
+        VerifierMismatchMetadata.remove(mismatch);
+    }
+
+    private static void removedContainersDiscardInventoryMismatches()
+            throws Exception
+    {
+        GitmaticaVerifierState state = new GitmaticaVerifierState();
+        BlockPos position = new BlockPos(6, 7, 8);
+        BlockState chest = Blocks.CHEST.defaultBlockState();
+        BlockState rotatedChest = chest.setValue(ChestBlock.FACING, Direction.EAST);
+        BlockMismatch visible = VerifierMismatchMetadata.inventoryMismatch(
+                chest, chest, position, null);
+        inventoryMismatches(state).put(position, visible);
+
+        state.removeInventoryMismatchIfContainerChanged(
+                position, chest, rotatedChest);
+        assertTrue(
+                state.hasInventoryMismatch(position),
+                "a blockstate change on the same container should retain its inventory mismatch");
+
+        state.removeInventoryMismatchIfContainerChanged(
+                position, chest, Blocks.AIR.defaultBlockState());
+        assertTrue(
+                !state.hasInventoryMismatch(position),
+                "removing the container should discard its visible inventory mismatch");
+
+        BlockMismatch hidden = VerifierMismatchMetadata.inventoryMismatch(
+                chest, chest, position, null);
+        inventoryMismatches(state).put(position, hidden);
+        state.hideInventoryMismatch(hidden);
+        state.removeInventoryMismatchIfContainerChanged(
+                position, chest, Blocks.AIR.defaultBlockState());
+        state.restoreHiddenInventoryMismatches();
+        assertTrue(
+                !state.hasInventoryMismatch(position),
+                "Reset Hidden must not restore an inventory mismatch for a removed container");
+        assertTrue(
+                !state.hasHiddenMismatches(),
+                "removing a hidden container mismatch should clear its ignored position");
     }
 
     private static void renderFiltersAreRevisioned()
@@ -143,6 +227,16 @@ public final class LvcVerifierHiddenMismatchIntegrationTest
         {
             throw new AssertionError(message);
         }
+    }
+
+    @SuppressWarnings("unchecked")
+    private static Map<BlockPos, BlockMismatch> inventoryMismatches(
+            GitmaticaVerifierState state) throws Exception
+    {
+        Field field = GitmaticaVerifierState.class.getDeclaredField(
+                "inventoryMismatches");
+        field.setAccessible(true);
+        return (Map<BlockPos, BlockMismatch>) field.get(state);
     }
 
     private interface ThrowingRunnable

@@ -13,6 +13,7 @@ final class LvcIntegrationTestSuite
     {
         LvcSpatialDiffGroupsIntegrationTest.runAll();
         LvcVerifierHiddenMismatchIntegrationTest.runAll();
+        LvcBlockInspectionIntegrationTest.runAll();
         LvcRepositoryIntegrationTest.runAll();
         LvcFriendlyErrorsIntegrationTest.runAll();
         LvcTaskRegistryIntegrationTest.runAll();

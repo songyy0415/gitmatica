@@ -92,6 +92,21 @@ public final class GitmaticaVerifierState
         }
     }
 
+    public void removeInventoryMismatchIfContainerChanged(
+            BlockPos position,
+            BlockState expectedState,
+            BlockState foundState)
+    {
+        if (expectedState.getBlock() == foundState.getBlock() &&
+            expectedState.hasBlockEntity() && foundState.hasBlockEntity())
+        {
+            return;
+        }
+
+        this.removeInventoryMismatch(position);
+        this.ignoredInventoryPositions.remove(position);
+    }
+
     public Map<BlockPos, BlockMismatch> inventoryMismatches()
     {
         return Map.copyOf(this.inventoryMismatches);

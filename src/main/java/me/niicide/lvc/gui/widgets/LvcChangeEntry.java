@@ -11,6 +11,8 @@ import me.niicide.lvc.overlay.LvcTrackingOverlayService;
 import fi.dy.masa.litematica.schematic.verifier.SchematicVerifier.BlockMismatch;
 import fi.dy.masa.litematica.schematic.verifier.SchematicVerifier.MismatchType;
 import fi.dy.masa.malilib.util.StringUtils;
+import me.niicide.lvc.integration.litematica.verifier.VerifierInventoryPreview;
+import me.niicide.lvc.integration.litematica.verifier.VerifierMismatchMetadata;
 
 public record LvcChangeEntry(Type type, @Nullable BlockPos groupAnchor, int groupNumber,
                              @Nullable Kind kind, @Nullable Entry data,
@@ -86,6 +88,15 @@ public record LvcChangeEntry(Type type, @Nullable BlockPos groupAnchor, int grou
     public BlockMismatch mismatch()
     {
         return this.data != null ? this.data.mismatch() : null;
+    }
+
+    @Nullable
+    public VerifierInventoryPreview inventoryPreview()
+    {
+        BlockMismatch mismatch = this.mismatch();
+        return this.type == Type.DATA && this.kind == Kind.INVENTORIES_CHANGED && mismatch != null
+                ? VerifierMismatchMetadata.inventoryPreview(mismatch)
+                : null;
     }
 
     public enum Type
