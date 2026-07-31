@@ -20,7 +20,7 @@ public class WidgetLvcCommitHistoryEntry extends WidgetListEntryBase<LvcCommitIn
     private static final int UNDO_BUTTON_SIZE = 16;
     private static final int UNDO_ICON_SIZE = 12;
     private static final int HASH_SCROLLBAR_GUTTER = 9;
-    private static final int UNDO_SCROLLBAR_INSET = 24;
+    private static final int UNDO_SCROLLBAR_INSET = 20;
 
     private final WidgetLvcCommitHistoryList list;
     private final boolean isOdd;

@@ -15,6 +15,7 @@ import me.arnavpmr.lvc.git.LvcCommitInfo;
 
 import fi.dy.masa.litematica.gui.Icons;
 import fi.dy.masa.malilib.gui.LeftRight;
+import fi.dy.masa.malilib.gui.widgets.WidgetBase;
 import fi.dy.masa.malilib.gui.widgets.WidgetListBase;
 import fi.dy.masa.malilib.gui.widgets.WidgetSearchBar;
 import fi.dy.masa.malilib.render.GuiContext;
@@ -24,7 +25,10 @@ import fi.dy.masa.malilib.util.StringUtils;
 public class WidgetLvcCommitHistoryList extends WidgetListBase<LvcCommitInfo, WidgetLvcCommitHistoryEntry>
 {
     private static final int ROW_HEIGHT = 18;
+    private static final int SEARCH_HEIGHT = 18;
     private static final int SEARCH_OFFSET_Y = 23;
+    private static final int SCROLLBAR_TRACK_RIGHT_OFFSET = 5;
+    private static final int SCROLLBAR_TRACK_WIDTH = 4;
 
     private final Supplier<List<LvcCommitInfo>> historySupplier;
     private final Supplier<LvcCommitInfo> selectedCommitSupplier;
@@ -32,6 +36,7 @@ public class WidgetLvcCommitHistoryList extends WidgetListBase<LvcCommitInfo, Wi
     private final Predicate<LvcCommitInfo> undoPredicate;
     private final Consumer<LvcCommitInfo> undoConsumer;
     private final WidgetLvcCommitSearchBar searchBar;
+    private final WidgetLvcVerticalScrollbar historyScrollbar;
     @Nullable private String pendingFocusedCommitId;
 
     public WidgetLvcCommitHistoryList(int x, int y, int width, int height,
@@ -48,9 +53,15 @@ public class WidgetLvcCommitHistoryList extends WidgetListBase<LvcCommitInfo, Wi
         this.undoPredicate = undoPredicate;
         this.undoConsumer = undoConsumer;
         this.browserEntryHeight = ROW_HEIGHT;
-        this.searchBar = new WidgetLvcCommitSearchBar(x + 4, y + 4, Math.max(20, width - 8), 14);
+        this.searchBar = new WidgetLvcCommitSearchBar(
+                x + 4, y + 4, Math.max(20, width - 8), SEARCH_HEIGHT);
         this.widgetSearchBar = this.searchBar;
         this.browserEntriesOffsetY = SEARCH_OFFSET_Y;
+        this.historyScrollbar = new WidgetLvcVerticalScrollbar(
+                x + width - SCROLLBAR_TRACK_RIGHT_OFFSET,
+                y + 4 + SEARCH_OFFSET_Y,
+                SCROLLBAR_TRACK_WIDTH,
+                Math.max(0, height - SEARCH_OFFSET_Y - 4));
     }
 
     @Override
@@ -92,6 +103,39 @@ public class WidgetLvcCommitHistoryList extends WidgetListBase<LvcCommitInfo, Wi
     public void blurSearch()
     {
         this.searchBar.blur();
+    }
+
+    @Override
+    public boolean onMouseClicked(MouseButtonEvent click, boolean doubleClick)
+    {
+        this.updateHistoryScrollbar();
+
+        if (this.historyScrollbar.onMouseClicked(click, doubleClick))
+        {
+            this.syncListScrollFromHistoryScrollbar();
+            return true;
+        }
+
+        return super.onMouseClicked(click, doubleClick);
+    }
+
+    @Override
+    public boolean onMouseDragged(MouseButtonEvent click, double dragXAmount, double dragYAmount)
+    {
+        if (this.historyScrollbar.onMouseDragged(click, dragXAmount, dragYAmount))
+        {
+            this.syncListScrollFromHistoryScrollbar();
+            return true;
+        }
+
+        return super.onMouseDragged(click, dragXAmount, dragYAmount);
+    }
+
+    @Override
+    public boolean onMouseReleased(MouseButtonEvent click)
+    {
+        this.historyScrollbar.onMouseReleased(click);
+        return super.onMouseReleased(click);
     }
 
     boolean canUndo(LvcCommitInfo commit)
@@ -174,7 +218,7 @@ public class WidgetLvcCommitHistoryList extends WidgetListBase<LvcCommitInfo, Wi
     {
         RenderUtils.drawOutlinedBox(ctx, this.posX, this.posY, this.browserWidth, this.browserHeight,
                 0xB0000000, 0xFF999999);
-        super.drawContents(ctx, mouseX, mouseY, partialTicks);
+        this.drawHistoryContents(ctx, mouseX, mouseY);
 
         if (this.listContents.isEmpty())
         {
@@ -183,6 +227,54 @@ public class WidgetLvcCommitHistoryList extends WidgetListBase<LvcCommitInfo, Wi
                     "gitmatica.gui.label.lvc_project.history_no_matches";
             ctx.drawString(ctx.fontRenderer(), StringUtils.translate(key),
                     this.posX + 6, this.posY + SEARCH_OFFSET_Y + 5, 0xFFAAAAAA, false);
+        }
+    }
+
+    private void drawHistoryContents(GuiContext ctx, int mouseX, int mouseY)
+    {
+        WidgetBase hovered = null;
+
+        for (WidgetLvcCommitHistoryEntry widget : this.listWidgets)
+        {
+            LvcCommitInfo entry = widget.getEntry();
+            boolean selected = this.allowMultiSelection ?
+                    this.selectedEntries.contains(entry) :
+                    entry != null && entry.equals(this.getLastSelectedEntry());
+            widget.render(ctx, mouseX, mouseY, selected);
+
+            if (widget.isMouseOver(mouseX, mouseY))
+            {
+                hovered = widget;
+            }
+        }
+
+        this.updateHistoryScrollbar();
+        this.historyScrollbar.render(ctx, mouseX, mouseY, false);
+        this.searchBar.render(ctx, mouseX, mouseY, false);
+
+        if (hovered == null && this.searchBar.isMouseOver(mouseX, mouseY))
+        {
+            hovered = this.searchBar;
+        }
+
+        this.hoveredWidget = hovered;
+    }
+
+    private void updateHistoryScrollbar()
+    {
+        this.historyScrollbar.setRange(this.listContents.size(), this.maxVisibleBrowserEntries);
+        this.historyScrollbar.setValue(this.scrollBar.getValue());
+    }
+
+    private void syncListScrollFromHistoryScrollbar()
+    {
+        int value = this.historyScrollbar.getValue();
+
+        if (value != this.scrollBar.getValue())
+        {
+            this.scrollBar.setValue(value);
+            this.lastScrollbarPosition = value;
+            this.reCreateListEntryWidgets();
         }
     }
 
@@ -248,6 +340,26 @@ public class WidgetLvcCommitHistoryList extends WidgetListBase<LvcCommitInfo, Wi
         private WidgetLvcCommitSearchBar(int x, int y, int width, int height)
         {
             super(x, y, width, height, 0, Icons.FILE_ICON_SEARCH, LeftRight.LEFT);
+            this.iconSearch.setPosition(x + 4, y + 3);
+            this.searchBox.setY(y + (height - this.fontHeight) / 2);
+            this.searchBox.setBordered(false);
+            this.searchBox.setMaxLength(128);
+            this.searchBox.setTextColor(0xFFFFFFFF);
+            this.searchBox.setTextColorUneditable(0xFFAAAAAA);
+        }
+
+        @Override
+        public void render(GuiContext ctx, int mouseX, int mouseY, boolean selected)
+        {
+            this.guiContext = ctx;
+            RenderUtils.drawOutlinedBox(ctx, this.x, this.y, this.width, this.height,
+                    0xA0000000, 0xFF999999);
+            this.iconSearch.render(ctx, true, false);
+
+            if (this.searchOpen)
+            {
+                this.searchBox.extractRenderState(ctx.getGuiGraphics(), mouseX, mouseY, 0);
+            }
         }
 
         private void clearFilter()
