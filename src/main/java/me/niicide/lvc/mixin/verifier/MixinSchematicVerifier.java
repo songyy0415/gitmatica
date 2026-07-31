@@ -31,10 +31,12 @@ import fi.dy.masa.litematica.config.Configs;
 import fi.dy.masa.litematica.config.Hotkeys;
 import fi.dy.masa.litematica.gui.GuiSchematicVerifier;
 import fi.dy.masa.litematica.data.DataManager;
+import fi.dy.masa.litematica.schematic.placement.SchematicPlacement;
 import fi.dy.masa.litematica.schematic.verifier.SchematicVerifier;
 import fi.dy.masa.litematica.schematic.verifier.SchematicVerifier.BlockMismatch;
 import fi.dy.masa.litematica.schematic.verifier.SchematicVerifier.MismatchRenderPos;
 import fi.dy.masa.litematica.schematic.verifier.SchematicVerifier.MismatchType;
+import fi.dy.masa.litematica.util.BlockInfoListType;
 import fi.dy.masa.malilib.util.WorldUtils;
 import fi.dy.masa.malilib.interfaces.ICompletionListener;
 import fi.dy.masa.malilib.util.GuiUtils;
@@ -46,6 +48,7 @@ import me.niicide.lvc.integration.litematica.verifier.GitmaticaVerifierStartGuar
 import me.niicide.lvc.gui.LvcVerifierStartWorkflow;
 import me.niicide.lvc.integration.litematica.verifier.VerifierMismatchMetadata;
 import me.niicide.lvc.integration.litematica.verifier.VerifierRenderFilter;
+import me.niicide.lvc.overlay.LvcTrackingOverlayService;
 
 @Mixin(SchematicVerifier.class)
 abstract class MixinSchematicVerifier implements GitmaticaVerifier
@@ -60,6 +63,8 @@ abstract class MixinSchematicVerifier implements GitmaticaVerifier
     @Shadow @Final private ArrayListMultimap<Pair<BlockState, BlockState>, BlockPos> wrongBlocksPositions;
     @Shadow @Final private ArrayListMultimap<Pair<BlockState, BlockState>, BlockPos> wrongStatesPositions;
     @Shadow @Final private ArrayListMultimap<Pair<BlockState, BlockState>, BlockPos> diffBlocksPositions;
+    @Shadow @Final private Set<BlockPos> recheckQueue;
+    @Shadow private SchematicPlacement schematicPlacement;
     @Shadow @Final private List<MismatchRenderPos> mismatchPositionsForRender;
     @Shadow @Final private List<BlockPos> mismatchBlockPositionsForRender;
 
@@ -74,6 +79,56 @@ abstract class MixinSchematicVerifier implements GitmaticaVerifier
 
     @Unique
     private final GitmaticaVerifierState gitmatica$state = new GitmaticaVerifierState();
+
+    @Inject(method = "markBlockChanged", at = @At("HEAD"), cancellable = true)
+    private void gitmatica$queueTrackingOverlayBlockChange(
+            BlockPos position,
+            CallbackInfo callbackInfo)
+    {
+        if (!LvcTrackingOverlayService.isSemanticTrackingPlacement(this.schematicPlacement))
+        {
+            return;
+        }
+
+        if (((SchematicVerifier) (Object) this).isFinished() &&
+            this.gitmatica$isPositionWithinVerificationArea(position))
+        {
+            this.recheckQueue.add(position.immutable());
+        }
+
+        callbackInfo.cancel();
+    }
+
+    @Unique
+    private boolean gitmatica$isPositionWithinVerificationArea(BlockPos position)
+    {
+        if (this.schematicPlacement == null)
+        {
+            return false;
+        }
+
+        if (this.schematicPlacement.getSchematicVerifierType() == BlockInfoListType.RENDER_LAYERS &&
+            !DataManager.getRenderLayerRange().isPositionWithinRange(position))
+        {
+            return false;
+        }
+
+        Map<String, IntBoundingBox> boxes = this.schematicPlacement.getBoxesWithinChunk(
+                position.getX() >> 4,
+                position.getZ() >> 4);
+
+        for (IntBoundingBox box : boxes.values())
+        {
+            if (position.getX() >= box.minX() && position.getX() <= box.maxX() &&
+                position.getY() >= box.minY() && position.getY() <= box.maxY() &&
+                position.getZ() >= box.minZ() && position.getZ() <= box.maxZ())
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
 
     @Inject(method = "clearData", at = @At("HEAD"))
     private void gitmatica$clearVerifierState(CallbackInfo callbackInfo)
