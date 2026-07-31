@@ -16,16 +16,16 @@ import net.minecraft.world.level.block.state.BlockState;
 import fi.dy.masa.litematica.schematic.verifier.SchematicVerifier.BlockMismatch;
 import fi.dy.masa.litematica.schematic.verifier.SchematicVerifier.MismatchRenderPos;
 import fi.dy.masa.litematica.schematic.verifier.SchematicVerifier.MismatchType;
-import me.niicide.lvc.diff.LvcSpatialDiffGroups;
-import me.niicide.lvc.diff.LvcSpatialDiffGroups.Group;
-import me.niicide.lvc.diff.LvcSpatialDiffGroups.Kind;
-import me.niicide.lvc.diff.LvcSpatialDiffGroups.PositionedChange;
-import me.niicide.lvc.diff.LvcVerifierDiffGroups.Entry;
-import me.niicide.lvc.gui.widgets.LvcChangeEntry;
-import me.niicide.lvc.integration.litematica.verifier.GitmaticaVerifierState;
-import me.niicide.lvc.integration.litematica.verifier.VerifierInventoryPreview;
-import me.niicide.lvc.integration.litematica.verifier.VerifierMismatchMetadata;
-import me.niicide.lvc.integration.litematica.verifier.VerifierRenderFilter;
+import me.arnavpmr.lvc.diff.LvcSpatialDiffGroups;
+import me.arnavpmr.lvc.diff.LvcSpatialDiffGroups.Group;
+import me.arnavpmr.lvc.diff.LvcSpatialDiffGroups.Kind;
+import me.arnavpmr.lvc.diff.LvcSpatialDiffGroups.PositionedChange;
+import me.arnavpmr.lvc.diff.LvcVerifierDiffGroups.Entry;
+import me.arnavpmr.lvc.gui.widgets.LvcChangeEntry;
+import me.arnavpmr.lvc.integration.litematica.verifier.GitmaticaVerifierState;
+import me.arnavpmr.lvc.integration.litematica.verifier.VerifierInventoryPreview;
+import me.arnavpmr.lvc.integration.litematica.verifier.VerifierMismatchMetadata;
+import me.arnavpmr.lvc.integration.litematica.verifier.VerifierRenderFilter;
 
 /**
  * Exercises the addon-owned verifier sidecar without relying on fork-only

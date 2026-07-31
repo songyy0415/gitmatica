@@ -1,0 +1,1271 @@
+package me.arnavpmr.lvc.gui;
+
+import me.arnavpmr.lvc.overlay.LvcTrackingOverlayService;
+import me.arnavpmr.lvc.overlay.LvcTrackingOverlay;
+import me.arnavpmr.lvc.git.LvcGitRemoteOps;
+import me.arnavpmr.lvc.git.LvcGitHistoryOps;
+import me.arnavpmr.lvc.git.LvcGitBranchOps;
+import me.arnavpmr.lvc.git.LvcCommitInfo;
+import me.arnavpmr.lvc.project.LvcProjectSelectionStorage;
+import java.io.IOException;
+import java.util.List;
+import java.util.Optional;
+import javax.annotation.Nullable;
+import com.mojang.blaze3d.platform.InputConstants;
+import net.minecraft.client.Minecraft;
+import net.minecraft.client.multiplayer.ClientLevel;
+import net.minecraft.world.level.Level;
+import org.lwjgl.glfw.GLFW;
+import me.arnavpmr.lvc.LvcDiagnostics;
+import me.arnavpmr.lvc.LvcFriendlyErrors.Operation;
+import me.arnavpmr.lvc.gui.widgets.WidgetLvcBranchActionMenu;
+import me.arnavpmr.lvc.task.LvcOperationHandle;
+import me.arnavpmr.lvc.task.LvcOperationJournal;
+import me.arnavpmr.lvc.task.LvcRemoteServerApplyTask;
+import me.arnavpmr.lvc.task.LvcSemanticCheckoutTask;
+import me.arnavpmr.lvc.task.LvcRefreshMarker;
+import me.arnavpmr.lvc.task.LvcSemanticExportTask;
+import me.arnavpmr.lvc.task.LvcSemanticOverlayTask;
+import me.arnavpmr.lvc.task.LvcTaskCallbacks;
+import me.arnavpmr.lvc.task.LvcTaskRegistry;
+import me.arnavpmr.lvc.task.LvcTaskScheduling;
+import me.arnavpmr.lvc.world.LvcWorldAccess;
+import me.arnavpmr.lvc.world.LvcWorldBackend;
+import fi.dy.masa.litematica.data.DataManager;
+import fi.dy.masa.litematica.gui.GuiMainMenu;
+import fi.dy.masa.litematica.schematic.placement.SchematicPlacement;
+import fi.dy.masa.litematica.selection.AreaSelection;
+import fi.dy.masa.malilib.gui.GuiBase;
+import fi.dy.masa.malilib.gui.Message.MessageType;
+import fi.dy.masa.malilib.gui.button.IButtonActionListener;
+import fi.dy.masa.malilib.util.GuiUtils;
+import fi.dy.masa.malilib.util.StringUtils;
+
+final class GuiLvcProjectController
+{
+    private static final int COMMIT_DESCRIPTION_DISPLAY_LINES = 4;
+    private static final int COMMIT_DESCRIPTION_MAX_LINES = 8;
+    private static final String LOAD_OVERLAY_OPERATION = "LVC Load Overlay";
+    private static final String SEMANTIC_CHECKOUT_UNSUPPORTED_KEY = "gitmatica.error.lvc_project.semantic_checkout_restore_unimplemented";
+    private static final String SEMANTIC_PULL_UNSUPPORTED_KEY = "gitmatica.error.lvc_project.semantic_pull_restore_unimplemented";
+
+    final GuiLvcProjectManager gui;
+    private boolean recoveryAttempted;
+    @Nullable private LvcOperationJournal.Entry pendingInterruptedOperation;
+    @Nullable private LvcOperationJournal.Operation pendingInterruptedOperationType;
+
+    GuiLvcProjectController(GuiLvcProjectManager gui)
+    {
+        this.gui = gui;
+    }
+
+    IButtonActionListener buttonListener(GuiLvcProjectButtonType type)
+    {
+        return new GuiLvcProjectCommandListeners.ButtonListener(type, this);
+    }
+
+    boolean prepareHotkeyAction()
+    {
+        this.refreshRepositoryState();
+
+        if (!this.recoveryAttempted)
+        {
+            this.recoveryAttempted = true;
+            var previousScreen = GuiUtils.getCurrentScreen();
+
+            if (LvcProjectRecoveryWorkflow.recoverInterruptedOperation(this) ||
+                    GuiUtils.getCurrentScreen() != previousScreen)
+            {
+                return false;
+            }
+        }
+
+        return true;
+    }
+
+    void refreshRepositoryState()
+    {
+        this.gui.detachedHead = false;
+        this.gui.checkoutBranchName = LvcGitBranchOps.DEFAULT_BRANCH;
+        this.gui.headPointerName = LvcGitBranchOps.DEFAULT_BRANCH;
+        this.gui.remoteUrl = null;
+        this.gui.setBranchNames(List.of(LvcGitBranchOps.DEFAULT_BRANCH));
+
+        try
+        {
+            this.gui.detachedHead = LvcGitBranchOps.isDetachedHead(this.gui.repositoryDirectory);
+            this.gui.remoteUrl = LvcGitRemoteOps.remoteOriginUrl(this.gui.repositoryDirectory);
+            this.gui.checkoutBranchName = LvcGitBranchOps.preferredCheckoutBranchName(this.gui.repositoryDirectory);
+            this.gui.headPointerName = LvcGitBranchOps.headPointerName(this.gui.repositoryDirectory);
+            this.gui.setBranchNames(LvcGitBranchOps.listLocalBranches(this.gui.repositoryDirectory));
+        }
+        catch (Exception e)
+        {
+            LvcGuiMessages.show(MessageType.ERROR, "gitmatica.error.lvc_project.history_failed", e.getMessage());
+        }
+
+        this.gui.updateTitle();
+    }
+
+    void loadInitialTrackingOverlay()
+    {
+        if (!this.recoveryAttempted)
+        {
+            this.recoveryAttempted = true;
+
+            if (LvcProjectRecoveryWorkflow.recoverInterruptedOperation(this))
+            {
+                return;
+            }
+        }
+
+        if (LvcRefreshMarker.exists(this.gui.repositoryDirectory))
+        {
+            if (this.isOverlayLoadActiveForThisRepo())
+            {
+                LvcDiagnostics.debug("GuiLvcProjectManager: refresh marker found but overlay load already active repo='{}'",
+                        this.gui.repositoryDirectory);
+                return;
+            }
+
+            this.gui.initialOverlayAttempted = true;
+            this.scheduleSemanticTrackingOverlay(true, true);
+            return;
+        }
+
+        if (this.gui.initialOverlayAttempted || !this.gui.hasHistory())
+        {
+            return;
+        }
+
+        this.gui.initialOverlayAttempted = true;
+        this.scheduleSemanticTrackingOverlay(false, false);
+    }
+
+    void setPendingInterruptedOperation(LvcOperationJournal.Entry entry, LvcOperationJournal.Operation operation)
+    {
+        this.pendingInterruptedOperation = entry;
+        this.pendingInterruptedOperationType = operation;
+        LvcDiagnostics.debug("GuiLvcProjectManager: pending interrupted operation loaded repo='{}' operation='{}' phase='{}'",
+                this.gui.repositoryDirectory, entry.operation(), entry.phase());
+    }
+
+    void clearPendingInterruptedOperation()
+    {
+        this.pendingInterruptedOperation = null;
+        this.pendingInterruptedOperationType = null;
+    }
+
+    void promptCommitMessage()
+    {
+        try
+        {
+            if (LvcGitBranchOps.isDetachedHead(this.gui.repositoryDirectory))
+            {
+                LvcGuiMessages.show(MessageType.ERROR, "gitmatica.error.lvc_project.detached_head_save_version");
+                return;
+            }
+        }
+        catch (Exception e)
+        {
+            LvcGuiMessages.showTaskError(Operation.SAVE_VERSION, "gitmatica.error.lvc_project.commit_failed", e);
+            return;
+        }
+
+        this.openCommitMessageDialog();
+    }
+
+    void promptCheckoutSelectedCommit()
+    {
+        LvcCommitInfo commit = this.requireSelectedCommit();
+
+        if (commit != null)
+        {
+            this.promptCheckoutCommit(commit);
+        }
+    }
+
+    private void softLoadSelectedCommit()
+    {
+        LvcCommitInfo commit = this.requireSelectedCommit();
+
+        if (commit == null)
+        {
+            return;
+        }
+
+        if (Minecraft.getInstance().level == null)
+        {
+            LvcGuiMessages.show(MessageType.ERROR, "gitmatica.error.lvc_project.no_world");
+            return;
+        }
+
+        boolean headChanged = false;
+
+        try
+        {
+            if (this.isVersionAlreadyLoaded(commit.id()))
+            {
+                this.showAlreadyAtVersion(commit.id());
+                return;
+            }
+
+            LvcGitBranchOps.checkoutCommitToWorkingTree(this.gui.repositoryDirectory, commit.id());
+            headChanged = true;
+            LvcGitBranchOps.reattachHeadToBranchIfAtTip(this.gui.repositoryDirectory, this.gui.checkoutBranchName);
+            this.removeTrackingOverlay();
+            this.gui.focusHistoryCommitAfterNextRefresh(commit.id());
+            this.refreshRepositoryState();
+            this.gui.refreshHistory();
+            this.gui.syncBranchDropdownSelection();
+            this.loadTrackingOverlayAfterSoftLoad(commit.shortId());
+            LvcDiagnostics.debug("GuiLvcProjectManager: selected commit soft load scheduled repo='{}' commit='{}' detached={}",
+                    this.gui.repositoryDirectory, commit.id(), this.gui.detachedHead);
+        }
+        catch (Exception e)
+        {
+            this.refreshAfterSoftLoadFailure();
+            LvcGuiMessages.showTaskError(
+                    headChanged ? Operation.LOAD_OVERLAY : Operation.CHECKOUT,
+                    headChanged ? "gitmatica.error.lvc_project.tracking_failed" :
+                            "gitmatica.error.lvc_project.checkout_failed",
+                    e
+            );
+        }
+    }
+
+    void promptDeleteLatestVersion(LvcCommitInfo commit)
+    {
+        LvcVersionDeleteWorkflow.prompt(this, commit);
+    }
+
+    void promptDeleteLatestVersion()
+    {
+        LvcVersionDeleteWorkflow.promptLatest(this);
+    }
+
+    void exportSelectedCommit()
+    {
+        LvcCommitInfo commit = this.requireSelectedCommit();
+
+        if (commit == null)
+        {
+            return;
+        }
+
+        Optional<LvcOperationHandle> handle = LvcTaskRegistry.tryAcquire("LVC Export", this.gui.repositoryDirectory);
+
+        if (handle.isEmpty())
+        {
+            LvcGuiMessages.show(MessageType.ERROR, "gitmatica.error.lvc_project.operation_running", LvcTaskRegistry.activeOperationName());
+            return;
+        }
+
+        LvcSemanticExportTask task = new LvcSemanticExportTask(
+                handle.get(),
+                this.gui.repositoryDirectory,
+                commit.id(),
+                DataManager.getSchematicsBaseDirectory(),
+                LvcTaskCallbacks.of(
+                        result -> LvcGuiMessages.show(MessageType.SUCCESS, "gitmatica.message.lvc_project.exported", result.fileName()),
+                        e -> LvcGuiMessages.show(MessageType.ERROR, "gitmatica.error.lvc_project.export_failed", e.getMessage()),
+                        () -> LvcGuiMessages.show(MessageType.INFO, "gitmatica.message.lvc_project.task_aborted", "LVC Export")
+                )
+        );
+        LvcTaskScheduling.scheduleClient(task);
+        LvcGuiMessages.show(MessageType.INFO, "gitmatica.message.lvc_project.task_started", "LVC Export");
+    }
+
+    void push()
+    {
+        try
+        {
+            if (!LvcGitRemoteOps.hasRemote(this.gui.repositoryDirectory))
+            {
+                this.promptRemoteEdit(true);
+                return;
+            }
+
+            LvcGitRemoteOps.push(this.gui.repositoryDirectory);
+            LvcGuiMessages.show(MessageType.SUCCESS, "gitmatica.message.lvc_project.pushed");
+        }
+        catch (Exception e)
+        {
+            LvcGuiMessages.show(MessageType.ERROR, "gitmatica.error.lvc_project.push_failed", LvcGitRemoteOps.describeRemoteFailure(e));
+        }
+    }
+
+    void promptPull()
+    {
+        Minecraft minecraft = Minecraft.getInstance();
+
+        if (minecraft.level == null)
+        {
+            LvcGuiMessages.show(MessageType.ERROR, "gitmatica.error.lvc_project.no_world");
+            return;
+        }
+
+        this.reportUnsupported("gitmatica.error.lvc_project.pull_failed", SEMANTIC_PULL_UNSUPPORTED_KEY);
+    }
+
+    void updateAreas()
+    {
+        Minecraft minecraft = Minecraft.getInstance();
+        AreaSelection selection = DataManager.getSelectionManager().getCurrentSelection();
+
+        if (minecraft.player == null)
+        {
+            LvcGuiMessages.show(MessageType.ERROR, "gitmatica.error.lvc_project.no_player");
+            return;
+        }
+
+        if (minecraft.level == null)
+        {
+            LvcGuiMessages.show(MessageType.ERROR, "gitmatica.error.lvc_project.no_world");
+            return;
+        }
+
+        if (selection == null)
+        {
+            LvcGuiMessages.show(MessageType.ERROR, "gitmatica.error.lvc_project.update_areas_failed", StringUtils.translate("gitmatica.error.lvc_project.no_selection"));
+            return;
+        }
+
+        try
+        {
+            if (LvcGitBranchOps.isDetachedHead(this.gui.repositoryDirectory))
+            {
+                LvcGuiMessages.show(MessageType.ERROR, "gitmatica.error.lvc_project.update_areas_failed", StringUtils.translate("gitmatica.error.lvc_project.detached_head_commit"));
+                return;
+            }
+
+            int regionCount = LvcProjectSelectionStorage.countValidSelectionRegions(selection);
+
+            if (regionCount <= 0)
+            {
+                LvcGuiMessages.show(MessageType.ERROR, "gitmatica.error.lvc_project.update_areas_failed", StringUtils.translate("gitmatica.error.lvc_project.no_selection"));
+                return;
+            }
+
+            GuiBase.openGui(new GuiLvcConfirmAction(
+                    420,
+                    "gitmatica.gui.title.lvc_project.confirm_update_areas",
+                    new GuiLvcProjectCommandListeners.UpdateAreasConfirmListener(this),
+                    this.gui,
+                    "gitmatica.gui.message.lvc_project.confirm_update_areas",
+                    LvcOperationCoordinator.regionCountText(regionCount)
+            ));
+        }
+        catch (Exception e)
+        {
+            LvcGuiMessages.showTaskError(Operation.UPDATE_AREAS, "gitmatica.error.lvc_project.update_areas_failed", e);
+        }
+    }
+
+    void openChangeViewer()
+    {
+        try
+        {
+            SchematicPlacement placement = LvcTrackingOverlayService.requireTrackingPlacement(this.gui.repositoryDirectory);
+            GuiBase.openGui(new GuiLvcChangeViewer(placement));
+        }
+        catch (Exception e)
+        {
+            LvcGuiMessages.showTaskError(Operation.LOAD_OVERLAY,
+                    "gitmatica.error.lvc_project.tracking_failed", e);
+        }
+    }
+
+    void promptClearArea()
+    {
+        LvcAreaWorkflow.promptClearArea(this);
+    }
+
+    void openBranchSelector()
+    {
+        if (this.gui.detachedHead)
+        {
+            this.promptCheckoutBranch();
+            return;
+        }
+
+        this.showNotImplemented("gitmatica.message.lvc_project.branch_selector_not_implemented");
+    }
+
+    void handleBranchDropdownSelection(String branchName)
+    {
+        if (branchName == null || branchName.isBlank())
+        {
+            this.gui.syncBranchDropdownSelection();
+            return;
+        }
+
+        if (this.promptPendingInterruptedOperationIfNeeded())
+        {
+            this.gui.syncBranchDropdownSelection();
+            return;
+        }
+
+        LvcDiagnostics.debug(
+                "GuiLvcProjectManager: branch dropdown selected repo='{}' selected='{}' current='{}' detached={}",
+                this.gui.repositoryDirectory,
+                branchName,
+                this.gui.currentBranchDropdownName(),
+                this.gui.detachedHead
+        );
+
+        boolean softLoad = isLeftShiftDown();
+
+        if (LvcTaskRegistry.hasActiveOperation())
+        {
+            LvcGuiMessages.show(MessageType.ERROR, "gitmatica.error.lvc_project.operation_running", LvcTaskRegistry.activeOperationName());
+            this.gui.syncBranchDropdownSelection();
+            return;
+        }
+
+        if (softLoad)
+        {
+            this.softLoadBranch(branchName);
+            return;
+        }
+
+        LvcCheckoutWorkflow.promptCheckoutBranch(this, branchName);
+    }
+
+    private void softLoadBranch(String branchName)
+    {
+        String trimmedBranchName = branchName.trim();
+
+        if (Minecraft.getInstance().level == null)
+        {
+            this.gui.syncBranchDropdownSelection();
+            LvcGuiMessages.show(MessageType.ERROR, "gitmatica.error.lvc_project.no_world");
+            return;
+        }
+
+        boolean headChanged = false;
+
+        try
+        {
+            String targetCommitId = LvcGitBranchOps.localBranchTipCommitId(
+                    this.gui.repositoryDirectory, trimmedBranchName);
+
+            if (this.isBranchAlreadyLoaded(trimmedBranchName, targetCommitId))
+            {
+                this.gui.syncBranchDropdownSelection();
+                this.showAlreadyAtVersion(targetCommitId);
+                return;
+            }
+
+            LvcGitBranchOps.checkoutBranchToWorkingTree(this.gui.repositoryDirectory, trimmedBranchName);
+            headChanged = true;
+            this.removeTrackingOverlay();
+            this.gui.focusHistoryCommitAfterNextRefresh(targetCommitId);
+            this.refreshRepositoryState();
+            this.gui.refreshHistory();
+            this.gui.syncBranchDropdownSelection();
+            this.loadTrackingOverlayAfterSoftLoad(shortCommitId(targetCommitId));
+            LvcDiagnostics.debug("GuiLvcProjectManager: branch soft load scheduled repo='{}' branch='{}' commit='{}'",
+                    this.gui.repositoryDirectory, trimmedBranchName, targetCommitId);
+        }
+        catch (Exception e)
+        {
+            this.refreshAfterSoftLoadFailure();
+            LvcGuiMessages.showTaskError(
+                    headChanged ? Operation.LOAD_OVERLAY : Operation.CHECKOUT_BRANCH,
+                    headChanged ? "gitmatica.error.lvc_project.tracking_failed" :
+                            "gitmatica.error.lvc_project.checkout_failed",
+                    e
+            );
+        }
+    }
+
+    private void refreshAfterSoftLoadFailure()
+    {
+        this.refreshRepositoryState();
+        this.gui.refreshHistory();
+        this.gui.syncBranchDropdownSelection();
+    }
+
+    void handleBranchMenuAction(WidgetLvcBranchActionMenu.Action action)
+    {
+        this.gui.closeBranchActionMenu();
+
+        if (this.promptPendingInterruptedOperationIfNeeded())
+        {
+            return;
+        }
+
+        LvcDiagnostics.debug("GuiLvcProjectManager: branch action selected repo='{}' action='{}'", this.gui.repositoryDirectory, action);
+
+        switch (action)
+        {
+            case CREATE -> this.promptCreateBranch();
+            case DELETE -> this.promptDeleteBranch();
+            case RENAME -> this.promptRenameBranch();
+            case MERGE -> this.promptMergeBranch();
+        }
+    }
+
+    private void promptCreateBranch()
+    {
+        if (LvcTaskRegistry.hasActiveOperation())
+        {
+            LvcGuiMessages.show(MessageType.ERROR, "gitmatica.error.lvc_project.operation_running", LvcTaskRegistry.activeOperationName());
+            return;
+        }
+
+        this.gui.blurBranchOverlayInputs();
+        GuiBase.openGui(new GuiLvcTextInputDialog(
+                256,
+                "gitmatica.gui.title.lvc_project.create_branch",
+                "",
+                this.gui,
+                this::validateCreateBranchName,
+                (java.util.function.Consumer<String>) this::createBranch,
+                -1
+        ));
+    }
+
+    private void promptDeleteBranch()
+    {
+        if (LvcTaskRegistry.hasActiveOperation())
+        {
+            LvcGuiMessages.show(MessageType.ERROR, "gitmatica.error.lvc_project.operation_running", LvcTaskRegistry.activeOperationName());
+            return;
+        }
+
+        List<String> branches = this.deletableBranchNames();
+
+        if (branches.isEmpty())
+        {
+            LvcGuiMessages.show(MessageType.INFO, "gitmatica.message.lvc_project.delete_branch_no_candidates");
+            return;
+        }
+
+        LvcDiagnostics.debug("GuiLvcProjectManager: opening delete branch dialog repo='{}' candidates={}", this.gui.repositoryDirectory, branches.size());
+        this.gui.blurBranchOverlayInputs();
+        GuiBase.openGui(new GuiLvcDeleteBranchDialog(this, branches));
+    }
+
+    private void promptRenameBranch()
+    {
+        if (LvcTaskRegistry.hasActiveOperation())
+        {
+            LvcGuiMessages.show(MessageType.ERROR, "gitmatica.error.lvc_project.operation_running", LvcTaskRegistry.activeOperationName());
+            return;
+        }
+
+        List<String> branches = this.renameableBranchNames();
+
+        if (branches.isEmpty())
+        {
+            LvcGuiMessages.show(MessageType.INFO, "gitmatica.message.lvc_project.rename_branch_no_candidates");
+            return;
+        }
+
+        LvcDiagnostics.debug("GuiLvcProjectManager: opening rename branch dialog repo='{}' candidates={}", this.gui.repositoryDirectory, branches.size());
+        this.gui.blurBranchOverlayInputs();
+        GuiBase.openGui(new GuiLvcRenameBranchDialog(this, branches, this.attachedHeadBranchName()));
+    }
+
+    private void promptMergeBranch()
+    {
+        if (LvcTaskRegistry.hasActiveOperation())
+        {
+            LvcGuiMessages.show(MessageType.ERROR, "gitmatica.error.lvc_project.operation_running", LvcTaskRegistry.activeOperationName());
+            return;
+        }
+
+        if (this.gui.detachedHead)
+        {
+            LvcGuiMessages.show(MessageType.ERROR, "gitmatica.error.lvc_project.merge_branch_detached");
+            return;
+        }
+
+        List<String> branches = this.mergeableBranchNames();
+
+        if (branches.isEmpty())
+        {
+            LvcGuiMessages.show(MessageType.INFO, "gitmatica.message.lvc_project.merge_branch_no_candidates");
+            return;
+        }
+
+        LvcDiagnostics.debug("GuiLvcProjectManager: opening merge branch dialog repo='{}' candidates={}", this.gui.repositoryDirectory, branches.size());
+        this.gui.blurBranchOverlayInputs();
+        GuiBase.openGui(new GuiLvcMergeBranchDialog(this, branches));
+    }
+
+    boolean createBranch(String branchName)
+    {
+        try
+        {
+            String normalizedBranchName = LvcGitBranchOps.createAndCheckoutBranch(this.gui.repositoryDirectory, branchName);
+
+            this.refreshRepositoryState();
+            this.gui.refreshHistory();
+            this.gui.initGui();
+            LvcGuiMessages.show(MessageType.SUCCESS, "gitmatica.message.lvc_project.branch_created", normalizedBranchName);
+            LvcDiagnostics.debug("GuiLvcProjectManager: created branch repo='{}' branch='{}'", this.gui.repositoryDirectory, normalizedBranchName);
+            return true;
+        }
+        catch (Exception e)
+        {
+            LvcGuiMessages.show(MessageType.ERROR, "gitmatica.error.lvc_project.create_branch_failed", e.getMessage());
+            LvcDiagnostics.debug("GuiLvcProjectManager: create branch failed repo='{}' input='{}' error='{}'", this.gui.repositoryDirectory, branchName, e.getMessage());
+            return false;
+        }
+    }
+
+    @Nullable
+    String validateCreateBranchName(String branchName)
+    {
+        if (branchName == null || branchName.isBlank())
+        {
+            LvcDiagnostics.debug("GuiLvcProjectManager: create branch validation failed repo='{}' input='{}' error='missing name'",
+                    this.gui.repositoryDirectory, branchName);
+            return StringUtils.translate("gitmatica.error.lvc_project.branch_name_required");
+        }
+
+        try
+        {
+            LvcGitBranchOps.validateNewBranchName(this.gui.repositoryDirectory, branchName);
+            return null;
+        }
+        catch (IllegalArgumentException e)
+        {
+            LvcDiagnostics.debug("GuiLvcProjectManager: create branch validation failed repo='{}' input='{}' error='{}'",
+                    this.gui.repositoryDirectory, branchName, e.getMessage());
+            return e.getMessage();
+        }
+        catch (Exception e)
+        {
+            LvcDiagnostics.debug("GuiLvcProjectManager: create branch validation deferred to runtime repo='{}' input='{}' error='{}'",
+                    this.gui.repositoryDirectory, branchName, e.getMessage());
+            return null;
+        }
+    }
+
+    @Nullable
+    String deleteBranch(@Nullable String branchName)
+    {
+        if (LvcTaskRegistry.hasActiveOperation())
+        {
+            LvcGuiMessages.show(MessageType.ERROR, "gitmatica.error.lvc_project.operation_running", LvcTaskRegistry.activeOperationName());
+            return null;
+        }
+
+        if (branchName == null || branchName.isBlank())
+        {
+            LvcGuiMessages.show(MessageType.ERROR, "gitmatica.error.lvc_project.delete_branch_required");
+            return null;
+        }
+
+        try
+        {
+            String deletedBranchName = LvcGitBranchOps.deleteBranch(this.gui.repositoryDirectory, branchName);
+
+            this.refreshRepositoryState();
+            this.gui.refreshHistory();
+            this.gui.initGui();
+            LvcDiagnostics.debug("GuiLvcProjectManager: deleted branch repo='{}' branch='{}'", this.gui.repositoryDirectory, deletedBranchName);
+            return deletedBranchName;
+        }
+        catch (Exception e)
+        {
+            LvcGuiMessages.show(MessageType.ERROR, "gitmatica.error.lvc_project.delete_branch_failed", e.getMessage());
+            LvcDiagnostics.debug("GuiLvcProjectManager: delete branch failed repo='{}' input='{}' error='{}'", this.gui.repositoryDirectory, branchName, e.getMessage());
+            return null;
+        }
+    }
+
+    boolean renameBranch(@Nullable String oldBranchName, String newBranchName)
+    {
+        if (LvcTaskRegistry.hasActiveOperation())
+        {
+            LvcGuiMessages.show(MessageType.ERROR, "gitmatica.error.lvc_project.operation_running", LvcTaskRegistry.activeOperationName());
+            return false;
+        }
+
+        if (oldBranchName == null || oldBranchName.isBlank())
+        {
+            LvcGuiMessages.show(MessageType.ERROR, "gitmatica.error.lvc_project.rename_branch_required");
+            return false;
+        }
+
+        if (newBranchName == null || newBranchName.isBlank())
+        {
+            LvcGuiMessages.show(MessageType.ERROR, "gitmatica.error.lvc_project.rename_branch_name_required");
+            return false;
+        }
+
+        try
+        {
+            String renamedBranchName = LvcGitBranchOps.renameBranch(this.gui.repositoryDirectory, oldBranchName, newBranchName);
+
+            this.refreshRepositoryState();
+            this.gui.refreshHistory();
+            this.gui.initGui();
+            LvcGuiMessages.show(MessageType.SUCCESS, "gitmatica.message.lvc_project.branch_renamed", oldBranchName, renamedBranchName);
+            LvcDiagnostics.debug("GuiLvcProjectManager: renamed branch repo='{}' old='{}' new='{}'", this.gui.repositoryDirectory, oldBranchName, renamedBranchName);
+            return true;
+        }
+        catch (Exception e)
+        {
+            LvcGuiMessages.show(MessageType.ERROR, "gitmatica.error.lvc_project.rename_branch_failed", e.getMessage());
+            LvcDiagnostics.debug("GuiLvcProjectManager: rename branch failed repo='{}' old='{}' new='{}' error='{}'", this.gui.repositoryDirectory, oldBranchName, newBranchName, e.getMessage());
+            return false;
+        }
+    }
+
+    @Nullable
+    String validateRenameBranchInputs(@Nullable String oldBranchName, String newBranchName)
+    {
+        if (oldBranchName == null || oldBranchName.isBlank())
+        {
+            LvcDiagnostics.debug("GuiLvcProjectManager: rename branch validation failed repo='{}' old='{}' new='{}' error='missing source'",
+                    this.gui.repositoryDirectory, oldBranchName, newBranchName);
+            return StringUtils.translate("gitmatica.error.lvc_project.rename_branch_required");
+        }
+
+        if (newBranchName == null || newBranchName.isBlank())
+        {
+            LvcDiagnostics.debug("GuiLvcProjectManager: rename branch validation failed repo='{}' old='{}' new='{}' error='missing target'",
+                    this.gui.repositoryDirectory, oldBranchName, newBranchName);
+            return StringUtils.translate("gitmatica.error.lvc_project.rename_branch_name_required");
+        }
+
+        if (oldBranchName.trim().equals(newBranchName.trim()))
+        {
+            LvcDiagnostics.debug("GuiLvcProjectManager: rename branch validation failed repo='{}' old='{}' new='{}' error='same name'",
+                    this.gui.repositoryDirectory, oldBranchName, newBranchName);
+            return StringUtils.translate("gitmatica.error.lvc_project.rename_branch_same_name");
+        }
+
+        try
+        {
+            LvcGitBranchOps.validateNewBranchName(this.gui.repositoryDirectory, newBranchName);
+            return null;
+        }
+        catch (IllegalArgumentException e)
+        {
+            LvcDiagnostics.debug("GuiLvcProjectManager: rename branch validation failed repo='{}' old='{}' new='{}' error='{}'",
+                    this.gui.repositoryDirectory, oldBranchName, newBranchName, e.getMessage());
+            return e.getMessage();
+        }
+        catch (Exception e)
+        {
+            LvcDiagnostics.debug("GuiLvcProjectManager: rename branch validation deferred to runtime repo='{}' old='{}' new='{}' error='{}'",
+                    this.gui.repositoryDirectory, oldBranchName, newBranchName, e.getMessage());
+            return null;
+        }
+    }
+
+    boolean mergeBranch(@Nullable String sourceBranchName)
+    {
+        if (sourceBranchName == null || sourceBranchName.isBlank())
+        {
+            LvcGuiMessages.show(MessageType.ERROR, "gitmatica.error.lvc_project.merge_branch_required");
+            return false;
+        }
+
+        LvcMergeWorkflow.mergeBranch(this, sourceBranchName);
+        return true;
+    }
+
+    private List<String> deletableBranchNames()
+    {
+        String protectedBranch = this.gui.detachedHead ? null : this.gui.headPointerName;
+        List<String> branches = new java.util.ArrayList<>();
+
+        for (String branchName : this.gui.branchNames)
+        {
+            if (branchName != null && !branchName.isBlank() && !branchName.equals(protectedBranch) && !branches.contains(branchName))
+            {
+                branches.add(branchName);
+            }
+        }
+
+        return List.copyOf(branches);
+    }
+
+    private List<String> renameableBranchNames()
+    {
+        List<String> branches = new java.util.ArrayList<>();
+
+        for (String branchName : this.gui.branchNames)
+        {
+            if (branchName != null && !branchName.isBlank() && !branches.contains(branchName))
+            {
+                branches.add(branchName);
+            }
+        }
+
+        return List.copyOf(branches);
+    }
+
+    private List<String> mergeableBranchNames()
+    {
+        String protectedBranch = this.gui.detachedHead ? null : this.gui.headPointerName;
+        List<String> branches = new java.util.ArrayList<>();
+
+        for (String branchName : this.gui.branchNames)
+        {
+            if (branchName != null && !branchName.isBlank() && !branchName.equals(protectedBranch) && !branches.contains(branchName))
+            {
+                branches.add(branchName);
+            }
+        }
+
+        return List.copyOf(branches);
+    }
+
+    @Nullable
+    private String attachedHeadBranchName()
+    {
+        if (this.gui.detachedHead || this.gui.headPointerName == null || this.gui.headPointerName.isBlank())
+        {
+            return null;
+        }
+
+        return this.gui.headPointerName;
+    }
+
+    void showNotImplemented(String key)
+    {
+        LvcGuiMessages.show(MessageType.INFO, key);
+    }
+
+    void showFullReleaseFeature()
+    {
+        LvcGuiMessages.show(MessageType.INFO, "gitmatica.message.lvc_project.full_release_feature");
+    }
+
+    void removeTrackingOverlay() throws IOException
+    {
+        LvcTrackingOverlayService.removeTrackingOverlay(this.gui.repositoryDirectory);
+        this.gui.trackingOverlay = null;
+    }
+
+    void closeTrackingOverlay()
+    {
+        LvcTrackingOverlayService.closeTrackingOverlay(this.gui.repositoryDirectory);
+        this.gui.trackingOverlay = null;
+    }
+
+    void focusTrackingOverlay()
+    {
+        LvcTrackingOverlayService.focusTrackingOverlay(this.gui.repositoryDirectory);
+    }
+
+    private void promptCheckoutBranch()
+    {
+        Minecraft minecraft = Minecraft.getInstance();
+
+        if (minecraft.level == null)
+        {
+            LvcGuiMessages.show(MessageType.ERROR, "gitmatica.error.lvc_project.no_world");
+            return;
+        }
+
+        this.reportUnsupported("gitmatica.error.lvc_project.checkout_failed", SEMANTIC_CHECKOUT_UNSUPPORTED_KEY);
+    }
+
+    private void openCommitMessageDialog()
+    {
+        GuiBase.openGui(new GuiLvcCommitMessageDialog(
+                256,
+                COMMIT_DESCRIPTION_DISPLAY_LINES,
+                COMMIT_DESCRIPTION_MAX_LINES,
+                "gitmatica.gui.title.lvc_project.commit_message",
+                "",
+                "",
+                LvcOperationCoordinator.confirmParent(this),
+                new GuiLvcProjectCommandListeners.CommitMessageSetter(this)
+        ));
+    }
+
+    void commitStoredSelectionWithCurrentSelectionFallback(String message)
+    {
+        if (this.promptPendingInterruptedOperationIfNeeded())
+        {
+            return;
+        }
+
+        LvcVersionWorkflow.commitStoredSelectionWithCurrentSelectionFallback(this, message);
+    }
+
+    private void promptRemoteEdit(boolean pushAfterSave)
+    {
+        try
+        {
+            String currentRemoteUrl = LvcGitRemoteOps.remoteOriginUrl(this.gui.repositoryDirectory);
+            String inputValue = currentRemoteUrl != null ? currentRemoteUrl : "";
+            GuiBase.openGui(new GuiLvcTextInputDialog(
+                    512,
+                    "gitmatica.gui.title.lvc_project.remote_url",
+                    inputValue,
+                    this.gui,
+                    value -> null,
+                    new GuiLvcProjectCommandListeners.RemoteUrlSetter(this, pushAfterSave)
+            ));
+        }
+        catch (Exception e)
+        {
+            LvcGuiMessages.show(MessageType.ERROR, "gitmatica.error.lvc_project.remote_failed", e.getMessage());
+        }
+    }
+
+    private void reportUnsupported(String errorKey, String detailKey)
+    {
+        LvcGuiMessages.show(MessageType.ERROR, errorKey, StringUtils.translate(detailKey));
+    }
+
+    void updateAreasFromCurrentSelection()
+    {
+        if (this.promptPendingInterruptedOperationIfNeeded())
+        {
+            return;
+        }
+
+        LvcVersionWorkflow.updateAreasFromCurrentSelection(this);
+    }
+
+    void loadTrackingOverlay()
+    {
+        this.scheduleSemanticTrackingOverlay(true, true, null);
+    }
+
+    private void loadTrackingOverlayAfterSoftLoad(String commitId)
+    {
+        this.scheduleSemanticTrackingOverlay(true, true, commitId);
+    }
+
+    void refreshTrackingOverlayAfterWorldMutation()
+    {
+        ClientLevel clientLevel = Minecraft.getInstance().level;
+
+        if (clientLevel == null)
+        {
+            this.focusTrackingOverlay();
+            return;
+        }
+
+        try
+        {
+            LvcTrackingOverlay overlay = LvcTrackingOverlayService.refreshVerifierIfCurrent(
+                    this.gui.repositoryDirectory,
+                    clientLevel,
+                    this.gui
+            );
+
+            if (overlay != null)
+            {
+                this.gui.trackingOverlay = overlay;
+                this.updateTrackingStatusAfterRestore();
+                this.clearRefreshMarkerAfterOverlay();
+                return;
+            }
+        }
+        catch (Exception e)
+        {
+            LvcDiagnostics.debug("GuiLvcProjectManager: reusable overlay verifier refresh failed repo='{}' error='{}'",
+                    this.gui.repositoryDirectory, e.getMessage());
+        }
+
+        this.loadTrackingOverlay();
+    }
+
+    private void scheduleSemanticTrackingOverlay(boolean forceReload, boolean startVerifier)
+    {
+        this.scheduleSemanticTrackingOverlay(forceReload, startVerifier, null);
+    }
+
+    private void scheduleSemanticTrackingOverlay(boolean forceReload, boolean startVerifier,
+                                                 @Nullable String softLoadedCommitId)
+    {
+        ClientLevel clientLevel = Minecraft.getInstance().level;
+
+        if (clientLevel == null)
+        {
+            LvcGuiMessages.show(MessageType.ERROR, "gitmatica.error.lvc_project.no_world");
+            return;
+        }
+
+        if (!forceReload)
+        {
+            try
+            {
+                LvcTrackingOverlay reusableOverlay = LvcTrackingOverlayService.getReusableSemanticTrackingOverlay(
+                        this.gui.repositoryDirectory,
+                        clientLevel,
+                        this.gui
+                );
+
+                if (reusableOverlay != null)
+                {
+                    this.gui.trackingOverlay = reusableOverlay;
+                    this.updateTrackingStatusAfterRestore();
+                    this.clearRefreshMarkerAfterOverlay();
+                    return;
+                }
+            }
+            catch (Exception e)
+            {
+                LvcGuiMessages.showTaskError(Operation.LOAD_OVERLAY, "gitmatica.error.lvc_project.tracking_failed", e);
+                return;
+            }
+        }
+
+        if (LvcTaskRegistry.hasActiveOperation())
+        {
+            LvcDiagnostics.debug("GuiLvcProjectManager: deferred overlay load while foreground operation is active repo='{}' active='{}'",
+                    this.gui.repositoryDirectory, LvcTaskRegistry.activeOperationName());
+            return;
+        }
+
+        Optional<LvcOperationHandle> handle = LvcTaskRegistry.tryAcquireBackground(LOAD_OVERLAY_OPERATION, this.gui.repositoryDirectory);
+
+        if (handle.isEmpty())
+        {
+            if (this.isOverlayLoadActiveForThisRepo())
+            {
+                LvcDiagnostics.debug("GuiLvcProjectManager: overlay load already active repo='{}'", this.gui.repositoryDirectory);
+                return;
+            }
+
+            LvcGuiMessages.show(MessageType.ERROR, "gitmatica.error.lvc_project.operation_running", LvcTaskRegistry.activeOperationName());
+            return;
+        }
+
+        this.gui.trackingStatus = StringUtils.translate("gitmatica.gui.label.lvc_project.tracking_loading");
+        LvcSemanticOverlayTask task = new LvcSemanticOverlayTask(
+                handle.get(),
+                this.gui.repositoryDirectory,
+                this.gui.projectName,
+                clientLevel,
+                this.gui,
+                startVerifier,
+                forceReload,
+                LvcTaskCallbacks.of(
+                        overlay ->
+                        {
+                            this.gui.trackingOverlay = overlay;
+                            this.updateTrackingStatusAfterRestore();
+                            this.clearRefreshMarkerAfterOverlay();
+
+                            if (softLoadedCommitId != null)
+                            {
+                                LvcGuiMessages.show(MessageType.SUCCESS,
+                                        "gitmatica.message.lvc_project.soft_loaded_version", softLoadedCommitId);
+                            }
+                        },
+                        e -> LvcGuiMessages.showTaskError(Operation.LOAD_OVERLAY, "gitmatica.error.lvc_project.tracking_failed", e),
+                        () -> LvcDiagnostics.debug("GuiLvcProjectManager: overlay load aborted repo='{}'", this.gui.repositoryDirectory)
+                )
+        );
+        LvcTaskScheduling.scheduleForWorld(clientLevel, task);
+
+        if (softLoadedCommitId != null)
+        {
+            LvcGuiMessages.show(MessageType.INFO,
+                    "gitmatica.message.lvc_project.soft_load_started", softLoadedCommitId);
+        }
+    }
+
+    private boolean isOverlayLoadActiveForThisRepo()
+    {
+        return LvcTaskRegistry.hasActiveBackgroundOperation(LOAD_OVERLAY_OPERATION, this.gui.repositoryDirectory);
+    }
+
+    private void clearRefreshMarkerAfterOverlay()
+    {
+        try
+        {
+            LvcRefreshMarker.delete(this.gui.repositoryDirectory);
+        }
+        catch (Exception e)
+        {
+            LvcDiagnostics.warn("Failed to clear LVC refresh marker repo='{}' error='{}'",
+                    this.gui.repositoryDirectory, e.getMessage());
+        }
+    }
+
+    void discardChanges()
+    {
+        if (this.promptPendingInterruptedOperationIfNeeded())
+        {
+            return;
+        }
+
+        LvcAreaWorkflow.discardChanges(this);
+    }
+
+    @Nullable
+    private LvcCommitInfo requireSelectedCommit()
+    {
+        if (this.gui.selectedCommit == null)
+        {
+            LvcGuiMessages.show(MessageType.INFO, "gitmatica.message.lvc_project.no_commit_selected");
+            return null;
+        }
+
+        return this.gui.selectedCommit;
+    }
+
+    private void promptCheckoutCommit(LvcCommitInfo commit)
+    {
+        LvcCheckoutWorkflow.promptCheckoutCommit(this, commit);
+    }
+
+    void checkoutCommit(LvcCommitInfo commit)
+    {
+        if (this.promptPendingInterruptedOperationIfNeeded())
+        {
+            return;
+        }
+
+        LvcCheckoutWorkflow.checkoutCommit(this, commit);
+    }
+
+    void resetWorkingTreeThenCheckoutCommit(LvcCommitInfo commit)
+    {
+        if (this.promptPendingInterruptedOperationIfNeeded())
+        {
+            return;
+        }
+
+        try
+        {
+            LvcGitBranchOps.resetWorkingTreeToHead(this.gui.repositoryDirectory);
+            this.checkoutCommit(commit);
+        }
+        catch (Exception e)
+        {
+            LvcGuiMessages.showTaskError(Operation.CHECKOUT, "gitmatica.error.lvc_project.checkout_failed", e);
+        }
+    }
+
+    void updateTrackingStatusAfterRestore()
+    {
+        if (this.gui.trackingOverlay == null)
+        {
+            this.gui.trackingStatus = "";
+            return;
+        }
+
+        if (this.gui.trackingOverlay.verifierStarted())
+        {
+            if (this.gui.trackingOverlay.verifier().isFinished())
+            {
+                int errors = this.gui.trackingOverlay.verifier().getTotalErrors();
+                this.gui.trackingStatus = errors == 0 ?
+                        StringUtils.translate("gitmatica.gui.label.lvc_project.tracking_clean") :
+                        StringUtils.translate("gitmatica.gui.label.lvc_project.tracking_dirty", errors);
+            }
+            else
+            {
+                this.gui.trackingStatus = StringUtils.translate("gitmatica.gui.label.lvc_project.tracking_checking", this.gui.trackingOverlay.placement().getName());
+            }
+        }
+        else
+        {
+            this.gui.trackingStatus = StringUtils.translate("gitmatica.gui.label.lvc_project.tracking_loaded", this.gui.trackingOverlay.placement().getName());
+        }
+    }
+
+    void handleButton(GuiLvcProjectButtonType type)
+    {
+        if (type != GuiLvcProjectButtonType.LITEMATICA_MENU && LvcTaskRegistry.hasActiveOperation())
+        {
+            LvcGuiMessages.show(MessageType.ERROR, "gitmatica.error.lvc_project.operation_running", LvcTaskRegistry.activeOperationName());
+            return;
+        }
+
+        if (type != GuiLvcProjectButtonType.CLOSE_PROJECT &&
+                type != GuiLvcProjectButtonType.LITEMATICA_MENU &&
+                this.promptPendingInterruptedOperationIfNeeded())
+        {
+            return;
+        }
+
+        switch (type)
+        {
+            case SAVE_VERSION -> this.promptCommitMessage();
+            case DISCARD_CHANGES -> this.discardChanges();
+            case CLEAR_AREA -> this.promptClearArea();
+            case EXPORT -> this.exportSelectedCommit();
+            case PUSH -> this.push();
+            case PULL -> this.promptPull();
+            case BRANCH_SELECTOR -> this.openBranchSelector();
+            case CHECKOUT_VERSION ->
+            {
+                if (isLeftShiftDown())
+                {
+                    this.softLoadSelectedCommit();
+                }
+                else
+                {
+                    this.promptCheckoutSelectedCommit();
+                }
+            }
+            case VIEW_CHANGES -> this.openChangeViewer();
+            case VIEW_DIFFS -> this.showFullReleaseFeature();
+            case REVERT_CHANGES -> this.showFullReleaseFeature();
+            case PROJECT_EDITOR -> GuiBase.openGui(new GuiLvcProjectEditor(this.gui.repositoryDirectory, this.gui.projectName));
+            case PROJECT_SETTINGS -> this.showFullReleaseFeature();
+            case CLOSE_PROJECT ->
+            {
+                this.closeTrackingOverlay();
+                GuiBase.openGui(new GuiLvcProjectBrowser());
+            }
+            case LITEMATICA_MENU -> GuiBase.openGui(new GuiMainMenu());
+        }
+    }
+
+    private static boolean isLeftShiftDown()
+    {
+        return InputConstants.isKeyDown(Minecraft.getInstance().getWindow(), GLFW.GLFW_KEY_LEFT_SHIFT);
+    }
+
+    private static String shortCommitId(String commitId)
+    {
+        return commitId.substring(0, Math.min(8, commitId.length()));
+    }
+
+    boolean isVersionAlreadyLoaded(String commitId) throws IOException
+    {
+        return LvcGitBranchOps.headMatchesCommit(this.gui.repositoryDirectory, commitId) &&
+                LvcTrackingOverlayService.isCurrentTrackingOverlayLoaded(this.gui.repositoryDirectory);
+    }
+
+    boolean isBranchAlreadyLoaded(String branchName, String commitId) throws IOException
+    {
+        return this.isVersionAlreadyLoaded(commitId) &&
+                !LvcGitBranchOps.isDetachedHead(this.gui.repositoryDirectory) &&
+                branchName.equals(LvcGitBranchOps.headPointerName(this.gui.repositoryDirectory));
+    }
+
+    void showAlreadyAtVersion(String commitId)
+    {
+        LvcGuiMessages.show(MessageType.ERROR, "gitmatica.message.lvc_project.already_at_version",
+                shortCommitId(commitId));
+    }
+
+    boolean promptPendingInterruptedOperationIfNeeded()
+    {
+        LvcOperationJournal.Entry entry = this.pendingInterruptedOperation;
+        LvcOperationJournal.Operation operation = this.pendingInterruptedOperationType;
+
+        if (entry == null || operation == null)
+        {
+            return false;
+        }
+
+        LvcDiagnostics.debug("GuiLvcProjectManager: prompting pending interrupted operation repo='{}' operation='{}' phase='{}'",
+                this.gui.repositoryDirectory, entry.operation(), entry.phase());
+        LvcProjectRecoveryWorkflow.promptPendingInterruptedOperation(this, entry, operation);
+        return true;
+    }
+
+}

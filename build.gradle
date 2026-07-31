@@ -58,7 +58,7 @@ tasks.register("integrationTest", JavaExec) {
     group = "verification"
     description = "Runs Gitmatica integration tests without mocks."
     classpath = sourceSets.integrationTest.runtimeClasspath
-    mainClass = "me.niicide.lvc.LvcRepositoryIntegrationTest"
+    mainClass = "me.arnavpmr.lvc.LvcRepositoryIntegrationTest"
 }
 
 check.dependsOn integrationTest
