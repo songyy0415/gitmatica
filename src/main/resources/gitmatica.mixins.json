@@ -1,7 +1,7 @@
 {
   "required": true,
   "minVersion": "0.8",
-  "package": "me.niicide.lvc.mixin",
+  "package": "me.arnavpmr.lvc.mixin",
   "compatibilityLevel": "JAVA_25",
   "client": [
     "access.PlacementManagerDaemonAccess",
@@ -15,6 +15,7 @@
     "inventory.MixinClientPacketListenerInventory",
     "inventory.MixinGuiGraphicsExtractorVerifierInventory",
     "inventory.MixinGuiRendererVerifierInventory",
+    "inventory.MixinInventoryOverlayVerifierEmptySlots",
     "inventory.MixinInventoryOverlayVerifierInventory",
     "inventory.MixinMinecraftGui",
     "inventory.MixinMultiPlayerGameModeInventory",

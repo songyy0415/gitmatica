@@ -21,10 +21,10 @@
   "environment": "client",
   "entrypoints": {
     "main": [
-      "me.niicide.lvc.Gitmatica"
+      "me.arnavpmr.lvc.Gitmatica"
     ],
     "modmenu": [
-      "me.niicide.lvc.integration.modmenu.GitmaticaModMenuIntegration"
+      "me.arnavpmr.lvc.integration.modmenu.GitmaticaModMenuIntegration"
     ]
   },
   "mixins": [
